@@ -6,16 +6,32 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   flatpak:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-23.08
-      options: --privileged
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Linux Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev flatpak flatpak-builder
+
+      - name: Build Flutter Linux
+        run: |
+          flutter pub get
+          flutter build linux --release
 
       - name: Build Flatpak Package
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
@@ -31,4 +47,3 @@ jobs:
           files: Scripta.flatpak
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
