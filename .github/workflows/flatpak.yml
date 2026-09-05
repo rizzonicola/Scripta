@@ -33,6 +33,11 @@ jobs:
           flutter pub get
           flutter build linux --release
 
+      - name: Prepare Bundle Directory for Flatpak
+        run: |
+          mkdir -p bundle
+          cp -r build/linux/x86_64/release/bundle/* bundle/
+
       - name: Build Flatpak Package
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
