@@ -28,9 +28,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev libjson-glib-dev flatpak flatpak-builder
 
-      - name: Add Flathub Repository
+      - name: Add Flathub Repository (User Mode)
         run: |
-          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Build Flutter Linux
         run: |
@@ -49,6 +49,7 @@ jobs:
           bundle: Scripta.flatpak
           manifest-path: linux/packaging/io.github.scripta.Scripta.json
           cache-key: flatpak-builder-${{ github.sha }}
+          flatpak-builder-args: --user
 
       - name: Upload Flatpak Artifact to Release
         uses: softprops/action-gh-release@v2
