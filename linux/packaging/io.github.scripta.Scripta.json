@@ -12,9 +12,27 @@
     "--device=dri",
     "--filesystem=xdg-documents",
     "--filesystem=xdg-download",
-    "--filesystem=home"
+    "--filesystem=home",
+    "--talk-name=org.freedesktop.secrets"
   ],
   "modules": [
+    {
+      "name": "libsecret",
+      "buildsystem": "meson",
+      "config-opts": [
+        "-Dvapi=false",
+        "-Dgtk_doc=false",
+        "-Dmanpage=false",
+        "-Dintrospection=false"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://download.gnome.org/sources/libsecret/0.21/libsecret-0.21.4.tar.xz",
+          "sha256": "313139363a0336283b999fb485f81e1867c231efb7a0f443b7e411b0213d2a32"
+        }
+      ]
+    },
     {
       "name": "scripta",
       "buildsystem": "simple",
