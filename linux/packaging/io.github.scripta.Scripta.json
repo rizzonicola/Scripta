@@ -19,9 +19,9 @@
       "name": "scripta",
       "buildsystem": "simple",
       "build-commands": [
-        "install -D -m 0755 bundle/scripta /app/bin/scripta",
-        "cp -r bundle/data /app/bin/",
-        "cp -r bundle/lib /app/bin/",
+        "install -d /app/bin /app/share/applications /app/share/metainfo /app/share/icons/hicolor/scalable/apps",
+        "cp -r bundle/* /app/bin/",
+        "chmod +x /app/bin/Scripta /app/bin/scripta 2>/dev/null || true",
         "install -D -m 0644 packaging/io.github.scripta.Scripta.desktop /app/share/applications/io.github.scripta.Scripta.desktop",
         "install -D -m 0644 packaging/io.github.scripta.Scripta.metainfo.xml /app/share/metainfo/io.github.scripta.Scripta.metainfo.xml",
         "install -D -m 0644 packaging/icons/io.github.scripta.Scripta.svg /app/share/icons/hicolor/scalable/apps/io.github.scripta.Scripta.svg"
@@ -29,7 +29,7 @@
       "sources": [
         {
           "type": "dir",
-          "path": "../"
+          "path": "../../"
         }
       ]
     }
