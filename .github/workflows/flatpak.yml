@@ -28,6 +28,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev libjson-glib-dev flatpak flatpak-builder
 
+      - name: Add Flathub Repository
+        run: |
+          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
       - name: Build Flutter Linux
         run: |
           flutter pub get
