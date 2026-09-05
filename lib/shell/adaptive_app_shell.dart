@@ -50,6 +50,11 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
       ref.read(syncProvider.notifier).onAppPaused();
+    } else if (state == AppLifecycleState.resumed) {
+      // Re-validate connectivity as soon as the app comes back to the
+      // foreground, so the online/offline indicator doesn't show stale
+      // information (e.g. the network changed while the app was backgrounded).
+      ref.read(syncProvider.notifier).onAppResumed();
     }
   }
 

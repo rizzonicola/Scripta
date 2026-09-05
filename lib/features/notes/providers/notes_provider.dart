@@ -316,9 +316,24 @@ Sentiti libero di modificare questa nota o di crearne di nuove dall'elenco a sin
     if (index == -1) return;
 
     final existing = state.notes[index];
+    if (existing.folderId == targetFolderId) return;
+
+    // Remember the path the note currently has on the server (if any) so the
+    // next sync can tell the backend to rename/move the file instead of
+    // creating a duplicate at the new location. If a move was already
+    // pending (rapid consecutive moves before a sync happened), keep the
+    // original captured path rather than overwriting it with an
+    // already-stale local value.
+    final capturedOldPath =
+        existing.pendingOldRelativePath ?? existing.relativePath;
+
     final updatedNote = existing.copyWith(
       folderId: () => targetFolderId,
       updatedAt: DateTime.now(),
+      // Force recomputation of the relative path (based on the new folder)
+      // on the next sync pass, since it previously pinned the old location.
+      relativePath: () => null,
+      pendingOldRelativePath: () => capturedOldPath,
     );
 
     final updatedList = List<NoteModel>.from(state.notes);
@@ -339,7 +354,9 @@ Sentiti libero di modificare questa nota o di crearne di nuove dall'elenco a sin
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index != -1) {
       final note = state.notes[index];
-      final relPath = note.relativePath ?? '${sanitizeFileName(note.title)}.md';
+      final relPath = note.relativePath ??
+          note.pendingOldRelativePath ??
+          '${sanitizeFileName(note.title)}.md';
       _tombstones.add({
         'relative_path': relPath,
         'updated_at': DateTime.now().millisecondsSinceEpoch,
@@ -374,12 +391,18 @@ Sentiti libero di modificare questa nota o di crearne di nuove dall'elenco a sin
     await prefs.setString(_tombstonesKey, json.encode(_tombstones));
   }
 
-  void updateNoteRelativePath(String noteId, String relativePath) {
+  void updateNoteRelativePath(
+    String noteId,
+    String relativePath, {
+    bool clearPendingMove = false,
+  }) {
     final index = state.notes.indexWhere((n) => n.id == noteId);
     if (index == -1) return;
     final updatedList = List<NoteModel>.from(state.notes);
-    updatedList[index] =
-        updatedList[index].copyWith(relativePath: () => relativePath);
+    updatedList[index] = updatedList[index].copyWith(
+      relativePath: () => relativePath,
+      pendingOldRelativePath: clearPendingMove ? () => null : null,
+    );
     state = state.copyWith(notes: updatedList);
     _saveToPrefs();
   }

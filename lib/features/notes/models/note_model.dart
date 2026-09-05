@@ -22,6 +22,12 @@ class NoteModel {
   final int orderIndex;
   final String? relativePath;
 
+  /// The relative path the note had on the server *before* a pending folder
+  /// move that hasn't been synced yet. Populated when the note is moved
+  /// locally to a different folder, and cleared once the move has been
+  /// successfully communicated to the backend (as `old_relative_path`).
+  final String? pendingOldRelativePath;
+
   const NoteModel({
     required this.id,
     required this.title,
@@ -33,6 +39,7 @@ class NoteModel {
     this.isPinned = false,
     this.orderIndex = 0,
     this.relativePath,
+    this.pendingOldRelativePath,
   });
 
   NoteModel copyWith({
@@ -46,6 +53,7 @@ class NoteModel {
     bool? isPinned,
     int? orderIndex,
     String? Function()? relativePath,
+    String? Function()? pendingOldRelativePath,
   }) {
     return NoteModel(
       id: id ?? this.id,
@@ -58,6 +66,9 @@ class NoteModel {
       isPinned: isPinned ?? this.isPinned,
       orderIndex: orderIndex ?? this.orderIndex,
       relativePath: relativePath != null ? relativePath() : this.relativePath,
+      pendingOldRelativePath: pendingOldRelativePath != null
+          ? pendingOldRelativePath()
+          : this.pendingOldRelativePath,
     );
   }
 
@@ -98,6 +109,7 @@ class NoteModel {
       'isPinned': isPinned,
       'orderIndex': orderIndex,
       'relativePath': relativePath,
+      'pendingOldRelativePath': pendingOldRelativePath,
     };
   }
 
@@ -113,6 +125,7 @@ class NoteModel {
       isPinned: map['isPinned'] ?? false,
       orderIndex: map['orderIndex'] ?? 0,
       relativePath: map['relativePath'],
+      pendingOldRelativePath: map['pendingOldRelativePath'],
     );
   }
 

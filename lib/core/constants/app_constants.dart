@@ -5,6 +5,9 @@ class AppConstants {
   static const String githubUrl = 'https://github.com/rizzonicola/Scripta';
   static const String appLicense = 'GPL 3.0';
 
+  // Default backend server URL used when the user has never configured one.
+  static const String defaultServerUrl = 'https://scripta.poppi.cc';
+
   // Breakpoints
   static const double mobileBreakpoint = 600.0;
   static const double tabletBreakpoint = 1024.0;

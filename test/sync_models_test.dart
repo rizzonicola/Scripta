@@ -24,6 +24,50 @@ void main() {
       expect(fromJson.deleted, change.deleted);
     });
 
+    test('NoteChange includes old_relative_path when a note was moved', () {
+      const change = NoteChange(
+        relativePath: 'lavoro/progetto.md',
+        content: '# Titolo',
+        updatedAt: 1756900000000,
+        oldRelativePath: 'personale/progetto.md',
+      );
+
+      final jsonMap = change.toJson();
+      expect(jsonMap['old_relative_path'], 'personale/progetto.md');
+      expect(jsonMap['is_folder'], false);
+
+      final fromJson = NoteChange.fromJson(jsonMap);
+      expect(fromJson.oldRelativePath, 'personale/progetto.md');
+      expect(fromJson.isFolder, false);
+    });
+
+    test('NoteChange omits old_relative_path when not moving', () {
+      const change = NoteChange(
+        relativePath: 'nota.md',
+        content: 'contenuto',
+        updatedAt: 1756900000000,
+      );
+
+      final jsonMap = change.toJson();
+      expect(jsonMap.containsKey('old_relative_path'), isFalse);
+    });
+
+    test('NoteChange serializes empty folder markers with is_folder true', () {
+      const change = NoteChange(
+        relativePath: 'lavoro/archivio',
+        content: '',
+        updatedAt: 1756900000000,
+        isFolder: true,
+      );
+
+      final jsonMap = change.toJson();
+      expect(jsonMap['is_folder'], true);
+
+      final fromJson = NoteChange.fromJson(jsonMap);
+      expect(fromJson.isFolder, true);
+      expect(fromJson.relativePath, 'lavoro/archivio');
+    });
+
     test('SyncResponse parses accepted and server_wins correctly', () {
       final jsonMap = {
         'accepted': [

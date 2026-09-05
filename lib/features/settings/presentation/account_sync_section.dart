@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../sync/providers/sync_provider.dart';
 
@@ -252,7 +253,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 controller: _serverUrlController,
                 decoration: InputDecoration(
                   labelText: l10n.serverUrlLabel,
-                  hintText: 'http://localhost:8080',
+                  hintText: AppConstants.defaultServerUrl,
                   prefixIcon: const Icon(Icons.dns_outlined, size: 20),
                   border: const OutlineInputBorder(),
                   contentPadding:

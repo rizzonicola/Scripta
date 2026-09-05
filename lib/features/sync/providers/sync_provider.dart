@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/services/secure_storage_service.dart';
 import '../../../core/services/sync_api_service.dart';
 import '../../folders/models/folder_node.dart';
@@ -27,11 +28,25 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   static const _prefInactivitySeconds = 'scripta_sync_inactivity_seconds';
   static const _prefLastSyncTime = 'scripta_last_sync_timestamp';
 
+  /// Number of sequential attempts made before a connection/network failure
+  /// is considered final and the status indicator flips to Offline.
+  static const int _maxRetryAttempts = 3;
+
+  /// Delay between retry attempts.
+  static const Duration _retryDelay = Duration(milliseconds: 1500);
+
+  /// Interval for the background connectivity watchdog that keeps the
+  /// online/offline indicator accurate even when no sync is otherwise
+  /// triggered (e.g. the user isn't editing notes).
+  static const Duration _connectivityPollInterval = Duration(seconds: 25);
+
   final Ref _ref;
   final SyncApiService _apiService;
   final SecureStorageService _secureStorage;
   Timer? _inactivityTimer;
   Timer? _noteSwitchDebounceTimer;
+  Timer? _folderStructureDebounceTimer;
+  Timer? _connectivityTimer;
   late final Future<void> initialized;
 
   SyncNotifier(this._ref, this._apiService, this._secureStorage)
@@ -43,6 +58,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   void dispose() {
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
+    _folderStructureDebounceTimer?.cancel();
+    _connectivityTimer?.cancel();
     super.dispose();
   }
 
@@ -61,7 +78,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         : null;
 
     final savedServerUrl =
-        await _secureStorage.getServerUrl() ?? 'http://localhost:8080';
+        await _secureStorage.getServerUrl() ?? AppConstants.defaultServerUrl;
     final savedUsername = await _secureStorage.getUsername();
     final savedToken = await _secureStorage.getAuthToken();
 
@@ -74,7 +91,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       syncOnAppLifecycle: lifecycleSync,
       syncOnNoteSwitch: noteSwitchSync,
       syncOnInactivity: inactivitySync,
-      inactivitySeconds: inactivitySeconds.clamp(10, 3600),
+      inactivitySeconds: inactivitySeconds.clamp(10, 300),
       serverUrl: savedServerUrl,
       username: () => savedUsername,
       isAuthenticated: hasToken,
@@ -84,6 +101,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // Initial health check if server url is present
     if (savedServerUrl.isNotEmpty && mounted) {
       await checkConnection();
+    }
+
+    if (hasToken) {
+      _startConnectivityWatchdog();
     }
 
     // If authenticated and launch sync enabled, trigger sync & fetch remote settings
@@ -98,8 +119,84 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
   }
 
+  /// Starts (or restarts) the periodic background connectivity check that
+  /// keeps the online/offline indicator reactive even without an explicit
+  /// sync trigger. Safe to call multiple times; it cancels any previous
+  /// timer first to avoid leaking duplicate periodic timers.
+  void _startConnectivityWatchdog() {
+    _connectivityTimer?.cancel();
+    _connectivityTimer = Timer.periodic(_connectivityPollInterval, (_) {
+      if (!mounted || state.isSyncing) return;
+      if (!state.isAuthenticated) {
+        _connectivityTimer?.cancel();
+        return;
+      }
+      checkConnection();
+    });
+  }
+
+  void _stopConnectivityWatchdog() {
+    _connectivityTimer?.cancel();
+    _connectivityTimer = null;
+  }
+
+  /// True when the error represents a connectivity/timeout problem (as
+  /// opposed to an authenticated/HTTP-level error), and therefore eligible
+  /// for the automatic retry mechanism.
+  bool _isTransientNetworkError(Object error) {
+    if (error is SyncApiException) {
+      // A SyncApiException with no status code means the request never
+      // reached / completed against the server in a way that produced an
+      // HTTP response (e.g. wrapped timeout), so treat it as transient.
+      return error.statusCode == null;
+    }
+    // Anything else (SocketException, TimeoutException, http.ClientException,
+    // etc.) reaching this point means the request itself failed at the
+    // transport level.
+    return true;
+  }
+
+  /// Runs [action] with up to [_maxRetryAttempts] sequential attempts,
+  /// waiting [_retryDelay] between tries. Only retries transient
+  /// connection/timeout style failures; anything else (e.g. a 401) is
+  /// rethrown immediately without retry.
+  Future<T> _withNetworkRetry<T>(Future<T> Function() action) async {
+    Object lastError = const SyncApiException('Errore di connessione sconosciuto');
+
+    for (int attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
+      try {
+        return await action();
+      } catch (e) {
+        lastError = e;
+        final isLastAttempt = attempt == _maxRetryAttempts;
+        if (!_isTransientNetworkError(e) || isLastAttempt) {
+          rethrow;
+        }
+        await Future.delayed(_retryDelay);
+      }
+    }
+
+    // Unreachable in practice (loop either returns or rethrows), but keeps
+    // the analyzer happy about a guaranteed return/throw.
+    throw lastError;
+  }
+
+  /// Pings the server health endpoint, retrying up to [_maxRetryAttempts]
+  /// times (with a short delay in between) before concluding the server is
+  /// genuinely unreachable. Updates [SyncConfig.isOnline] reactively so the
+  /// status indicator in the UI reflects the real connection state
+  /// immediately, without requiring an app restart.
   Future<bool> checkConnection() async {
-    final isOnline = await _apiService.checkHealth(state.serverUrl);
+    bool isOnline = false;
+
+    for (int attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
+      isOnline = await _apiService.checkHealth(state.serverUrl);
+      if (isOnline) break;
+      if (attempt < _maxRetryAttempts) {
+        await Future.delayed(_retryDelay);
+      }
+    }
+
     if (!mounted) return isOnline;
     state = state.copyWith(isOnline: isOnline);
     return isOnline;
@@ -117,10 +214,12 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     );
 
     try {
-      final response = await _apiService.login(
-        baseUrl: serverUrl,
-        username: username,
-        password: password,
+      final response = await _withNetworkRetry(
+        () => _apiService.login(
+          baseUrl: serverUrl,
+          username: username,
+          password: password,
+        ),
       );
 
       await _secureStorage.saveAuthToken(response.token);
@@ -135,6 +234,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         isSyncing: false,
         lastError: () => null,
       );
+
+      _startConnectivityWatchdog();
 
       // Fetch remote settings & run initial sync
       await fetchRemoteUserSettings();
@@ -154,6 +255,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
   Future<void> logout() async {
     _inactivityTimer?.cancel();
+    _noteSwitchDebounceTimer?.cancel();
+    _folderStructureDebounceTimer?.cancel();
+    _stopConnectivityWatchdog();
     await _secureStorage.clearAuth();
     state = state.copyWith(
       isAuthenticated: false,
@@ -179,6 +283,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     state = state.copyWith(syncOnNoteSwitch: value);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_prefNoteSwitchSync, value);
+    // Immediately cancel any debounce timer already in flight so a disabled
+    // toggle can't still trigger a sync moments later.
+    if (!value) {
+      _noteSwitchDebounceTimer?.cancel();
+    }
   }
 
   Future<void> setSyncOnInactivity(bool value) async {
@@ -205,7 +314,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _inactivityTimer = Timer(
       Duration(seconds: state.inactivitySeconds),
       () {
-        if (mounted && !state.isSyncing) {
+        // Re-check the toggle at execution time too: it may have been
+        // disabled after the timer was scheduled but before it fired.
+        if (mounted && !state.isSyncing && state.syncOnInactivity) {
           triggerSync();
         }
       },
@@ -218,6 +329,21 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
     _noteSwitchDebounceTimer?.cancel();
     _noteSwitchDebounceTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted && !state.isSyncing && state.syncOnNoteSwitch) {
+        triggerSync();
+      }
+    });
+  }
+
+  /// Hook for folder structure changes (new folder, move, rename) so newly
+  /// created empty folders and note moves reach the backend promptly
+  /// without waiting for an unrelated note edit to trigger a sync.
+  void onFolderStructureChanged() {
+    if (!state.isAuthenticated) return;
+
+    _folderStructureDebounceTimer?.cancel();
+    _folderStructureDebounceTimer =
+        Timer(const Duration(milliseconds: 600), () {
       if (mounted && !state.isSyncing) {
         triggerSync();
       }
@@ -228,6 +354,15 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   void onAppPaused() {
     if (state.isAuthenticated && state.syncOnAppLifecycle && !state.isSyncing) {
       triggerSync();
+    }
+  }
+
+  /// Hook for app resuming to the foreground: re-validates connectivity
+  /// immediately so the status indicator doesn't show stale information
+  /// after the device was asleep, on a different network, etc.
+  void onAppResumed() {
+    if (state.isAuthenticated && !state.isSyncing) {
+      checkConnection();
     }
   }
 
@@ -268,6 +403,23 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     return '$sanitizedTitle.md';
   }
 
+  /// Recursively collects the full relative path of every folder in the
+  /// tree, so empty folders (with no notes inside them) still get a record
+  /// sent to the backend and therefore persist as real directories.
+  List<String> _collectAllFolderPaths(List<FolderNode> nodes, [String prefix = '']) {
+    final paths = <String>[];
+    for (final node in nodes) {
+      final current = prefix.isEmpty ? node.name : '$prefix/${node.name}';
+      if (current.trim().isNotEmpty) {
+        paths.add(current);
+      }
+      if (node.children.isNotEmpty) {
+        paths.addAll(_collectAllFolderPaths(node.children, current));
+      }
+    }
+    return paths;
+  }
+
   /// Synchronizes notes bidirectionally with the server (Last-Write-Wins)
   Future<bool> triggerSync({bool force = false}) async {
     if (!state.isAuthenticated || state.isSyncing) return false;
@@ -279,14 +431,19 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
     // Fast-path optimization:
     // If no notes were modified locally since lastSyncTime and no tombstones exist,
-    // skip network calls unless force is requested.
+    // skip the (expensive) data sync call unless force is requested. We still
+    // verify actual connectivity below so the online/offline indicator never
+    // goes stale just because nothing needed to be uploaded.
     final lastSync = state.lastSyncTime;
     final hasTombstones = notesNotifier.tombstones.isNotEmpty;
+    final hasPendingMoves =
+        notesState.notes.any((n) => n.pendingOldRelativePath != null);
     final hasModifiedNotes = lastSync == null ||
         notesState.notes.any((n) => n.updatedAt.isAfter(lastSync));
 
-    if (!force && !hasTombstones && !hasModifiedNotes) {
-      return true;
+    if (!force && !hasTombstones && !hasModifiedNotes && !hasPendingMoves) {
+      final isOnline = await checkConnection();
+      return isOnline;
     }
 
     final token = await _secureStorage.getAuthToken();
@@ -309,8 +466,21 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // 1. Prepare active notes
       for (final note in notesState.notes) {
         final relPath = _resolveRelativePath(note, folderState.rootFolders);
+        String? oldPathForPayload;
+
         if (note.relativePath != relPath) {
-          notesNotifier.updateNoteRelativePath(note.id, relPath);
+          // Only forward an old_relative_path when this really is a move
+          // (i.e. the note previously existed at a different path on the
+          // server), not for brand-new notes being synced for the first time.
+          if (note.pendingOldRelativePath != null &&
+              note.pendingOldRelativePath != relPath) {
+            oldPathForPayload = note.pendingOldRelativePath;
+          }
+          notesNotifier.updateNoteRelativePath(
+            note.id,
+            relPath,
+            clearPendingMove: true,
+          );
         }
 
         changes.add(
@@ -319,6 +489,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             content: note.content,
             updatedAt: note.updatedAt.millisecondsSinceEpoch,
             deleted: false,
+            oldRelativePath: oldPathForPayload,
           ),
         );
       }
@@ -340,14 +511,33 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         }
       }
 
-      // 3. Send sync request to server
-      final response = await _apiService.syncNotes(
-        baseUrl: state.serverUrl,
-        token: token,
-        notes: changes,
+      // 3. Ensure folder structure persists on the server, including
+      // folders that currently contain no notes at all.
+      final folderPaths = _collectAllFolderPaths(folderState.rootFolders);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final folderPath in folderPaths) {
+        changes.add(
+          NoteChange(
+            relativePath: folderPath,
+            content: '',
+            updatedAt: now,
+            deleted: false,
+            isFolder: true,
+          ),
+        );
+      }
+
+      // 4. Send sync request to server, retrying transient network/timeout
+      // failures automatically before giving up.
+      final response = await _withNetworkRetry(
+        () => _apiService.syncNotes(
+          baseUrl: state.serverUrl,
+          token: token,
+          notes: changes,
+        ),
       );
 
-      // 4. Purge confirmed tombstones
+      // 5. Purge confirmed tombstones
       final acceptedTombstonePaths = response.accepted
           .where((r) => r.deleted)
           .map((r) => r.relativePath)
@@ -356,7 +546,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         await notesNotifier.purgeTombstones(acceptedTombstonePaths);
       }
 
-      // 5. Apply server wins (server has newer timestamp or new note)
+      // 6. Apply server wins (server has newer timestamp or new note)
       for (final serverWin in response.serverWins) {
         String? targetFolderId;
         final parts = serverWin.relativePath.split('/');
@@ -383,14 +573,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         );
       }
 
-      final now = DateTime.now();
+      final syncedAt = DateTime.now();
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt(_prefLastSyncTime, now.millisecondsSinceEpoch);
+      await prefs.setInt(_prefLastSyncTime, syncedAt.millisecondsSinceEpoch);
 
       state = state.copyWith(
         isOnline: true,
         isSyncing: false,
-        lastSyncTime: () => now,
+        lastSyncTime: () => syncedAt,
         lastSyncMessage: () => 'Sincronizzato (${response.accepted.length} accettate, ${response.serverWins.length} aggiornate)',
         lastError: () => null,
       );
@@ -400,15 +590,16 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       final isAuthError = e is SyncApiException && e.statusCode == 401;
       state = state.copyWith(
         isAuthenticated: isAuthError ? false : state.isAuthenticated,
-        isOnline: !isAuthError,
+        isOnline: isAuthError ? state.isOnline : false,
         isSyncing: false,
         lastError: () => e is SyncApiException ? e.message : e.toString(),
         lastSyncMessage: () => isAuthError
             ? 'Sessione scaduta: effettua nuovamente l\'accesso'
-            : 'Sincronizzazione non riuscita',
+            : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       if (isAuthError) {
         await _secureStorage.clearAuth();
+        _stopConnectivityWatchdog();
       }
       return false;
     }
@@ -421,15 +612,20 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (token == null) return;
 
     try {
-      final remoteSettings = await _apiService.getUserSettings(
-        baseUrl: state.serverUrl,
-        token: token,
+      final remoteSettings = await _withNetworkRetry(
+        () => _apiService.getUserSettings(
+          baseUrl: state.serverUrl,
+          token: token,
+        ),
       );
       _ref.read(settingsProvider.notifier).applyRemoteSettings(remoteSettings);
     } catch (e) {
       if (e is SyncApiException && e.statusCode == 401) {
         state = state.copyWith(isAuthenticated: false);
         await _secureStorage.clearAuth();
+        _stopConnectivityWatchdog();
+      } else {
+        state = state.copyWith(isOnline: false);
       }
     }
   }
@@ -441,15 +637,20 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (token == null) return;
 
     try {
-      await _apiService.updateUserSettings(
-        baseUrl: state.serverUrl,
-        token: token,
-        settings: settings,
+      await _withNetworkRetry(
+        () => _apiService.updateUserSettings(
+          baseUrl: state.serverUrl,
+          token: token,
+          settings: settings,
+        ),
       );
     } catch (e) {
       if (e is SyncApiException && e.statusCode == 401) {
         state = state.copyWith(isAuthenticated: false);
         await _secureStorage.clearAuth();
+        _stopConnectivityWatchdog();
+      } else {
+        state = state.copyWith(isOnline: false);
       }
     }
   }

@@ -7,11 +7,24 @@ class NoteChange {
   final int updatedAt; // Unix millis
   final bool deleted;
 
+  /// Previous relative path of the note, set only when the note has been
+  /// moved to a different folder since the last successful sync. Lets the
+  /// backend rename/move the underlying file on disk instead of creating a
+  /// duplicate at the new path.
+  final String? oldRelativePath;
+
+  /// Marks this change as representing a folder (not a note file). Used so
+  /// the backend can materialize/persist empty folders that contain no
+  /// note files yet.
+  final bool isFolder;
+
   const NoteChange({
     required this.relativePath,
     required this.content,
     required this.updatedAt,
     this.deleted = false,
+    this.oldRelativePath,
+    this.isFolder = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -19,6 +32,9 @@ class NoteChange {
         'content': content,
         'updated_at': updatedAt,
         'deleted': deleted,
+        if (oldRelativePath != null && oldRelativePath!.isNotEmpty)
+          'old_relative_path': oldRelativePath,
+        'is_folder': isFolder,
       };
 
   factory NoteChange.fromJson(Map<String, dynamic> json) => NoteChange(
@@ -26,6 +42,8 @@ class NoteChange {
         content: json['content'] as String? ?? '',
         updatedAt: json['updated_at'] as int? ?? 0,
         deleted: json['deleted'] as bool? ?? false,
+        oldRelativePath: json['old_relative_path'] as String?,
+        isFolder: json['is_folder'] as bool? ?? false,
       );
 }
 

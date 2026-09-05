@@ -6,6 +6,7 @@ import '../../../core/services/export_service.dart';
 import '../../../core/theme/color_schemes.dart';
 import '../../folders/models/folder_node.dart';
 import '../../folders/providers/folder_provider.dart';
+import '../../sync/providers/sync_provider.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
 
@@ -83,6 +84,7 @@ class NoteCard extends ConsumerWidget {
                     selected: note.folderId == null,
                     onTap: () {
                       ref.read(notesProvider.notifier).moveNote(note.id, null);
+                      ref.read(syncProvider.notifier).onFolderStructureChanged();
                       Navigator.of(dialogCtx).pop();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -135,6 +137,7 @@ class NoteCard extends ConsumerWidget {
                         selected: isCurrent,
                         onTap: () {
                           ref.read(notesProvider.notifier).moveNote(note.id, item.node.id);
+                          ref.read(syncProvider.notifier).onFolderStructureChanged();
                           Navigator.of(dialogCtx).pop();
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/services/export_service.dart';
 import '../../settings/presentation/settings_view.dart';
+import '../../sync/providers/sync_provider.dart';
 import '../models/folder_node.dart';
 import '../providers/folder_provider.dart';
 
@@ -184,6 +185,7 @@ class FolderTreeView extends ConsumerWidget {
                       val,
                       parentId: parentId,
                     );
+                ref.read(syncProvider.notifier).onFolderStructureChanged();
                 Navigator.of(dialogCtx).pop();
               }
             },
@@ -200,6 +202,7 @@ class FolderTreeView extends ConsumerWidget {
                         controller.text,
                         parentId: parentId,
                       );
+                  ref.read(syncProvider.notifier).onFolderStructureChanged();
                   Navigator.of(dialogCtx).pop();
                 }
               },
@@ -341,6 +344,7 @@ class FolderTreeView extends ConsumerWidget {
                     onTap: () {
                       if (!isAlreadyAtRoot) {
                         ref.read(folderProvider.notifier).moveFolder(nodeToMove.id, null);
+                        ref.read(syncProvider.notifier).onFolderStructureChanged();
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text('Cartella "${nodeToMove.name}" spostata alla radice'),
@@ -395,6 +399,7 @@ class FolderTreeView extends ConsumerWidget {
                         onTap: () {
                           if (!isCurrentParent) {
                             ref.read(folderProvider.notifier).moveFolder(nodeToMove.id, item.node.id);
+                            ref.read(syncProvider.notifier).onFolderStructureChanged();
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text('Cartella "${nodeToMove.name}" spostata in "${item.node.name}"'),

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:scripta/core/constants/app_constants.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/core/services/sync_api_service.dart';
 import 'package:scripta/features/sync/providers/sync_provider.dart';
@@ -63,7 +64,7 @@ void main() {
       await notifier.initialized;
 
       final syncState = container.read(syncProvider);
-      expect(syncState.serverUrl, 'http://localhost:8080');
+      expect(syncState.serverUrl, AppConstants.defaultServerUrl);
       expect(syncState.syncOnAppLaunch, isTrue);
       expect(syncState.syncOnAppLifecycle, isTrue);
       expect(syncState.syncOnNoteSwitch, isTrue);
