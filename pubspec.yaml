@@ -1,0 +1,62 @@
+name: scripta
+description: "Scripta - Minimal, Markdown-First, highly customizable note-taking application."
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: any
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+
+  # Markdown Rendering & Parsing
+  flutter_markdown: ^0.7.3
+  markdown: ^7.2.2
+
+  # Persistence & Storage
+  shared_preferences: ^2.2.3
+  # Database locale (Local-First): sqflite su Android/iOS, sqflite_common_ffi
+  # (via sqlite3 nativo) su desktop (Linux/Windows/macOS). Nessun code-gen
+  # richiesto (a differenza di Drift/Moor), il che rende lo schema in
+  # lib/core/database/app_database.dart puro SQL leggibile e diffabile.
+  sqflite: ^2.3.3+1
+  sqflite_common_ffi: ^2.3.3
+  path: ^1.9.0
+
+  # Fonts & UI Polish
+  google_fonts: ^6.2.1
+
+  # Utilities
+  uuid: ^4.4.0
+  url_launcher: ^6.3.0
+  archive: ^4.2.0
+  path_provider: ^2.1.6
+  file_picker: ^12.2.0
+  flutter_secure_storage: ^11.0.0
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+dependency_overrides:
+  path_provider_android: 2.2.15
+  url_launcher_android: 6.3.14
+
+flutter:
+  uses-material-design: true
+  generate: true
+
+  assets:
+    - assets/icons/
+    - assets/samples/

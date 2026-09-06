@@ -1,0 +1,281 @@
+#include "my_application.h"
+
+#include <flutter_linux/flutter_linux.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/gdkx.h>
+#endif
+
+#include "flutter/generated_plugin_registrant.h"
+
+struct _MyApplication {
+  GtkApplication parent_instance;
+  char** dart_entrypoint_arguments;
+};
+
+G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+// Called when first Flutter frame received.
+static void first_frame_cb(MyApplication* self, FlView* view) {
+  gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+}
+
+static GtkCssProvider* titlebar_css_provider = nullptr;
+static FlView* global_fl_view = nullptr;
+
+static void apply_titlebar_theme(const char* bg_hex, const char* text_hex, const char* border_hex, gboolean is_dark) {
+  GtkSettings* gtk_settings = gtk_settings_get_default();
+  if (gtk_settings != nullptr) {
+    g_object_set(gtk_settings, "gtk-application-prefer-dark-theme", is_dark, NULL);
+  }
+
+  if (titlebar_css_provider != nullptr) {
+    gtk_style_context_remove_provider_for_screen(
+        gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(titlebar_css_provider));
+    g_object_unref(titlebar_css_provider);
+    titlebar_css_provider = nullptr;
+  }
+
+  titlebar_css_provider = gtk_css_provider_new();
+  const char* hover_bg = is_dark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.06)";
+  const char* button_color = is_dark ? "#94a3b8" : "#64748b";
+
+  gchar* css = g_strdup_printf(
+    "headerbar, "
+    "headerbar:backdrop, "
+    "window.csd headerbar, "
+    "window.csd headerbar:backdrop, "
+    "headerbar.default-decoration, "
+    "headerbar.default-decoration:backdrop { "
+    "  background: %s; "
+    "  background-color: %s; "
+    "  background-image: none; "
+    "  border-width: 0 0 1px 0; "
+    "  border-style: solid; "
+    "  border-color: %s; "
+    "  box-shadow: none; "
+    "  color: %s; "
+    "  min-height: 38px; "
+    "  padding: 2px 8px; "
+    "} "
+    "headerbar .title, "
+    "headerbar:backdrop .title, "
+    "headerbar label.title, "
+    "headerbar:backdrop label.title { "
+    "  color: %s; "
+    "  font-weight: 600; "
+    "  font-size: 13px; "
+    "} "
+    "headerbar button.titlebutton, "
+    "headerbar:backdrop button.titlebutton { "
+    "  color: %s; "
+    "  background: transparent; "
+    "  background-color: transparent; "
+    "  background-image: none; "
+    "  border: none; "
+    "  box-shadow: none; "
+    "  border-radius: 6px; "
+    "  padding: 4px 6px; "
+    "} "
+    "headerbar button.titlebutton:hover { "
+    "  color: %s; "
+    "  background-color: %s; "
+    "} "
+    "headerbar button.titlebutton.close:hover { "
+    "  color: #ffffff; "
+    "  background-color: #ef4444; "
+    "} "
+    "window, .background { "
+    "  background-color: %s; "
+    "}",
+    bg_hex, bg_hex, border_hex, text_hex,
+    text_hex,
+    button_color,
+    text_hex, hover_bg,
+    bg_hex
+  );
+
+  gtk_css_provider_load_from_data(titlebar_css_provider, css, -1, nullptr);
+  g_free(css);
+
+  gtk_style_context_add_provider_for_screen(
+      gdk_screen_get_default(),
+      GTK_STYLE_PROVIDER(titlebar_css_provider),
+      GTK_STYLE_PROVIDER_PRIORITY_USER);
+
+  if (global_fl_view != nullptr) {
+    GdkRGBA bg_rgba;
+    if (gdk_rgba_parse(&bg_rgba, bg_hex)) {
+      fl_view_set_background_color(global_fl_view, &bg_rgba);
+    }
+  }
+}
+
+static void window_method_call_cb(FlMethodChannel* channel,
+                                  FlMethodCall* method_call,
+                                  gpointer user_data) {
+  const gchar* method = fl_method_call_get_name(method_call);
+  if (g_strcmp0(method, "updateTitleBarTheme") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      FlValue* bg_val = fl_value_lookup_string(args, "backgroundColor");
+      FlValue* text_val = fl_value_lookup_string(args, "textColor");
+      FlValue* border_val = fl_value_lookup_string(args, "borderColor");
+      FlValue* dark_val = fl_value_lookup_string(args, "isDark");
+
+      const char* bg = bg_val ? fl_value_get_string(bg_val) : "#16191d";
+      const char* text = text_val ? fl_value_get_string(text_val) : "#f1f5f9";
+      const char* border = border_val ? fl_value_get_string(border_val) : "#282d35";
+      gboolean is_dark = dark_val ? fl_value_get_bool(dark_val) : TRUE;
+
+      apply_titlebar_theme(bg, text, border, is_dark);
+    }
+    g_autoptr(FlMethodResponse) response = FL_METHOD_RESPONSE(
+        fl_method_success_response_new(nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+  } else {
+    g_autoptr(FlMethodResponse) response = FL_METHOD_RESPONSE(
+        fl_method_not_implemented_response_new());
+    fl_method_call_respond(method_call, response, nullptr);
+  }
+}
+
+// Implements GApplication::activate.
+static void my_application_activate(GApplication* application) {
+  MyApplication* self = MY_APPLICATION(application);
+  GtkWindow* window =
+      GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+
+  // Use a header bar when running in GNOME as this is the common style used
+  // by applications and is the setup most users will be using (e.g. Ubuntu
+  // desktop).
+  // If running on X and not using GNOME then just use a traditional title bar
+  // in case the window manager does more exotic layout, e.g. tiling.
+  // If running on Wayland assume the header bar will work (may need changing
+  // if future cases occur).
+  gboolean use_header_bar = TRUE;
+#ifdef GDK_WINDOWING_X11
+  GdkScreen* screen = gtk_window_get_screen(window);
+  if (GDK_IS_X11_SCREEN(screen)) {
+    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
+    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
+      use_header_bar = FALSE;
+    }
+  }
+#endif
+
+  // Apply default dark titlebar styling with priority USER to guarantee override of system theme
+  apply_titlebar_theme("#20242a", "#f1f5f9", "#323842", TRUE);
+
+  if (use_header_bar) {
+    GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
+    gtk_widget_show(GTK_WIDGET(header_bar));
+    gtk_header_bar_set_title(header_bar, "Scripta");
+    gtk_header_bar_set_show_close_button(header_bar, TRUE);
+    gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
+  } else {
+    gtk_window_set_title(window, "Scripta");
+  }
+
+  gtk_window_set_default_size(window, 1200, 780);
+
+  g_autoptr(FlDartProject) project = fl_dart_project_new();
+  fl_dart_project_set_dart_entrypoint_arguments(
+      project, self->dart_entrypoint_arguments);
+
+  FlView* view = fl_view_new(project);
+  global_fl_view = view;
+  GdkRGBA background_color;
+  gdk_rgba_parse(&background_color, "#16191d");
+  fl_view_set_background_color(view, &background_color);
+  gtk_widget_show(GTK_WIDGET(view));
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+
+  // Show the window when Flutter renders.
+  // Requires the view to be realized so we can start rendering.
+  g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
+                           self);
+  gtk_widget_realize(GTK_WIDGET(view));
+
+  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+
+  // Register window method channel for dynamic theme synchronization
+  FlEngine* engine = fl_view_get_engine(view);
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  g_autoptr(FlBinaryMessenger) messenger = fl_engine_get_binary_messenger(engine);
+  g_autoptr(FlMethodChannel) channel = fl_method_channel_new(
+      messenger, "io.github.scripta/window", FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(
+      channel, window_method_call_cb, self, nullptr);
+
+  gtk_widget_grab_focus(GTK_WIDGET(view));
+}
+
+// Implements GApplication::local_command_line.
+static gboolean my_application_local_command_line(GApplication* application,
+                                                  gchar*** arguments,
+                                                  int* exit_status) {
+  MyApplication* self = MY_APPLICATION(application);
+  // Strip out the first argument as it is the binary name.
+  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
+
+  g_autoptr(GError) error = nullptr;
+  if (!g_application_register(application, nullptr, &error)) {
+    g_warning("Failed to register: %s", error->message);
+    *exit_status = 1;
+    return TRUE;
+  }
+
+  g_application_activate(application);
+  *exit_status = 0;
+
+  return TRUE;
+}
+
+// Implements GApplication::startup.
+static void my_application_startup(GApplication* application) {
+  // MyApplication* self = MY_APPLICATION(object);
+
+  // Perform any actions required at application startup.
+
+  G_APPLICATION_CLASS(my_application_parent_class)->startup(application);
+}
+
+// Implements GApplication::shutdown.
+static void my_application_shutdown(GApplication* application) {
+  // MyApplication* self = MY_APPLICATION(object);
+
+  // Perform any actions required at application shutdown.
+
+  G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
+}
+
+// Implements GObject::dispose.
+static void my_application_dispose(GObject* object) {
+  MyApplication* self = MY_APPLICATION(object);
+  g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
+}
+
+static void my_application_class_init(MyApplicationClass* klass) {
+  G_APPLICATION_CLASS(klass)->activate = my_application_activate;
+  G_APPLICATION_CLASS(klass)->local_command_line =
+      my_application_local_command_line;
+  G_APPLICATION_CLASS(klass)->startup = my_application_startup;
+  G_APPLICATION_CLASS(klass)->shutdown = my_application_shutdown;
+  G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
+}
+
+static void my_application_init(MyApplication* self) {}
+
+MyApplication* my_application_new() {
+  // Set the program name to the application ID, which helps various systems
+  // like GTK and desktop environments map this running application to its
+  // corresponding .desktop file. This ensures better integration by allowing
+  // the application to be recognized beyond its binary name.
+  g_set_prgname(APPLICATION_ID);
+
+  return MY_APPLICATION(g_object_new(my_application_get_type(),
+                                     "application-id", APPLICATION_ID, "flags",
+                                     G_APPLICATION_NON_UNIQUE, nullptr));
+}
