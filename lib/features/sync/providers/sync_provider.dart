@@ -450,7 +450,20 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
     // Flush di eventuali modifiche testo ancora in debounce, così anche
     // l'ultima battitura rientra in questo giro di sync.
-    _ref.read(notesProvider.notifier).flushPendingSaves();
+    //
+    // CRITICO: questo `await` è OBBLIGATORIO. flushPendingSaves() scrive su
+    // SQLite; le righe subito sotto interrogano lo STESSO database per
+    // decidere cosa è "dirty" (listDirtySince). Se questa scrittura non
+    // viene realmente attesa (come accadeva in precedenza, quando
+    // flushPendingSaves era `void` e usava una scrittura fire-and-forget),
+    // la query dirty può eseguirsi PRIMA che l'ultima modifica sia stata
+    // committata: risultato, dirtyFolders/dirtyNotes risultano vuoti, si
+    // imbocca il fast-path qui sotto e la sync ritorna "successo" senza aver
+    // MAI contattato il server. Era esattamente il bug osservato su
+    // pulsante manuale, avvio app, inattività e lifecycle: l'unico trigger
+    // che sembrava funzionare (chiusura/cambio nota) lo faceva solo perché
+    // il suo debounce di 600ms nascondeva per caso la race.
+    await _ref.read(notesProvider.notifier).flushPendingSaves();
 
     final cursor = await _syncMetaDao.getSyncCursor();
     final dirtyFolders = await _foldersDao.listDirtySince(cursor);
