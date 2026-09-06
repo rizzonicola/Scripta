@@ -10,7 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  flatpak:
+  build-flutter:
+    name: Build Flutter Linux Bundle
     runs-on: ubuntu-latest
 
     steps:
@@ -26,23 +27,42 @@ jobs:
       - name: Install Linux Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev libjson-glib-dev flatpak flatpak-builder
-
-      - name: Add Flathub and Install Runtimes
-        run: |
-          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y flathub org.freedesktop.Sdk//24.08 org.freedesktop.Platform//24.08
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev libjson-glib-dev
 
       - name: Build Flutter Linux
         run: |
           flutter pub get
           flutter build linux --release
 
-      - name: Prepare Bundle Directory for Flatpak
+      - name: Prepare Bundle Directory
         run: |
-          mkdir -p bundle linux/bundle
+          mkdir -p bundle
           cp -r build/linux/*/release/bundle/* bundle/
-          cp -r build/linux/*/release/bundle/* linux/bundle/
+
+      - name: Upload Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: bundle/
+          retention-days: 1
+
+  flatpak:
+    name: Package Flatpak
+    needs: build-flutter
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Flutter Linux Bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-bundle
+          path: bundle
 
       - name: Build Flatpak Package
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
@@ -50,6 +70,7 @@ jobs:
           bundle: Scripta.flatpak
           manifest-path: linux/packaging/io.github.scripta.Scripta.json
           cache-key: flatpak-builder-${{ github.sha }}
+          verbose: true
 
       - name: Upload Flatpak Artifact to Release
         uses: softprops/action-gh-release@v2
