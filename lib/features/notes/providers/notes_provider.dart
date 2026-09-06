@@ -65,7 +65,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
   @override
   void dispose() {
-    flushPendingSaves();
+    // dispose() non può essere async: qui il flush resta best-effort
+    // (fire-and-forget) perché non c'è più alcun chiamante che possa
+    // attenderlo in modo sensato. Tutti gli altri chiamanti "vivi"
+    // (in particolare SyncNotifier.triggerSync) DEVONO invece attendere
+    // realmente il Future restituito da flushPendingSaves, altrimenti la
+    // sync rischia di leggere il database PRIMA che questa scrittura sia
+    // stata effettivamente committata (vedi flushPendingSaves).
+    unawaited(flushPendingSaves());
     super.dispose();
   }
 
@@ -106,13 +113,29 @@ class NotesNotifier extends StateNotifier<NotesState> {
     );
   }
 
-  void flushPendingSaves() {
+  /// Cancella il debounce di autosave pendente e scrive IMMEDIATAMENTE (e in
+  /// modo realmente atteso) l'ultima versione della nota attiva su SQLite.
+  ///
+  /// CRITICO: questo metodo deve restituire un `Future<void>` che i
+  /// chiamanti awaitano davvero quando la scrittura deve essere garantita
+  /// prima di un'operazione successiva (in primis `SyncNotifier.triggerSync`,
+  /// che subito dopo interroga `listDirtySince` per decidere cosa inviare al
+  /// server). In precedenza questo metodo era `void` e usava
+  /// `unawaited(_dao.upsert(...))`: il chiamante non aveva modo di sapere
+  /// quando la scrittura fosse realmente completata, quindi una query
+  /// "dirty" lanciata subito dopo poteva arrivare PRIMA che l'upsert fosse
+  /// stato committato sul database, facendo risultare "nulla da
+  /// sincronizzare" anche quando in realtà c'era una modifica pendente
+  /// (bug osservato su: pulsante manuale, avvio app, inattività, lifecycle;
+  /// il trigger su cambio/chiusura nota "funzionava per caso" solo perché
+  /// introduce un debounce di 600ms che nascondeva la race).
+  Future<void> flushPendingSaves() async {
     if (_saveDebounceTimer != null) {
       _saveDebounceTimer!.cancel();
       _saveDebounceTimer = null;
       final note = activeNote;
       if (note != null) {
-        unawaited(_dao.upsert(note.toRow()));
+        await _dao.upsert(note.toRow());
       }
     }
   }
@@ -162,7 +185,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
   void selectNote(String? id) {
     if (state.activeNoteId != id) {
-      flushPendingSaves();
+      // Fire-and-forget qui è accettabile: si sta solo cambiando la nota
+      // attiva in UI, non si sta per interrogare "cosa è dirty" subito dopo
+      // (a differenza di SyncNotifier.triggerSync, che invece DEVE attendere).
+      unawaited(flushPendingSaves());
       final sorted = _sortNotes(state.notes, state.sortOrder);
       state = state.copyWith(notes: sorted, activeNoteId: () => id);
     }
@@ -173,7 +199,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   }
 
   Future<void> setSortOrder(NoteSortOrder order) async {
-    flushPendingSaves();
+    unawaited(flushPendingSaves());
     final sorted = _sortNotes(state.notes, order);
     state = state.copyWith(notes: sorted, sortOrder: order);
     final prefs = await SharedPreferences.getInstance();
@@ -181,7 +207,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   }
 
   void reorderNotes(int oldIndex, int newIndex) {
-    flushPendingSaves();
+    unawaited(flushPendingSaves());
     if (oldIndex < newIndex) {
       newIndex -= 1;
     }
@@ -207,7 +233,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   }
 
   NoteModel createNote({String? folderId}) {
-    flushPendingSaves();
+    unawaited(flushPendingSaves());
     final now = DateTime.now();
     final newNote = NoteModel(
       id: _uuid.v4(),
