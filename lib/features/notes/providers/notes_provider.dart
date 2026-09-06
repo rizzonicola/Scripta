@@ -57,6 +57,48 @@ class NotesNotifier extends StateNotifier<NotesState> {
   final _uuid = const Uuid();
   Timer? _saveDebounceTimer;
 
+  /// La nota con modifiche testuali non ancora scritte su SQLite, catturata
+  /// ESPLICITAMENTE al momento della battitura (vedi [_debouncedPersist]).
+  ///
+  /// QUESTA è la vera causa radice del bug di sincronizzazione, residua
+  /// anche dopo aver reso `flushPendingSaves()` un `Future<void>` atteso:
+  /// la versione precedente di `flushPendingSaves()` non riscriveva QUESTA
+  /// nota, ma rileggeva `activeNote`, cioè la deriva a runtime da
+  /// `state.activeNoteId`. Questo funziona SOLO quando chi chiama il flush
+  /// è la stessa UI dell'editor, che per costruzione flusha PRIMA di
+  /// cambiare `activeNoteId` (vedi `selectNote`, `note_editor_pane.dart`).
+  ///
+  /// `SyncNotifier.triggerSync()`, però, non è la UI dell'editor: vive in un
+  /// provider completamente separato e chiama `flushPendingSaves()` da
+  /// trigger esterni (pulsante manuale, avvio app, lifecycle, inattività)
+  /// che non hanno alcun controllo né alcuna garanzia su cosa sia
+  /// `activeNoteId` in quel preciso istante. Se, quando quel flush esterno
+  /// arriva, `activeNoteId` è già `null` (nessuna nota aperta in quel
+  /// momento) oppure punta a una nota diversa da quella che aveva davvero
+  /// una modifica in sospeso, `activeNote` restituisce la nota SBAGLIATA (o
+  /// nessuna): l'upsert scrive la nota sbagliata (o non scrive nulla), la
+  /// modifica testuale resta sporca solo nel debounce mai committato, e
+  /// `listDirtySince` — interrogata subito dopo — non la trova. Risultato
+  /// osservato: il pulsante manuale e i trigger automatici mostrano
+  /// "successo" (perché tecnicamente hanno contattato o verificato il
+  /// server) ma non inviano MAI la modifica realmente pendente; l'unico
+  /// caso che funzionava per davvero (chiusura/cambio nota) lo faceva solo
+  /// perché quel percorso flusha ESPLICITAMENTE la nota giusta PRIMA di
+  /// alterare `activeNoteId`, mascherando il difetto.
+  ///
+  /// La correzione: tracciare direttamente l'OGGETTO nota in sospeso (non
+  /// il suo id derivato da uno stato che può cambiare sotto i piedi), così
+  /// `flushPendingSaves()` scrive sempre e solo la modifica realmente in
+  /// sospeso, indipendentemente da chi la chiama e da cosa sia
+  /// `activeNoteId` in quel momento.
+  NoteModel? _pendingNote;
+
+  /// Riferimento alla scrittura più recente avviata (dal debounce naturale
+  /// o da un flush esplicito), cosicché un flush concorrente possa
+  /// attendere una scrittura già in corso invece di limitarsi a controllare
+  /// se un timer esiste ancora.
+  Future<void>? _pendingWrite;
+
   NotesNotifier({NotesDao? dao})
       : _dao = dao ?? NotesDao(),
         super(const NotesState()) {
@@ -114,36 +156,63 @@ class NotesNotifier extends StateNotifier<NotesState> {
   }
 
   /// Cancella il debounce di autosave pendente e scrive IMMEDIATAMENTE (e in
-  /// modo realmente atteso) l'ultima versione della nota attiva su SQLite.
+  /// modo realmente atteso) l'ultima versione della nota con modifiche non
+  /// ancora salvate su SQLite.
   ///
-  /// CRITICO: questo metodo deve restituire un `Future<void>` che i
-  /// chiamanti awaitano davvero quando la scrittura deve essere garantita
-  /// prima di un'operazione successiva (in primis `SyncNotifier.triggerSync`,
-  /// che subito dopo interroga `listDirtySince` per decidere cosa inviare al
-  /// server). In precedenza questo metodo era `void` e usava
-  /// `unawaited(_dao.upsert(...))`: il chiamante non aveva modo di sapere
-  /// quando la scrittura fosse realmente completata, quindi una query
-  /// "dirty" lanciata subito dopo poteva arrivare PRIMA che l'upsert fosse
-  /// stato committato sul database, facendo risultare "nulla da
-  /// sincronizzare" anche quando in realtà c'era una modifica pendente
-  /// (bug osservato su: pulsante manuale, avvio app, inattività, lifecycle;
-  /// il trigger su cambio/chiusura nota "funzionava per caso" solo perché
-  /// introduce un debounce di 600ms che nascondeva la race).
+  /// CRITICO (parte 1, già presente): questo metodo restituisce un
+  /// `Future<void>` che i chiamanti DEVONO awaitare quando la scrittura va
+  /// garantita prima di un'operazione successiva (in primis
+  /// `SyncNotifier.triggerSync`, che subito dopo interroga `listDirtySince`
+  /// per decidere cosa inviare al server).
+  ///
+  /// CRITICO (parte 2, la causa radice reale): la scrittura avviene sempre
+  /// sull'oggetto [_pendingNote] catturato esplicitamente al momento della
+  /// battitura, MAI su `activeNote`/`state.activeNoteId`. Chi chiama questo
+  /// metodo da fuori dal contesto dell'editor (tipicamente
+  /// `SyncNotifier.triggerSync`, invocato da pulsante manuale, avvio app,
+  /// lifecycle o timer di inattività) non ha alcuna garanzia su cosa sia
+  /// `activeNoteId` in quel momento: potrebbe essere già `null`, oppure
+  /// puntare a una nota diversa da quella che aveva davvero una modifica
+  /// pendente. Derivare la nota da salvare da quello stato mutabile è
+  /// esattamente ciò che permetteva alla modifica realmente in sospeso di
+  /// non essere mai scritta (quindi mai vista da `listDirtySince`, quindi
+  /// mai inviata al server, pur con l'`await` già corretto). Il trigger su
+  /// cambio/chiusura nota risultava l'unico affidabile solo perché quel
+  /// percorso (`selectNote`) flusha esplicitamente la nota giusta PRIMA di
+  /// alterare `activeNoteId`, mascherando per coincidenza il difetto.
   Future<void> flushPendingSaves() async {
-    if (_saveDebounceTimer != null) {
-      _saveDebounceTimer!.cancel();
-      _saveDebounceTimer = null;
-      final note = activeNote;
-      if (note != null) {
-        await _dao.upsert(note.toRow());
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = null;
+
+    final pending = _pendingNote;
+    _pendingNote = null;
+    if (pending != null) {
+      _pendingWrite = _dao.upsert(pending.toRow());
+    }
+
+    // Attende anche una scrittura eventualmente già avviata (dal debounce
+    // naturale o da un flush precedente) e non ancora completata: senza
+    // questo, un flush concorrente potrebbe considerarsi "finito" mentre
+    // l'upsert reale è ancora in volo.
+    final inFlight = _pendingWrite;
+    if (inFlight != null) {
+      await inFlight;
+      if (identical(_pendingWrite, inFlight)) {
+        _pendingWrite = null;
       }
     }
   }
 
   void _debouncedPersist(NoteModel note) {
+    _pendingNote = note;
     _saveDebounceTimer?.cancel();
     _saveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
-      unawaited(_dao.upsert(note.toRow()));
+      _saveDebounceTimer = null;
+      final toWrite = _pendingNote;
+      _pendingNote = null;
+      if (toWrite != null) {
+        _pendingWrite = _dao.upsert(toWrite.toRow());
+      }
     });
   }
 
