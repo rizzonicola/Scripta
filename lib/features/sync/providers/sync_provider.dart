@@ -451,32 +451,36 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // Flush di eventuali modifiche testo ancora in debounce, così anche
     // l'ultima battitura rientra in questo giro di sync.
     //
-    // CRITICO: questo `await` è OBBLIGATORIO. flushPendingSaves() scrive su
-    // SQLite; le righe subito sotto interrogano lo STESSO database per
-    // decidere cosa è "dirty" (listDirtySince). Se questa scrittura non
-    // viene realmente attesa (come accadeva in precedenza, quando
-    // flushPendingSaves era `void` e usava una scrittura fire-and-forget),
-    // la query dirty può eseguirsi PRIMA che l'ultima modifica sia stata
-    // committata: risultato, dirtyFolders/dirtyNotes risultano vuoti, si
-    // imbocca il fast-path qui sotto e la sync ritorna "successo" senza aver
-    // MAI contattato il server. Era esattamente il bug osservato su
-    // pulsante manuale, avvio app, inattività e lifecycle: l'unico trigger
-    // che sembrava funzionare (chiusura/cambio nota) lo faceva solo perché
-    // il suo debounce di 600ms nascondeva per caso la race.
+    // CRITICO: questo `await` è OBBLIGATORIO, MA da solo non basta più a
+    // garantire la correttezza. La vera causa radice del bug (pulsante
+    // manuale, avvio app, inattività e lifecycle che non inviavano mai i
+    // dati pur mostrando "successo") era in NotesNotifier.flushPendingSaves:
+    // scriveva `activeNote` (derivato da `state.activeNoteId`, uno stato
+    // mutabile su cui questo provider non ha alcun controllo) invece della
+    // nota che aveva DAVVERO una modifica in sospeso. È stata corretta lì
+    // (vedi il commento su `NotesNotifier._pendingNote`): ora
+    // `flushPendingSaves()` scrive sempre la modifica realmente pendente,
+    // indipendentemente da chi lo chiama e da cosa sia `activeNoteId` in
+    // questo istante.
     await _ref.read(notesProvider.notifier).flushPendingSaves();
 
     final cursor = await _syncMetaDao.getSyncCursor();
     final dirtyFolders = await _foldersDao.listDirtySince(cursor);
     final dirtyNotes = await _notesDao.listDirtySince(cursor);
 
-    // Fast-path: nulla da inviare e la sync non è forzata. Verifichiamo
-    // comunque la connettività reale, così l'indicatore online/offline non
-    // resta mai stantio solo perché non c'era nulla da spingere.
-    if (!force && dirtyFolders.isEmpty && dirtyNotes.isEmpty) {
-      final isOnline = await checkConnection();
-      return isOnline;
-    }
-
+    // NOTA: qui esisteva un "fast-path" che, quando dirtyFolders/dirtyNotes
+    // risultavano vuoti, si limitava a un checkConnection() e restituiva
+    // `true` ("successo") SENZA MAI contattare l'endpoint di sync. Finché
+    // il flush sopra poteva mancare la modifica realmente pendente (vedi
+    // causa radice), questo fast-path trasformava quel bug silenzioso in un
+    // falso "Sincronizzazione avvenuta con successo" mostrato in UI, pur
+    // non avendo mai inviato nulla al server: esattamente il sintomo
+    // riportato sul pulsante manuale. Va rimosso: un trigger di sync deve
+    // sempre tradursi in una vera richiesta al server (anche con liste
+    // vuote, per effettuare comunque il pull di eventuali modifiche remote
+    // da altri dispositivi) quando l'utente è autenticato, mai in un
+    // "successo" dedotto solo dalla connettività. `force` resta nella firma
+    // per compatibilità, ma non serve più per garantire un giro reale.
     final token = await _secureStorage.getAuthToken();
     if (token == null || token.isEmpty) {
       state = state.copyWith(isAuthenticated: false);
