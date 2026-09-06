@@ -151,8 +151,25 @@ class FoldersDao {
   /// assenza di connettività l'utente veda immediatamente sparire l'intero
   /// sottoalbero, senza dover attendere la prossima sync.
   Future<void> cascadeSoftDelete(String rootFolderId, int now, {required Future<void> Function(String folderId, int now) deleteNotesInFolder}) async {
-    final queue = <String>[rootFolderId];
     final db = await _db;
+
+    // La radice stessa deve essere marcata cancellata: il ciclo qui sotto si
+    // occupa SOLO di propagare ai discendenti (li scopre interrogando i figli
+    // di "current", mai il nodo stesso). Senza questo UPDATE la riga della
+    // cartella radice resterebbe con deleted_at = NULL nel DB locale: non
+    // verrebbe mai inclusa in listDirtySince (updated_at non è cambiato) e
+    // quindi non verrebbe mai inviata al server, e al successivo
+    // refreshFromDb() post-sync (getActive() = WHERE deleted_at IS NULL)
+    // ricomparirebbe nell'albero — vuota, perché figli e note nel frattempo
+    // sono stati correttamente cancellati.
+    await db.update(
+      'folders',
+      {'updated_at': now, 'deleted_at': now},
+      where: 'id = ?',
+      whereArgs: [rootFolderId],
+    );
+
+    final queue = <String>[rootFolderId];
 
     while (queue.isNotEmpty) {
       final current = queue.removeAt(0);
