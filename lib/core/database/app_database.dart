@@ -74,7 +74,19 @@ class AppDatabase {
         // reattività della UI durante scritture frequenti (autosave a ogni
         // battitura, con debounce, mentre l'utente continua a leggere/
         // scorrere altre note).
-        await db.execute('PRAGMA journal_mode = WAL');
+        //
+        // IMPORTANTE: "PRAGMA journal_mode = WAL" restituisce una riga con
+        // il nome del journal mode effettivamente impostato. Su Android il
+        // plugin sqflite instrada `execute()` verso
+        // SQLiteDatabase.execSQL(), che accetta SOLO statement che non
+        // producono un result set: per un PRAGMA che ne produce uno va
+        // usato `rawQuery` (o `rawUpdate`), altrimenti si ottiene
+        // "Queries can be performed using SQLiteDatabase query or
+        // rawQuery methods only." e l'apertura del database fallisce ad
+        // ogni avvio, portando con sé anche note/cartelle non salvate e
+        // sync mai avviata.
+        await db.rawQuery('PRAGMA journal_mode = WAL');
+        // "PRAGMA foreign_keys = ON" non restituisce righe: execute() va bene.
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: (db, version) async {
