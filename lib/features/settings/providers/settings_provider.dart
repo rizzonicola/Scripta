@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/utils/haptics_helper.dart';
 import '../../sync/models/sync_models.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/app_settings.dart';
@@ -35,6 +36,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final fontSize = prefs.getDouble(AppConstants.prefFontSize) ?? 16.0;
     final lineHeight = prefs.getDouble(AppConstants.prefLineHeight) ?? 1.6;
 
+    final hapticStr = prefs.getString(AppConstants.prefHapticIntensity);
+    final hapticIntensity = HapticIntensity.values.firstWhere(
+      (v) => v.name == hapticStr,
+      orElse: () => HapticIntensity.light,
+    );
+
     state = AppSettings(
       themeMode: themeMode,
       selectedThemeId: themeId,
@@ -42,6 +49,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       fontFamily: fontFamily,
       fontSize: fontSize,
       lineHeight: lineHeight,
+      hapticIntensity: hapticIntensity,
     );
   }
 
@@ -154,6 +162,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(AppConstants.prefLineHeight, height);
     _pushRemoteSettings();
+  }
+
+  /// Impostazione puramente locale (non fa parte del payload di sync
+  /// remoto): il feedback tattile è una preferenza legata al dispositivo
+  /// fisico in uso, non un'impostazione "di aspetto" condivisibile tra
+  /// account/dispositivi diversi.
+  Future<void> setHapticIntensity(HapticIntensity intensity) async {
+    state = state.copyWith(hapticIntensity: intensity);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(AppConstants.prefHapticIntensity, intensity.name);
   }
 }
 

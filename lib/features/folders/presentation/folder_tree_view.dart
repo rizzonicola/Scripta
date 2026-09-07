@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/services/export_service.dart';
+import '../../../core/services/import_service.dart';
 import '../../settings/presentation/settings_view.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/folder_node.dart';
@@ -60,6 +61,8 @@ class FolderTreeView extends ConsumerWidget {
                   onSelected: (val) {
                     if (val == 'export_all') {
                       ExportService.exportAllAsZip(context, ref);
+                    } else if (val == 'import') {
+                      ImportService.showImportOptions(context, ref);
                     }
                   },
                   itemBuilder: (ctx) => [
@@ -70,6 +73,16 @@ class FolderTreeView extends ConsumerWidget {
                           Icon(Icons.archive_outlined, size: 18),
                           SizedBox(width: 8),
                           Text('Esporta tutte le note (ZIP)'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'import',
+                      child: Row(
+                        children: [
+                          Icon(Icons.file_upload_outlined, size: 18),
+                          SizedBox(width: 8),
+                          Text('Importa'),
                         ],
                       ),
                     ),

@@ -26,4 +26,26 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+
+    <!--
+      Package visibility (Android 11+ / API 30+): senza questa dichiarazione
+      esplicita, `canLaunchUrl`/`launchUrl` di url_launcher su un Uri http/https
+      possono non trovare alcuna Activity risolvibile (il sistema nasconde per
+      default le app in grado di gestire l'intent, anche se un browser è
+      installato), facendo fallire silenziosamente l'apertura del link al
+      repository GitHub dal modale "Info / About" pur funzionando su Linux
+      (dove questa restrizione non esiste).
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+    </queries>
 </manifest>

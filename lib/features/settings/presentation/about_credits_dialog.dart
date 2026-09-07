@@ -126,12 +126,7 @@ class AboutCreditsDialog extends StatelessWidget {
                   ),
                 ),
                 trailing: const Icon(Icons.open_in_new, size: 16),
-                onTap: () async {
-                  final uri = Uri.parse(AppConstants.githubUrl);
-                  if (await canLaunchUrl(uri)) {
-                    await launchUrl(uri);
-                  }
-                },
+                onTap: () => _openGithubRepo(context),
               ),
             ],
           ),
@@ -143,6 +138,51 @@ class AboutCreditsDialog extends StatelessWidget {
           child: Text(l10n.cancel),
         ),
       ],
+    );
+  }
+
+  /// Apre il repository GitHub nel browser esterno.
+  ///
+  /// FIX: la versione precedente faceva da guardia con `canLaunchUrl` prima
+  /// di chiamare `launchUrl` (senza `mode`). Su Android 11+ (API 30+),
+  /// `canLaunchUrl` per un Uri http/https può restituire `false` per via
+  /// delle regole di "package visibility" anche quando un browser
+  /// perfettamente funzionante è installato (a meno di dichiarare
+  /// esplicitamente l'intent in `<queries>` in AndroidManifest.xml, vedi
+  /// fix aggiunto lì): il tap risultava quindi silenziosamente ignorato SOLO
+  /// su Android, mentre su Linux (dove questa restrizione non esiste)
+  /// funzionava. La correzione è duplice: 1) il manifest dichiara ora
+  /// esplicitamente gli intent VIEW http/https; 2) qui chiamiamo
+  /// direttamente `launchUrl` con `LaunchMode.externalApplication` (che
+  /// forza l'apertura in un'app/browser esterno invece di un WebView
+  /// in-app, comportamento più prevedibile per un link a un repository),
+  /// e gestiamo sia l'esito `false` sia una eventuale eccezione con un
+  /// fallback visibile all'utente invece di fallire in silenzio.
+  static Future<void> _openGithubRepo(BuildContext context) async {
+    final uri = Uri.parse(AppConstants.githubUrl);
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && context.mounted) {
+        _showLaunchFailureSnackbar(context);
+      }
+    } catch (_) {
+      if (context.mounted) {
+        _showLaunchFailureSnackbar(context);
+      }
+    }
+  }
+
+  static void _showLaunchFailureSnackbar(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Impossibile aprire il browser. Link: ${AppConstants.githubUrl}',
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 

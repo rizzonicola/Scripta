@@ -25,4 +25,5 @@ class AppConstants {
   static const String prefLineHeight = 'scripta_line_height';
   static const String prefSortMode = 'scripta_sort_mode';
   static const String prefOnboardingCompleted = 'scripta_onboarding_completed';
+  static const String prefHapticIntensity = 'scripta_haptic_intensity';
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/utils/haptics_helper.dart';
 
 class AppSettings {
   final ThemeMode themeMode;
@@ -7,6 +8,7 @@ class AppSettings {
   final String fontFamily;
   final double fontSize;
   final double lineHeight;
+  final HapticIntensity hapticIntensity;
 
   const AppSettings({
     this.themeMode = ThemeMode.system,
@@ -15,6 +17,7 @@ class AppSettings {
     this.fontFamily = 'Inter',
     this.fontSize = 16.0,
     this.lineHeight = 1.6,
+    this.hapticIntensity = HapticIntensity.light,
   });
 
   AppSettings copyWith({
@@ -24,6 +27,7 @@ class AppSettings {
     String? fontFamily,
     double? fontSize,
     double? lineHeight,
+    HapticIntensity? hapticIntensity,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -32,6 +36,7 @@ class AppSettings {
       fontFamily: fontFamily ?? this.fontFamily,
       fontSize: fontSize ?? this.fontSize,
       lineHeight: lineHeight ?? this.lineHeight,
+      hapticIntensity: hapticIntensity ?? this.hapticIntensity,
     );
   }
 }

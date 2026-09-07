@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/color_schemes.dart';
+import '../../../core/utils/haptics_helper.dart';
 import '../providers/settings_provider.dart';
 import 'about_credits_dialog.dart';
 import 'account_sync_section.dart';
@@ -329,6 +330,47 @@ class SettingsView extends ConsumerWidget {
                     onChanged: (val) {
                       ref.read(settingsProvider.notifier).setLineHeight(val);
                     },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Section: Haptic Feedback (vibrazione)
+          _buildSectionHeader(theme, 'Feedback Tattile'),
+          Card(
+            child: RadioGroup<HapticIntensity>(
+              groupValue: settings.hapticIntensity,
+              onChanged: (intensity) {
+                if (intensity != null) {
+                  ref
+                      .read(settingsProvider.notifier)
+                      .setHapticIntensity(intensity);
+                }
+              },
+              child: Column(
+                children: [
+                  RadioListTile<HapticIntensity>(
+                    title: const Text('Disattivata'),
+                    subtitle: const Text('Nessuna vibrazione'),
+                    secondary: const Icon(Icons.vibration_rounded),
+                    value: HapticIntensity.off,
+                  ),
+                  RadioListTile<HapticIntensity>(
+                    title: const Text('Leggera (Default)'),
+                    subtitle: const Text(
+                      'Un tocco impercettibile solo all\'inizio della selezione',
+                    ),
+                    secondary: const Icon(Icons.vibration_rounded),
+                    value: HapticIntensity.light,
+                  ),
+                  RadioListTile<HapticIntensity>(
+                    title: const Text('Forte'),
+                    subtitle: const Text('Feedback tattile più marcato'),
+                    secondary: const Icon(Icons.vibration_rounded),
+                    value: HapticIntensity.strong,
                   ),
                 ],
               ),

@@ -266,6 +266,13 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 decoration: InputDecoration(
                   labelText: l10n.usernameLabel,
                   hintText: 'mario.rossi',
+                  // Il testo di esempio deve leggersi chiaramente come
+                  // placeholder (non come un valore già inserito): usiamo
+                  // il colore semantico `hintColor` del tema attivo, che si
+                  // adatta automaticamente a ciascuna delle palette
+                  // chiare/scure dell'app, invece di ereditare lo stesso
+                  // colore/peso del testo digitato dall'utente.
+                  hintStyle: TextStyle(color: theme.hintColor),
                   prefixIcon:
                       const Icon(Icons.person_outline_rounded, size: 20),
                   border: const OutlineInputBorder(),

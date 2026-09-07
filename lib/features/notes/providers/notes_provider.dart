@@ -301,6 +301,60 @@ class NotesNotifier extends StateNotifier<NotesState> {
     }
   }
 
+  /// Inserisce in blocco un elenco di note nuove (usato dall'importazione,
+  /// vedi `import_service.dart`), es. da un backup ZIP o da una cartella
+  /// locale di file Markdown.
+  ///
+  /// PERCHÉ un metodo dedicato invece di richiamare N volte [createNote] +
+  /// [updateNote] in un loop:
+  ///  - [updateNote] passa dal debounce di autosave condiviso
+  ///    ([_pendingNote]/[_debouncedPersist]), pensato per UNA sola nota
+  ///    attiva sotto digitazione dell'utente: chiamarlo in sequenza per N
+  ///    note diverse farebbe sì che solo l'ULTIMA di ogni "burst" venga
+  ///    davvero scritta su disco dal timer, perdendo silenziosamente il
+  ///    contenuto delle altre. Qui ogni nota viene invece scritta subito
+  ///    (`_dao.upsert`), esattamente come già fa [createNote] per la singola
+  ///    nota vuota creata da UI.
+  ///  - Un solo aggiornamento dello stato Riverpod per l'intero batch (non
+  ///    uno per nota), per evitare N rebuild della UI durante un import di
+  ///    centinaia di note.
+  ///  - Non tocca [activeNoteId]: l'utente resta sulla nota che stava
+  ///    guardando, l'importazione avviene "in background" rispetto alla UI.
+  ///
+  /// Non sovrascrive MAI note esistenti: ogni voce importata riceve sempre
+  /// un nuovo id (`_uuid.v4()`), quindi il risultato è per costruzione solo
+  /// additivo rispetto ai dati già presenti.
+  Future<int> importNotesBulk(
+    List<({String title, String content, String? folderId})> items,
+  ) async {
+    if (items.isEmpty) return 0;
+
+    final now = DateTime.now();
+    final baseIndex = state.notes.length;
+    final newNotes = <NoteModel>[
+      for (var i = 0; i < items.length; i++)
+        NoteModel(
+          id: _uuid.v4(),
+          title: items[i].title,
+          content: items[i].content,
+          folderId: items[i].folderId,
+          createdAt: now,
+          updatedAt: now,
+          orderIndex: baseIndex + i,
+        ),
+    ];
+
+    state = state.copyWith(
+      notes: _sortNotes([...state.notes, ...newNotes], state.sortOrder),
+    );
+
+    for (final note in newNotes) {
+      unawaited(_dao.upsert(note.toRow()));
+    }
+
+    return newNotes.length;
+  }
+
   NoteModel createNote({String? folderId}) {
     unawaited(flushPendingSaves());
     final now = DateTime.now();
