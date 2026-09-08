@@ -110,18 +110,18 @@ class ImportService {
   ) async {
     try {
       // file_picker v12+ (architettura federata): FilePicker.platform è
-      // stato rimosso, i metodi sono ora statici diretti su FilePicker.
-      // pickFiles() continua a restituire FilePickerResult? (nullable),
-      // solo l'accessor '.platform' è sparito.
+      // stato rimosso E pickFiles() ora restituisce direttamente
+      // List<PlatformFile> (lista vuota se annullato), non più un
+      // FilePickerResult? con proprietà '.files'.
       final result = await FilePicker.pickFiles(
         dialogTitle: 'Seleziona un backup ZIP da importare',
         type: FileType.custom,
         allowedExtensions: ['zip'],
         withData: true,
       );
-      if (result == null || result.files.isEmpty) return;
+      if (result.isEmpty) return;
 
-      final picked = result.files.single;
+      final picked = result.single;
       Uint8List? bytes = picked.bytes;
       if (bytes == null && picked.path != null) {
         bytes = await File(picked.path!).readAsBytes();
