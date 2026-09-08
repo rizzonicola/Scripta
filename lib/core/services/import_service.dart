@@ -7,21 +7,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
-import '../database/notes_dao.dart';
-import '../database/folders_dao.dart';
-import '../database/sync_meta_dao.dart';
+import '../database/app_database.dart';
 import '../../features/notes/models/note_model.dart';
 import '../../features/folders/models/folder_node.dart';
 
 final importServiceProvider = Provider<ImportService>((ref) {
-  return ImportService(
-    ref.read(notesDaoProvider),
-    ref.read(foldersDaoProvider),
-    ref.read(syncMetaDaoProvider),
-  );
+  final db = ref.read(appDatabaseProvider);
+  return ImportService(db);
 });
-
-enum ImportSourceType { jsonBackup, zipArchive, markdownFiles, markdownFolder }
 
 class ImportResult {
   final int notesImported;
@@ -41,17 +34,11 @@ class ImportResult {
 }
 
 class ImportService {
-  final NotesDao _notesDao;
-  final FoldersDao _foldersDao;
-  final SyncMetaDao _syncMetaDao;
+  final AppDatabase _db;
 
-  ImportService(
-    this._notesDao,
-    this._foldersDao,
-    this._syncMetaDao,
-  );
+  ImportService(this._db);
 
-  /// Helper safe pick per FilePicker API 12.2.0 (restituisce PlatformFile direttamente)
+  /// Safe helper per FilePicker API 12.2.0
   Future<List<PlatformFile>> _pickFilesSafe({
     required FileType type,
     List<String>? allowedExtensions,
@@ -70,7 +57,7 @@ class ImportService {
     }
   }
 
-  /// Helper safe directory picker per FilePicker API 12.2.0
+  /// Safe helper per directory picker su FilePicker API 12.2.0
   Future<String?> _getDirectoryPathSafe() async {
     try {
       final dirPath = await FilePicker.getDirectoryPath();
@@ -117,15 +104,13 @@ class ImportService {
         );
       }
 
-      final now = DateTime.now().millisecondsSinceEpoch;
-
       if (decoded.containsKey('folders') && decoded['folders'] is List) {
         final rawFolders = decoded['folders'] as List;
         for (final item in rawFolders) {
           try {
             if (item is Map<String, dynamic>) {
               final folder = FolderNode.fromJson(item);
-              await _foldersDao.insertFolder(folder);
+              await _db.into(_db.folders).insertOnConflictUpdate(folder.toCompanion());
               foldersCount++;
             }
           } catch (e) {
@@ -141,14 +126,7 @@ class ImportService {
           try {
             if (item is Map<String, dynamic>) {
               final note = NoteModel.fromJson(item);
-              await _notesDao.insertNote(note);
-
-              await _syncMetaDao.setSyncState(
-                entityType: 'note',
-                entityId: note.id,
-                action: 'upsert',
-                updatedAt: now,
-              );
+              await _db.into(_db.notes).insertOnConflictUpdate(note.toCompanion());
               notesCount++;
             }
           } catch (e) {
@@ -196,7 +174,7 @@ class ImportService {
       final archive = ZipDecoder().decodeBytes(bytes);
       final folderPathToIdMap = <String, String>{};
 
-      final now = DateTime.now().millisecondsSinceEpoch;
+      final now = DateTime.now();
 
       for (final archiveFile in archive) {
         if (archiveFile.isDirectory) {
@@ -209,17 +187,16 @@ class ImportService {
               ? folderPathToIdMap[parentDirPath]
               : null;
 
-          final folderId = 'folder_${now}_${folderPathToIdMap.length}';
+          final folderId = 'folder_${now.millisecondsSinceEpoch}_${folderPathToIdMap.length}';
 
           final folder = FolderNode(
             id: folderId,
             name: folderName,
             parentId: parentId,
-            createdAt: now,
             updatedAt: now,
           );
 
-          await _foldersDao.insertFolder(folder);
+          await _db.into(_db.folders).insertOnConflictUpdate(folder.toCompanion());
           folderPathToIdMap[cleanDirPath] = folderId;
           foldersCount++;
         }
@@ -240,7 +217,7 @@ class ImportService {
             final contentBytes = archiveFile.content as List<int>;
             final content = utf8.decode(contentBytes, allowMalformed: true);
 
-            final noteId = 'note_${now}_$notesCount';
+            final noteId = 'note_${now.millisecondsSinceEpoch}_$notesCount';
 
             final note = NoteModel(
               id: noteId,
@@ -251,15 +228,7 @@ class ImportService {
               updatedAt: now,
             );
 
-            await _notesDao.insertNote(note);
-
-            await _syncMetaDao.setSyncState(
-              entityType: 'note',
-              entityId: noteId,
-              action: 'upsert',
-              updatedAt: now,
-            );
-
+            await _db.into(_db.notes).insertOnConflictUpdate(note.toCompanion());
             notesCount++;
           }
         }
@@ -296,7 +265,7 @@ class ImportService {
       );
     }
 
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = DateTime.now();
 
     for (final platformFile in pickedFiles) {
       if (platformFile.path == null) {
@@ -309,7 +278,7 @@ class ImportService {
         final title = p.basenameWithoutExtension(file.path);
         final content = await file.readAsString();
 
-        final noteId = 'note_${now}_$notesCount';
+        final noteId = 'note_${now.millisecondsSinceEpoch}_$notesCount';
 
         final note = NoteModel(
           id: noteId,
@@ -320,15 +289,7 @@ class ImportService {
           updatedAt: now,
         );
 
-        await _notesDao.insertNote(note);
-
-        await _syncMetaDao.setSyncState(
-          entityType: 'note',
-          entityId: noteId,
-          action: 'upsert',
-          updatedAt: now,
-        );
-
+        await _db.into(_db.notes).insertOnConflictUpdate(note.toCompanion());
         notesCount++;
       } catch (e) {
         skippedCount++;
@@ -372,7 +333,7 @@ class ImportService {
     }
 
     final folderMap = <String, String>{};
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = DateTime.now();
 
     try {
       final entities = await rootDir.list(recursive: true, followLinks: false).toList();
@@ -389,17 +350,16 @@ class ImportService {
               ? folderMap[parentRelative]
               : targetFolderId;
 
-          final newFolderId = 'folder_${now}_${folderMap.length}';
+          final newFolderId = 'folder_${now.millisecondsSinceEpoch}_${folderMap.length}';
 
           final folder = FolderNode(
             id: newFolderId,
             name: folderName,
             parentId: parentId,
-            createdAt: now,
             updatedAt: now,
           );
 
-          await _foldersDao.insertFolder(folder);
+          await _db.into(_db.folders).insertOnConflictUpdate(folder.toCompanion());
           folderMap[relativePath] = newFolderId;
           foldersCount++;
         }
@@ -419,7 +379,7 @@ class ImportService {
                   : targetFolderId;
 
               final content = await entity.readAsString();
-              final noteId = 'note_${now}_$notesCount';
+              final noteId = 'note_${now.millisecondsSinceEpoch}_$notesCount';
 
               final note = NoteModel(
                 id: noteId,
@@ -430,15 +390,7 @@ class ImportService {
                 updatedAt: now,
               );
 
-              await _notesDao.insertNote(note);
-
-              await _syncMetaDao.setSyncState(
-                entityType: 'note',
-                entityId: noteId,
-                action: 'upsert',
-                updatedAt: now,
-              );
-
+              await _db.into(_db.notes).insertOnConflictUpdate(note.toCompanion());
               notesCount++;
             } catch (e) {
               skippedCount++;
