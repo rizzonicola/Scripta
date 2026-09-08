@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
@@ -117,52 +116,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   late _SelectionHapticBinder _titleHaptics;
   late _SelectionHapticBinder _contentHaptics;
 
-  /// Controller esplicito per la `SingleChildScrollView` esterna.
-  ///
-  /// CAUSA RADICE DEL BUG (asimmetria trascina-su vs trascina-giù nel
-  /// ridimensionare una selezione esistente):
-  /// Titolo e corpo condividono un unico `SingleChildScrollView` ancestor:
-  /// il `TextField` del corpo (`maxLines: null`, senza altezza propria) non
-  /// possiede una viewport interna, quindi durante il trascinamento di una
-  /// maniglia di selezione `EditableText` chiede ripetutamente
-  /// all'ancestor `Scrollable` di "portare in vista" l'estremo della
-  /// selezione (`ensureVisible`). Questo, di per sé, non è il difetto: è il
-  /// meccanismo standard e stabile che Flutter usa ovunque (anche un
-  /// singolo `TextField` in una `ListView` funziona così).
-  ///
-  /// Il difetto è nel modo in cui la `SingleChildScrollView` interpreta il
-  /// GESTO stesso. Senza un `dragStartBehavior` esplicito, il valore di
-  /// default (`DragStartBehavior.start`) fa sì che il proprio
-  /// `VerticalDragGestureRecognizer` campioni la posizione iniziale del
-  /// trascinamento al primo movimento "significativo" del dito, non al
-  /// tocco iniziale — un dettaglio che la documentazione ufficiale di
-  /// Flutter segnala esplicitamente come problematico quando, come qui, un
-  /// `GestureDetector`/recognizer annidato (quello privato della maniglia
-  /// di selezione, gestito da `EditableText`) COMPETE nella stessa arena dei
-  /// gesti per lo stesso puntatore. Il risultato è un primo delta di scroll
-  /// calcolato su un punto di partenza diverso da quello realmente toccato
-  /// dall'utente.
-  /// Riprendere (tocca-e-trascina di nuovo) una selezione già esistente
-  /// genera, rispetto a crearne una nuova, molti più micro-gesti di
-  /// aggiustamento consecutivi (correzioni fini della maniglia), quindi
-  /// molte più occasioni per questa ambiguità nell'arena dei gesti — da qui
-  /// l'accumulo di scatti in avanti, il procedere a scatti e l'arresto
-  /// prematuro osservati SOLO trascinando verso l'alto durante un
-  /// ridimensionamento (verso il basso l'errore di campionamento iniziale è
-  /// molto meno percepibile, perché il testo "va incontro" al dito).
-  ///
-  /// FIX: `DragStartBehavior.down` fa campionare la posizione al tocco
-  /// iniziale (`PointerDownEvent`), eliminando il disallineamento — la
-  /// stessa raccomandazione data nella doc ufficiale di
-  /// `DragStartBehavior` proprio per il caso "testo selezionabile dentro
-  /// uno scrollable". Nessuna modifica al layout: stesso identico albero di
-  /// widget di prima.
-  late final ScrollController _panelScrollController;
-
   @override
   void initState() {
     super.initState();
-    _panelScrollController = ScrollController();
     _titleHaptics = _SelectionHapticBinder(
       widget.titleController,
       () => ref.read(settingsProvider).hapticIntensity,
@@ -200,7 +156,6 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   void dispose() {
     _titleHaptics.dispose();
     _contentHaptics.dispose();
-    _panelScrollController.dispose();
     super.dispose();
   }
 
@@ -226,15 +181,6 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
     );
 
     return SingleChildScrollView(
-      controller: _panelScrollController,
-      // Vedi la doc di `_panelScrollController` sopra per il perché è
-      // questa la causa radice dell'asimmetria su/giù.
-      dragStartBehavior: DragStartBehavior.down,
-      // Fisica esplicita (già il default su Android, ma la rendiamo
-      // esplicita per non dipendere da un `ScrollBehavior` ambient che in
-      // futuro potrebbe cambiare piattaforma/fisica sotto i piedi a questo
-      // editor).
-      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(28, 20, 28, 96),
       child: Center(
         child: ConstrainedBox(
