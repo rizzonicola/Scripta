@@ -110,32 +110,35 @@ class ImportService {
   ) async {
     try {
       // file_picker v12+ (architettura federata): FilePicker.platform è
-      // stato rimosso E pickFiles() ora restituisce direttamente
-      // List<PlatformFile> (lista vuota se annullato), non più un
-      // FilePickerResult? con proprietà '.files'.
+      // stato rimosso, pickFiles() ora restituisce direttamente
+      // List<PlatformFile> (lista vuota se annullato), e 'withData'/
+      // 'PlatformFile.bytes' sono deprecati in favore di
+      // PlatformFile.readAsBytes(), che carica i byte on-demand in modo
+      // uniforme su tutte le piattaforme (che il file sia già in memoria o
+      // vada letto da 'path').
       final result = await FilePicker.pickFiles(
         dialogTitle: 'Seleziona un backup ZIP da importare',
         type: FileType.custom,
         allowedExtensions: ['zip'],
-        withData: true,
       );
       if (result.isEmpty) return;
 
       final picked = result.single;
-      Uint8List? bytes = picked.bytes;
-      if (bytes == null && picked.path != null) {
-        bytes = await File(picked.path!).readAsBytes();
-      }
-      if (bytes == null) {
-        _showSnack(context, 'Impossibile leggere il file selezionato.',
-            isError: true);
+      final Uint8List bytes;
+      try {
+        bytes = await picked.readAsBytes();
+      } catch (_) {
+        if (context.mounted) {
+          _showSnack(context, 'Impossibile leggere il file selezionato.',
+              isError: true);
+        }
         return;
       }
 
       await _runImport(
         context,
         ref,
-        () async => _extractFromZipBytes(bytes!),
+        () async => _extractFromZipBytes(bytes),
       );
     } catch (e) {
       _showSnack(context, 'Errore durante la lettura dello ZIP: $e',
