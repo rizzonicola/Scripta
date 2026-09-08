@@ -116,44 +116,52 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   late _SelectionHapticBinder _titleHaptics;
   late _SelectionHapticBinder _contentHaptics;
 
-  /// Scroll controller di proprietà ESCLUSIVA del campo "Contenuto".
+  /// Controller esplicito per la `SingleChildScrollView` esterna.
   ///
-  /// CAUSA RADICE DEL BUG (asimmetria trascina-su vs trascina-giù durante il
-  /// ridimensionamento di una selezione esistente):
-  /// prima di questa modifica l'intero pannello (titolo + divider + corpo)
-  /// viveva dentro un unico `SingleChildScrollView` esterno, con il
-  /// `TextField` del corpo impostato a `maxLines: null` e SENZA un proprio
-  /// `scrollController`. In questa configurazione `EditableText` non ha una
-  /// viewport propria: durante il trascinamento di una maniglia di selezione
-  /// delega l'auto-scroll al più vicino `Scrollable` ANCESTOR (trovato via
-  /// `Scrollable.of(context)`), chiamando ripetutamente
-  /// `ScrollPosition.ensureVisible` per tenere l'estremo della selezione in
-  /// vista.
-  /// Quel percorso è asimmetrico per costruzione: quando la selezione si
-  /// espande verso il basso, il rettangolo-bersaglio richiesto coincide quasi
-  /// sempre con l'area appena resa visibile dal frame precedente (il testo
-  /// "scorre incontro" al dito), quindi le chiamate a `ensureVisible`
-  /// convergono. Quando invece si riprende una selezione già esistente e la
-  /// si trascina verso l'alto, ogni frame richiede un nuovo salto scroll
-  /// basato sulla geometria dell'ancestor `Scrollable` calcolata PRIMA che il
-  /// layout si sia assestato dal salto precedente: le richieste si accumulano
-  /// e competono tra loro, producendo lo scatto in avanti troppo veloce, i
-  /// movimenti a scatti e l'arresto prematuro prima di raggiungere la cima
-  /// osservati in QA.
+  /// CAUSA RADICE DEL BUG (asimmetria trascina-su vs trascina-giù nel
+  /// ridimensionare una selezione esistente):
+  /// Titolo e corpo condividono un unico `SingleChildScrollView` ancestor:
+  /// il `TextField` del corpo (`maxLines: null`, senza altezza propria) non
+  /// possiede una viewport interna, quindi durante il trascinamento di una
+  /// maniglia di selezione `EditableText` chiede ripetutamente
+  /// all'ancestor `Scrollable` di "portare in vista" l'estremo della
+  /// selezione (`ensureVisible`). Questo, di per sé, non è il difetto: è il
+  /// meccanismo standard e stabile che Flutter usa ovunque (anche un
+  /// singolo `TextField` in una `ListView` funziona così).
   ///
-  /// La correzione strutturale è dare al corpo la propria viewport delimitata
-  /// (vedi `Expanded` in `build`) e il proprio `ScrollController` esplicito:
-  /// così `EditableText` gestisce l'auto-scroll durante il trascinamento
-  /// direttamente sulla propria `ScrollPosition`, ricalcolata in modo
-  /// coerente ad ogni frame in entrambe le direzioni — lo stesso percorso,
-  /// stabile, usato da qualunque `TextField` multilinea "normale" con altezza
-  /// vincolata (es. i campi di composizione di un client di messaggistica).
-  late final ScrollController _contentScrollController;
+  /// Il difetto è nel modo in cui la `SingleChildScrollView` interpreta il
+  /// GESTO stesso. Senza un `dragStartBehavior` esplicito, il valore di
+  /// default (`DragStartBehavior.start`) fa sì che il proprio
+  /// `VerticalDragGestureRecognizer` campioni la posizione iniziale del
+  /// trascinamento al primo movimento "significativo" del dito, non al
+  /// tocco iniziale — un dettaglio che la documentazione ufficiale di
+  /// Flutter segnala esplicitamente come problematico quando, come qui, un
+  /// `GestureDetector`/recognizer annidato (quello privato della maniglia
+  /// di selezione, gestito da `EditableText`) COMPETE nella stessa arena dei
+  /// gesti per lo stesso puntatore. Il risultato è un primo delta di scroll
+  /// calcolato su un punto di partenza diverso da quello realmente toccato
+  /// dall'utente.
+  /// Riprendere (tocca-e-trascina di nuovo) una selezione già esistente
+  /// genera, rispetto a crearne una nuova, molti più micro-gesti di
+  /// aggiustamento consecutivi (correzioni fini della maniglia), quindi
+  /// molte più occasioni per questa ambiguità nell'arena dei gesti — da qui
+  /// l'accumulo di scatti in avanti, il procedere a scatti e l'arresto
+  /// prematuro osservati SOLO trascinando verso l'alto durante un
+  /// ridimensionamento (verso il basso l'errore di campionamento iniziale è
+  /// molto meno percepibile, perché il testo "va incontro" al dito).
+  ///
+  /// FIX: `DragStartBehavior.down` fa campionare la posizione al tocco
+  /// iniziale (`PointerDownEvent`), eliminando il disallineamento — la
+  /// stessa raccomandazione data nella doc ufficiale di
+  /// `DragStartBehavior` proprio per il caso "testo selezionabile dentro
+  /// uno scrollable". Nessuna modifica al layout: stesso identico albero di
+  /// widget di prima.
+  late final ScrollController _panelScrollController;
 
   @override
   void initState() {
     super.initState();
-    _contentScrollController = ScrollController();
+    _panelScrollController = ScrollController();
     _titleHaptics = _SelectionHapticBinder(
       widget.titleController,
       () => ref.read(settingsProvider).hapticIntensity,
@@ -191,7 +199,7 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   void dispose() {
     _titleHaptics.dispose();
     _contentHaptics.dispose();
-    _contentScrollController.dispose();
+    _panelScrollController.dispose();
     super.dispose();
   }
 
@@ -216,18 +224,24 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
       color: theme.colorScheme.onSurface,
     );
 
-    // Titolo (+ divider): sezione fissa, NON dentro la viewport scrollabile
-    // del corpo. Cresce naturalmente con `maxLines: null`; non essendo
-    // trascinabile su più "pagine" di testo, non soffre del problema di
-    // auto-scroll durante il ridimensionamento della selezione.
-    final titleSection = Padding(
-      padding: const EdgeInsets.fromLTRB(28, 20, 28, 0),
+    return SingleChildScrollView(
+      controller: _panelScrollController,
+      // Vedi la doc di `_panelScrollController` sopra per il perché è
+      // questa la causa radice dell'asimmetria su/giù.
+      dragStartBehavior: DragStartBehavior.down,
+      // Fisica esplicita (già il default su Android, ma la rendiamo
+      // esplicita per non dipendere da un `ScrollBehavior` ambient che in
+      // futuro potrebbe cambiare piattaforma/fisica sotto i piedi a questo
+      // editor).
+      physics: const ClampingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(28, 20, 28, 96),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 840),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Title Field
               TextField(
                 controller: widget.titleController,
                 onChanged: widget.onTitleChanged,
@@ -244,71 +258,35 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
+
               const SizedBox(height: 12),
               Divider(
                 color: theme.colorScheme.outline.withValues(alpha: 0.25),
                 thickness: 1,
               ),
+              const SizedBox(height: 16),
+
+              // Markdown Body Field
+              TextField(
+                controller: widget.contentController,
+                undoController: widget.undoController,
+                onChanged: widget.onContentChanged,
+                style: contentStyle,
+                maxLines: null,
+                keyboardType: TextInputType.multiline,
+                decoration: InputDecoration(
+                  hintText: l10n.writeMarkdownHere,
+                  hintStyle: contentStyle.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
             ],
           ),
         ),
       ),
-    );
-
-    // Corpo markdown: vincolato in altezza dall'`Expanded` sottostante e
-    // reso `expands: true` con un proprio `scrollController` esplicito.
-    // A differenza di prima, NON è più annidato dentro un
-    // `SingleChildScrollView` esterno: `EditableText` riceve così un vincolo
-    // di altezza definito (dall'`Expanded`) e crea al proprio interno uno
-    // `Scrollable` di sua esclusiva proprietà. L'auto-scroll durante il
-    // trascinamento delle maniglie di selezione avviene quindi direttamente
-    // sulla `ScrollPosition` del campo, ricalcolata coerentemente ad ogni
-    // frame in entrambe le direzioni — non più delegata a un `Scrollable`
-    // ancestor condiviso (e alla sua geometria, potenzialmente non ancora
-    // assestata dal salto del frame precedente), che era la causa
-    // dell'asimmetria giù-fluido / su-instabile.
-    final contentSection = Expanded(
-      child: Padding(
-        padding: const EdgeInsets.only(top: 16),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: TextField(
-              controller: widget.contentController,
-              scrollController: _contentScrollController,
-              undoController: widget.undoController,
-              onChanged: widget.onContentChanged,
-              style: contentStyle,
-              maxLines: null,
-              minLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              keyboardType: TextInputType.multiline,
-              scrollPadding: const EdgeInsets.fromLTRB(28, 0, 28, 96),
-              decoration: InputDecoration(
-                hintText: l10n.writeMarkdownHere,
-                hintStyle: contentStyle.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
-                ),
-                border: InputBorder.none,
-                // Il padding inferiore (96) riproduce lo spazio "di
-                // cortesia" che prima era in fondo al `SingleChildScrollView`
-                // esterno, cosicché l'ultima riga di testo non resti a
-                // ridosso del bordo inferiore dello schermo.
-                contentPadding: const EdgeInsets.fromLTRB(28, 0, 28, 96),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        titleSection,
-        contentSection,
-      ],
     );
   }
 }
