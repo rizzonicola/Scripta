@@ -1,453 +1,461 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
+import '../database/notes_dao.dart';
+import '../database/folders_dao.dart';
+import '../database/sync_meta_dao.dart';
+import '../../features/notes/models/note_model.dart';
 import '../../features/folders/models/folder_node.dart';
-import '../../features/folders/providers/folder_provider.dart';
-import '../../features/notes/providers/notes_provider.dart';
 
-/// Voce grezza estratta da un file (ZIP o filesystem) durante l'import,
-/// ancora priva di un folderId reale: [folderPathSegments] è il percorso
-/// relativo (una cartella per elemento, radice esclusa) che verrà
-/// risolto/creato in [FolderNode] soltanto al momento del commit, per poter
-/// riutilizzare cartelle già esistenti con lo stesso nome invece di
-/// duplicarle.
-class _RawImportEntry {
-  final List<String> folderPathSegments;
-  final String fileName;
-  final String rawContent;
+final importServiceProvider = Provider<ImportService>((ref) {
+  return ImportService(
+    ref.read(notesDaoProvider),
+    ref.read(foldersDaoProvider),
+    ref.read(syncMetaDaoProvider),
+  );
+});
 
-  const _RawImportEntry({
-    required this.folderPathSegments,
-    required this.fileName,
-    required this.rawContent,
+enum ImportSourceType { jsonBackup, zipArchive, markdownFiles, markdownFolder }
+
+class ImportResult {
+  final int notesImported;
+  final int foldersImported;
+  final int skipped;
+  final List<String> errors;
+
+  const ImportResult({
+    required this.notesImported,
+    required this.foldersImported,
+    required this.skipped,
+    required this.errors,
   });
+
+  bool get isSuccess => errors.isEmpty;
+  int get totalImported => notesImported + foldersImported;
 }
 
-/// Importazione di note/cartelle da un backup ZIP (creato da
-/// [ExportService.exportAllAsZip]/[ExportService.exportFolderAsZip]) o da una
-/// cartella scelta direttamente sul filesystem.
-///
-/// PRINCIPI:
-///  - SOLO ADDITIVO: non viene mai modificata o cancellata una nota o una
-///    cartella esistente. Le cartelle il cui nome coincide (case-insensitive)
-///    con una già presente nello stesso "livello" vengono riutilizzate (le
-///    note vengono quindi aggiunte al loro interno); le note vengono SEMPRE
-///    create come nuove entità con un id fresco, mai fatte combaciare con
-///    una esistente, per evitare qualunque rischio di sovrascrittura
-///    distruttiva di contenuto già presente.
-///  - NESSUN BLOCCO DELL'INTERFACCIA: la lettura di file/ZIP di grandi
-///    dimensioni avviene con API asincrone (`Directory.list`, lettura bytes
-///    async) invece delle controparti sincrone, e l'inserimento delle note
-///    nello stato dell'app avviene in un'unica operazione di blocco (vedi
-///    `NotesNotifier.importNotesBulk`) invece che nota per nota.
 class ImportService {
-  ImportService._();
+  final NotesDao _notesDao;
+  final FoldersDao _foldersDao;
+  final SyncMetaDao _syncMetaDao;
 
-  static const _supportedExtensions = ['.md', '.markdown', '.txt'];
+  ImportService(
+    this._notesDao,
+    this._foldersDao,
+    this._syncMetaDao,
+  );
 
-  /// Mostra un piccolo selettore con le due modalità di importazione
-  /// supportate (file ZIP o cartella), richiamato dalla voce "Importa" nel
-  /// menu principale (tre punti) della sidebar delle cartelle.
-  static Future<void> showImportOptions(
-    BuildContext context,
-    WidgetRef ref,
-  ) {
-    return showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetCtx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Row(
-                  children: [
-                    Text(
-                      'Importa note',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder_zip_outlined),
-                title: const Text('Da file ZIP'),
-                subtitle: const Text('Un backup esportato in precedenza'),
-                onTap: () {
-                  Navigator.of(sheetCtx).pop();
-                  importFromZipFile(context, ref);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.drive_folder_upload_outlined),
-                title: const Text('Da cartella'),
-                subtitle: const Text('Una cartella di file .md sul dispositivo'),
-                onTap: () {
-                  Navigator.of(sheetCtx).pop();
-                  importFromFolder(context, ref);
-                },
-              ),
-            ],
-          ),
+  /// Helper safe pick per FilePicker API 12.2.0 (restituisce PlatformFile direttamente)
+  Future<List<PlatformFile>> _pickFilesSafe({
+    required FileType type,
+    List<String>? allowedExtensions,
+    bool allowMultiple = false,
+  }) async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: type,
+        allowedExtensions: allowedExtensions,
+        allowMultiple: allowMultiple,
+      );
+      return files;
+    } catch (e) {
+      debugPrint('Error picking files: $e');
+      return [];
+    }
+  }
+
+  /// Helper safe directory picker per FilePicker API 12.2.0
+  Future<String?> _getDirectoryPathSafe() async {
+    try {
+      final dirPath = await FilePicker.getDirectoryPath();
+      return dirPath;
+    } catch (e) {
+      debugPrint('Error picking directory: $e');
+      return null;
+    }
+  }
+
+  Future<ImportResult> importBackupJson() async {
+    final errors = <String>[];
+    int notesCount = 0;
+    int foldersCount = 0;
+    int skippedCount = 0;
+
+    final picked = await _pickFilesSafe(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+
+    if (picked.isEmpty || picked.first.path == null) {
+      return ImportResult(
+        notesImported: 0,
+        foldersImported: 0,
+        skipped: 0,
+        errors: errors,
+      );
+    }
+
+    final file = File(picked.first.path!);
+
+    try {
+      final rawString = await file.readAsString();
+      final decoded = jsonDecode(rawString);
+
+      if (decoded is! Map<String, dynamic>) {
+        errors.add('Formato JSON non valido: attesa una struttura oggetto.');
+        return ImportResult(
+          notesImported: 0,
+          foldersImported: 0,
+          skipped: 0,
+          errors: errors,
         );
-      },
-    );
-  }
-
-  /// Importa selezionando un singolo file .zip.
-  static Future<void> importFromZipFile(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        dialogTitle: 'Seleziona un backup ZIP da importare',
-        type: FileType.custom,
-        allowedExtensions: ['zip'],
-        withData: true,
-      );
-      if (result == null || result.files.isEmpty) return;
-
-      final picked = result.files.single;
-      Uint8List? bytes = picked.bytes;
-      if (bytes == null && picked.path != null) {
-        bytes = await File(picked.path!).readAsBytes();
-      }
-      if (bytes == null) {
-        _showSnack(context, 'Impossibile leggere il file selezionato.',
-            isError: true);
-        return;
       }
 
-      await _runImport(
-        context,
-        ref,
-        () async => _extractFromZipBytes(bytes!),
-      );
-    } catch (e) {
-      _showSnack(context, 'Errore durante la lettura dello ZIP: $e',
-          isError: true);
-    }
-  }
+      final now = DateTime.now().millisecondsSinceEpoch;
 
-  /// Importa selezionando direttamente una cartella dal filesystem.
-  static Future<void> importFromFolder(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    try {
-      final dirPath = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Seleziona la cartella da importare',
-      );
-      if (dirPath == null) return;
-
-      await _runImport(
-        context,
-        ref,
-        () => _extractFromDirectory(Directory(dirPath)),
-      );
-    } catch (e) {
-      _showSnack(context, 'Errore durante la lettura della cartella: $e',
-          isError: true);
-    }
-  }
-
-  /// Pipeline comune: mostra un indicatore di avanzamento non-bloccante per
-  /// l'utente (ma senza mai freezare l'app, dato che tutto il lavoro pesante
-  /// è asincrono), estrae le voci grezze, le materializza in cartelle/note
-  /// reali e mostra un riepilogo finale.
-  static Future<void> _runImport(
-    BuildContext context,
-    WidgetRef ref,
-    Future<List<_RawImportEntry>> Function() extract,
-  ) async {
-    _showLoadingDialog(context);
-    try {
-      final entries = await extract();
-      final result = await _commitEntries(ref, entries);
-      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-
-      if (entries.isEmpty) {
-        _showSnack(
-          context,
-          'Nessuna nota Markdown trovata da importare.',
-        );
-        return;
-      }
-
-      _showSnack(
-        context,
-        'Importazione completata: ${result.importedNotes} note'
-        '${result.importedFolders > 0 ? ' e ${result.importedFolders} nuove cartelle' : ''}.',
-      );
-    } catch (e) {
-      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-      _showSnack(context, 'Errore durante l\'importazione: $e', isError: true);
-    }
-  }
-
-  static void _showLoadingDialog(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const AlertDialog(
-        content: Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2.5),
-            ),
-            SizedBox(width: 16),
-            Expanded(child: Text('Importazione in corso...')),
-          ],
-        ),
-      ),
-    );
-  }
-
-  static void _showSnack(BuildContext context, String message,
-      {bool isError = false}) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red.shade800 : null,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------
-  // Estrazione: ZIP
-  // ---------------------------------------------------------------------
-
-  static Future<List<_RawImportEntry>> _extractFromZipBytes(
-    Uint8List bytes,
-  ) async {
-    final archive = ZipDecoder().decodeBytes(bytes);
-    final entries = <_RawImportEntry>[];
-
-    for (final file in archive.files) {
-      if (!file.isFile) continue;
-      final normalized = file.name.replaceAll('\\', '/');
-      if (!_hasSupportedExtension(normalized)) continue;
-      // Difesa in profondità: uno ZIP malformato/malevolo non deve poter
-      // referenziare percorsi fuori dalla gerarchia che stiamo costruendo.
-      if (normalized.split('/').contains('..')) continue;
-
-      final segments = normalized.split('/').where((s) => s.isNotEmpty).toList();
-      if (segments.isEmpty) continue;
-      final fileName = segments.removeLast();
-
-      final contentBytes = file.content as List<int>;
-      final rawContent = utf8.decode(contentBytes, allowMalformed: true);
-
-      entries.add(_RawImportEntry(
-        folderPathSegments: segments,
-        fileName: fileName,
-        rawContent: rawContent,
-      ));
-    }
-
-    return entries;
-  }
-
-  // ---------------------------------------------------------------------
-  // Estrazione: cartella su filesystem
-  // ---------------------------------------------------------------------
-
-  static Future<List<_RawImportEntry>> _extractFromDirectory(
-    Directory root,
-  ) async {
-    final entries = <_RawImportEntry>[];
-    final rootPath = root.path.replaceAll('\\', '/');
-
-    // Directory.list (async) invece di listSync: evita di bloccare
-    // l'isolate principale mentre si attraversano cartelle potenzialmente
-    // molto grandi.
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-      final entityPath = entity.path.replaceAll('\\', '/');
-      if (!_hasSupportedExtension(entityPath)) continue;
-
-      var relative = entityPath.startsWith(rootPath)
-          ? entityPath.substring(rootPath.length)
-          : entityPath;
-      if (relative.startsWith('/')) relative = relative.substring(1);
-
-      final segments = relative.split('/').where((s) => s.isNotEmpty).toList();
-      if (segments.isEmpty) continue;
-      final fileName = segments.removeLast();
-
-      String rawContent;
-      try {
-        rawContent = await entity.readAsString();
-      } catch (_) {
-        final bytes = await entity.readAsBytes();
-        rawContent = utf8.decode(bytes, allowMalformed: true);
-      }
-
-      entries.add(_RawImportEntry(
-        folderPathSegments: segments,
-        fileName: fileName,
-        rawContent: rawContent,
-      ));
-    }
-
-    return entries;
-  }
-
-  static bool _hasSupportedExtension(String path) {
-    final lower = path.toLowerCase();
-    return _supportedExtensions.any(lower.endsWith);
-  }
-
-  // ---------------------------------------------------------------------
-  // Commit: risolve/crea cartelle e inserisce le note in blocco
-  // ---------------------------------------------------------------------
-
-  static Future<({int importedNotes, int importedFolders})> _commitEntries(
-    WidgetRef ref,
-    List<_RawImportEntry> entries,
-  ) async {
-    if (entries.isEmpty) return (importedNotes: 0, importedFolders: 0);
-
-    final folderIdByPath = <String, String?>{};
-    var importedFolders = 0;
-    final notesToImport = <({String title, String content, String? folderId})>[];
-
-    for (final entry in entries) {
-      final folderId = _ensureFolderPath(
-        ref,
-        entry.folderPathSegments,
-        folderIdByPath,
-        onFolderCreated: () => importedFolders++,
-      );
-
-      final parsed = _parseTitleAndContent(entry.rawContent, entry.fileName);
-      notesToImport.add((
-        title: parsed.title,
-        content: parsed.content,
-        folderId: folderId,
-      ));
-    }
-
-    final importedNotes = await ref
-        .read(notesProvider.notifier)
-        .importNotesBulk(notesToImport);
-
-    return (importedNotes: importedNotes, importedFolders: importedFolders);
-  }
-
-  /// Risolve la catena di segmenti di percorso in un folderId, riusando le
-  /// cartelle già esistenti con lo stesso nome allo stesso livello (ricerca
-  /// case-insensitive) e creando solo i segmenti mancanti tramite
-  /// [FolderNotifier.addFolder] (già sincrono nello stato in-memory, quindi
-  /// visibile immediatamente alla prossima iterazione).
-  static String? _ensureFolderPath(
-    WidgetRef ref,
-    List<String> segments,
-    Map<String, String?> cache, {
-    required VoidCallback onFolderCreated,
-  }) {
-    if (segments.isEmpty) return null;
-
-    String pathKey = '';
-    String? parentId;
-
-    for (final rawSegment in segments) {
-      final segment = rawSegment.trim().isEmpty ? 'Senza nome' : rawSegment.trim();
-      pathKey = pathKey.isEmpty ? segment.toLowerCase() : '$pathKey/${segment.toLowerCase()}';
-
-      if (cache.containsKey(pathKey)) {
-        parentId = cache[pathKey];
-        continue;
-      }
-
-      final siblings = _siblingsOf(ref, parentId);
-      FolderNode? existing;
-      for (final node in siblings) {
-        if (node.name.toLowerCase() == segment.toLowerCase()) {
-          existing = node;
-          break;
+      if (decoded.containsKey('folders') && decoded['folders'] is List) {
+        final rawFolders = decoded['folders'] as List;
+        for (final item in rawFolders) {
+          try {
+            if (item is Map<String, dynamic>) {
+              final folder = FolderNode.fromJson(item);
+              await _foldersDao.insertFolder(folder);
+              foldersCount++;
+            }
+          } catch (e) {
+            skippedCount++;
+            errors.add('Impossibile importare cartella: $e');
+          }
         }
       }
 
-      final String resolvedId;
-      if (existing != null) {
-        resolvedId = existing.id;
-      } else {
-        final created = ref
-            .read(folderProvider.notifier)
-            .addFolder(segment, parentId: parentId);
-        resolvedId = created.id;
-        onFolderCreated();
-      }
+      if (decoded.containsKey('notes') && decoded['notes'] is List) {
+        final rawNotes = decoded['notes'] as List;
+        for (final item in rawNotes) {
+          try {
+            if (item is Map<String, dynamic>) {
+              final note = NoteModel.fromJson(item);
+              await _notesDao.insertNote(note);
 
-      cache[pathKey] = resolvedId;
-      parentId = resolvedId;
+              await _syncMetaDao.setSyncState(
+                entityType: 'note',
+                entityId: note.id,
+                action: 'upsert',
+                updatedAt: now,
+              );
+              notesCount++;
+            }
+          } catch (e) {
+            skippedCount++;
+            errors.add('Impossibile importare nota: $e');
+          }
+        }
+      }
+    } catch (e) {
+      errors.add('Errore durante il parsing del file JSON: $e');
     }
 
-    return parentId;
+    return ImportResult(
+      notesImported: notesCount,
+      foldersImported: foldersCount,
+      skipped: skippedCount,
+      errors: errors,
+    );
   }
 
-  static List<FolderNode> _siblingsOf(WidgetRef ref, String? parentId) {
-    if (parentId == null) {
-      return ref.read(folderProvider).rootFolders;
-    }
-    final parent = ref.read(folderProvider.notifier).findNode(parentId);
-    return parent?.children ?? const [];
-  }
+  Future<ImportResult> importZipArchive() async {
+    final errors = <String>[];
+    int notesCount = 0;
+    int foldersCount = 0;
+    int skippedCount = 0;
 
-  /// Ricava titolo/contenuto da un file Markdown importato.
-  ///
-  /// Simmetrico rispetto a `ExportService`, che per l'esportazione antepone
-  /// al contenuto grezzo della nota una riga `# Titolo` (solo nel file
-  /// esportato, MAI nel campo `content` salvato nel database): qui, se il
-  /// file importato inizia con un heading di primo livello, lo trattiamo
-  /// come titolo e lo rimuoviamo dal corpo così da non duplicarlo nell'editor
-  /// (che mostra titolo e corpo in due campi separati). Se non è presente
-  /// alcun heading iniziale, il titolo viene derivato dal nome del file.
-  static ({String title, String content}) _parseTitleAndContent(
-    String raw,
-    String fileName,
-  ) {
-    final lines = raw.split('\n');
-    var idx = 0;
-    while (idx < lines.length && lines[idx].trim().isEmpty) {
-      idx++;
-    }
+    final picked = await _pickFilesSafe(
+      type: FileType.custom,
+      allowedExtensions: ['zip'],
+    );
 
-    if (idx < lines.length && lines[idx].trimLeft().startsWith('# ')) {
-      final headingTitle = lines[idx].trimLeft().substring(2).trim();
-      var contentStart = idx + 1;
-      if (contentStart < lines.length && lines[contentStart].trim().isEmpty) {
-        contentStart++;
-      }
-      final body = lines.sublist(contentStart).join('\n');
-      return (
-        title: headingTitle.isEmpty ? _titleFromFileName(fileName) : headingTitle,
-        content: body,
+    if (picked.isEmpty || picked.first.path == null) {
+      return ImportResult(
+        notesImported: 0,
+        foldersImported: 0,
+        skipped: 0,
+        errors: errors,
       );
     }
 
-    return (title: _titleFromFileName(fileName), content: raw);
+    final zipFile = File(picked.first.path!);
+
+    try {
+      final bytes = await zipFile.readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+      final folderPathToIdMap = <String, String>{};
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      for (final archiveFile in archive) {
+        if (archiveFile.isDirectory) {
+          final cleanDirPath = p.normalize(archiveFile.name).replaceAll(RegExp(r'[/\\]+$'), '');
+          if (cleanDirPath.isEmpty || cleanDirPath == '.') continue;
+
+          final folderName = p.basename(cleanDirPath);
+          final parentDirPath = p.dirname(cleanDirPath);
+          final parentId = (parentDirPath != '.' && parentDirPath.isNotEmpty)
+              ? folderPathToIdMap[parentDirPath]
+              : null;
+
+          final folderId = 'folder_${now}_${folderPathToIdMap.length}';
+
+          final folder = FolderNode(
+            id: folderId,
+            name: folderName,
+            parentId: parentId,
+            createdAt: now,
+            updatedAt: now,
+          );
+
+          await _foldersDao.insertFolder(folder);
+          folderPathToIdMap[cleanDirPath] = folderId;
+          foldersCount++;
+        }
+      }
+
+      for (final archiveFile in archive) {
+        if (!archiveFile.isDirectory) {
+          final ext = p.extension(archiveFile.name).toLowerCase();
+          if (ext == '.md' || ext == '.txt') {
+            final cleanFilePath = p.normalize(archiveFile.name);
+            final fileName = p.basenameWithoutExtension(cleanFilePath);
+            final parentDirPath = p.dirname(cleanFilePath);
+
+            final folderId = (parentDirPath != '.' && parentDirPath.isNotEmpty)
+                ? folderPathToIdMap[parentDirPath]
+                : null;
+
+            final contentBytes = archiveFile.content as List<int>;
+            final content = utf8.decode(contentBytes, allowMalformed: true);
+
+            final noteId = 'note_${now}_$notesCount';
+
+            final note = NoteModel(
+              id: noteId,
+              title: fileName.isEmpty ? 'Untitled' : fileName,
+              content: content,
+              folderId: folderId,
+              createdAt: now,
+              updatedAt: now,
+            );
+
+            await _notesDao.insertNote(note);
+
+            await _syncMetaDao.setSyncState(
+              entityType: 'note',
+              entityId: noteId,
+              action: 'upsert',
+              updatedAt: now,
+            );
+
+            notesCount++;
+          }
+        }
+      }
+    } catch (e) {
+      errors.add('Errore durante l\'estrazione e importazione dello ZIP: $e');
+    }
+
+    return ImportResult(
+      notesImported: notesCount,
+      foldersImported: foldersCount,
+      skipped: skippedCount,
+      errors: errors,
+    );
   }
 
-  static String _titleFromFileName(String fileName) {
-    final base = fileName.replaceAll(
-      RegExp(r'\.(md|markdown|txt)$', caseSensitive: false),
-      '',
-    ).trim();
-    return base.isEmpty ? 'Nota importata' : base;
+  Future<ImportResult> importMarkdownFiles({String? targetFolderId}) async {
+    final errors = <String>[];
+    int notesCount = 0;
+    int skippedCount = 0;
+
+    final pickedFiles = await _pickFilesSafe(
+      type: FileType.custom,
+      allowedExtensions: ['md', 'txt', 'markdown'],
+      allowMultiple: true,
+    );
+
+    if (pickedFiles.isEmpty) {
+      return ImportResult(
+        notesImported: 0,
+        foldersImported: 0,
+        skipped: 0,
+        errors: errors,
+      );
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    for (final platformFile in pickedFiles) {
+      if (platformFile.path == null) {
+        skippedCount++;
+        continue;
+      }
+
+      try {
+        final file = File(platformFile.path!);
+        final title = p.basenameWithoutExtension(file.path);
+        final content = await file.readAsString();
+
+        final noteId = 'note_${now}_$notesCount';
+
+        final note = NoteModel(
+          id: noteId,
+          title: title.trim().isEmpty ? 'Untitled Note' : title,
+          content: content,
+          folderId: targetFolderId,
+          createdAt: now,
+          updatedAt: now,
+        );
+
+        await _notesDao.insertNote(note);
+
+        await _syncMetaDao.setSyncState(
+          entityType: 'note',
+          entityId: noteId,
+          action: 'upsert',
+          updatedAt: now,
+        );
+
+        notesCount++;
+      } catch (e) {
+        skippedCount++;
+        errors.add('Errore durante l\'importazione del file ${platformFile.name}: $e');
+      }
+    }
+
+    return ImportResult(
+      notesImported: notesCount,
+      foldersImported: 0,
+      skipped: skippedCount,
+      errors: errors,
+    );
+  }
+
+  Future<ImportResult> importMarkdownDirectory({String? targetFolderId}) async {
+    final errors = <String>[];
+    int notesCount = 0;
+    int foldersCount = 0;
+    int skippedCount = 0;
+
+    final dirPath = await _getDirectoryPathSafe();
+    if (dirPath == null || dirPath.isEmpty) {
+      return ImportResult(
+        notesImported: 0,
+        foldersImported: 0,
+        skipped: 0,
+        errors: errors,
+      );
+    }
+
+    final rootDir = Directory(dirPath);
+    if (!await rootDir.exists()) {
+      errors.add('La cartella selezionata non esiste sul disco.');
+      return ImportResult(
+        notesImported: 0,
+        foldersImported: 0,
+        skipped: 0,
+        errors: errors,
+      );
+    }
+
+    final folderMap = <String, String>{};
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    try {
+      final entities = await rootDir.list(recursive: true, followLinks: false).toList();
+
+      for (final entity in entities) {
+        if (entity is Directory) {
+          final relativePath = p.relative(entity.path, from: rootDir.path);
+          if (relativePath == '.' || relativePath.isEmpty) continue;
+
+          final folderName = p.basename(entity.path);
+          final parentRelative = p.dirname(relativePath);
+
+          final parentId = (parentRelative != '.' && parentRelative.isNotEmpty)
+              ? folderMap[parentRelative]
+              : targetFolderId;
+
+          final newFolderId = 'folder_${now}_${folderMap.length}';
+
+          final folder = FolderNode(
+            id: newFolderId,
+            name: folderName,
+            parentId: parentId,
+            createdAt: now,
+            updatedAt: now,
+          );
+
+          await _foldersDao.insertFolder(folder);
+          folderMap[relativePath] = newFolderId;
+          foldersCount++;
+        }
+      }
+
+      for (final entity in entities) {
+        if (entity is File) {
+          final ext = p.extension(entity.path).toLowerCase();
+          if (ext == '.md' || ext == '.txt' || ext == '.markdown') {
+            try {
+              final relativePath = p.relative(entity.path, from: rootDir.path);
+              final title = p.basenameWithoutExtension(entity.path);
+              final parentRelative = p.dirname(relativePath);
+
+              final folderId = (parentRelative != '.' && parentRelative.isNotEmpty)
+                  ? folderMap[parentRelative]
+                  : targetFolderId;
+
+              final content = await entity.readAsString();
+              final noteId = 'note_${now}_$notesCount';
+
+              final note = NoteModel(
+                id: noteId,
+                title: title.trim().isEmpty ? 'Untitled' : title,
+                content: content,
+                folderId: folderId,
+                createdAt: now,
+                updatedAt: now,
+              );
+
+              await _notesDao.insertNote(note);
+
+              await _syncMetaDao.setSyncState(
+                entityType: 'note',
+                entityId: noteId,
+                action: 'upsert',
+                updatedAt: now,
+              );
+
+              notesCount++;
+            } catch (e) {
+              skippedCount++;
+              errors.add('Impossibile leggere ${entity.path}: $e');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      errors.add('Errore durante la scansione della cartella: $e');
+    }
+
+    return ImportResult(
+      notesImported: notesCount,
+      foldersImported: foldersCount,
+      skipped: skippedCount,
+      errors: errors,
+    );
   }
 }
