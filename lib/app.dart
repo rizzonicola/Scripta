@@ -6,6 +6,7 @@ import 'core/l10n/app_localizations.dart';
 import 'core/services/window_decoration_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/color_schemes.dart';
+import 'core/utils/haptics_helper.dart';
 import 'features/settings/providers/settings_provider.dart';
 import 'shell/adaptive_app_shell.dart';
 
@@ -15,6 +16,15 @@ class ScriptaApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
+
+    // HapticsHelper vive fuori dall'albero dei widget (deve essere
+    // consultabile anche dall'interceptor del platform channel in
+    // main.dart, che non ha accesso a Riverpod/BuildContext): lo teniamo
+    // sincronizzato con l'impostazione dell'utente qui, ad ogni build utile
+    // (ref.watch sopra fa ricostruire questo widget ogni volta che
+    // settings cambia, quindi questa riga si aggiorna anche subito dopo
+    // un cambio di intensità nelle Impostazioni).
+    HapticsHelper.intensity = settings.hapticIntensity;
 
     final platformBrightness = MediaQuery.platformBrightnessOf(context);
     final Brightness effectiveBrightness;

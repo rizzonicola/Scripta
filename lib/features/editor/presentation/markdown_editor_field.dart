@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
@@ -28,62 +26,45 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
       _MarkdownEditorFieldState();
 }
 
-/// Governa il feedback tattile per un singolo [TextEditingController],
-/// distinguendo in modo affidabile tra:
-///  1. l'inizio di una NUOVA selezione (nessun testo selezionato -> testo
-///     selezionato): unico momento in cui l'intensità "light" vibra;
-///  2. il trascinamento di una maniglia su una selezione GIÀ esistente per
-///     espanderla/ridurla: deve restare sempre silenzioso in "light";
-///  3. l'intensità "strong", che invece vuole un ticchettio ad ogni
-///     variazione del range per tutta la durata del trascinamento.
+/// Collega un singolo [TextEditingController] al gate globale di
+/// [HapticsHelper].
 ///
-/// STORIA DEL BUG (tre tentativi, i primi due respinti dalla build/CI):
+/// STORIA DEL BUG (tre tentativi precedenti, tutti respinti):
+/// I tentativi #1 (transizione istantanea `isCollapsed`), #2 (pointer
+/// tracking via `Listener`, che non vede le maniglie perché disegnate in un
+/// `OverlayEntry` separato) e #3 (`TextField.onSelectionChanged`, parametro
+/// che il widget Material `TextField` non espone in questa versione
+/// dell'SDK) provavano tutti a decidere ESPLICITAMENTE, dal nostro codice
+/// Dart, quando emettere una vibrazione per l'intensità "light".
 ///
-/// Bug #1 (versione originale): la decisione si basava SOLO sul valore
-/// istantaneo di `selection.isCollapsed` prima/dopo ogni notifica del
-/// controller. Durante un trascinamento reale di una maniglia, quando le
-/// due maniglie si sfiorano, `TextSelection` passa MOMENTANEAMENTE per uno
-/// stato collassato per poi riaprirsi: la vecchia logica scambiava ogni
-/// oscillazione per l'inizio di una nuova selezione, generando vibrazioni
-/// ravvicinate percepite come un ronzio continuo proprio durante il drag.
+/// La causa radice per cui "Leggero" e "Disattivata" non funzionavano è
+/// però un'altra, e nessuno di quei tentativi poteva risolverla: dalla PR
+/// flutter/flutter#115373, il FRAMEWORK STESSO chiama
+/// `HapticFeedback.vibrate()` in autonomia quando la selezione di un
+/// `TextField` cambia (una volta alla creazione, e — su Android — ad ogni
+/// variazione del range durante il trascinamento di una maniglia). Questa
+/// chiamata nativa non passa MAI dal nostro `HapticsHelper`: qualunque cosa
+/// (o nessuna cosa) il nostro codice facesse, il telefono vibrava comunque.
 ///
-/// Tentativo #2 (respinto a runtime): per distinguere "nuova selezione" da
-/// "trascinamento di una maniglia esistente" avevamo usato un
-/// `Listener(onPointerDown/onPointerUp)` intorno al `TextField`. Le
-/// maniglie di selezione, però, sono disegnate da Flutter in un
-/// `OverlayEntry` separato (in cima all'albero, fuori dal `TextField`): il
-/// tocco su una maniglia non attraversa mai il nostro `Listener`, quindi lo
-/// stato "dito premuto" restava scorretto e il bug del ronzio ricompariva.
-///
-/// Tentativo #3 (respinto in CI, errore di compilazione): avevamo agganciato
-/// `TextField.onSelectionChanged` per leggere la `SelectionChangedCause`
-/// fornita da Flutter (`longPress`/`doubleTap` vs `drag`). Il widget
-/// Material `TextField` in questa versione dell'SDK NON espone però un
-/// parametro `onSelectionChanged` (esiste solo su `EditableText`/
-/// `SelectableText`): build fallita su Linux/Android con "No named
-/// parameter with the name 'onSelectionChanged'".
-///
-/// LA CORREZIONE DEFINITIVA (nessuna dipendenza da pointer/overlay/API
-/// assenti — solo il `TextEditingController`, come nella versione
-/// originale):
-/// Si introduce uno stato "armato" (`_armed`) MA, a differenza del
-/// tentativo iniziale, il riarmo non dipende più dal sapere se il dito è
-/// premuto: dipende da un breve DEBOUNCE. `_armed` si disarma appena scatta
-/// il colpetto e viene riarmato solo dopo che la selezione è rimasta
-/// collassata e "silenziosa" (nessun ulteriore cambiamento) per
-/// [_rearmDelay]. Un attraversamento-zero momentaneo durante un
-/// trascinamento è sempre seguito, nel giro di un frame (~16ms), da un
-/// nuovo aggiornamento che lo cancella prima che il timer scada: quindi non
-/// riarma mai nulla e non genera falsi positivi. Una vera fine-selezione
-/// (dito sollevato, nessun ulteriore movimento) resta invece silenziosa per
-/// tutto il debounce e riarma correttamente il colpetto per la prossima
-/// selezione. L'intensità "strong" resta gestita separatamente (invariata),
-/// con un ticchettio ad ogni variazione del range mentre non è collassata.
+/// La correzione vera è quindi a livello di platform channel (vedi
+/// `main.dart`, `_HapticGatingBinaryMessenger` + `HapticsHelper.
+/// gateNativeHapticCall`), non nel controller. Il compito di questa classe
+/// si riduce perciò a:
+///  1. ignorare le notifiche dovute a digitazione di testo (non riguardano
+///     la selezione "vera");
+///  2. inoltrare lo stato `isCollapsed` corrente a
+///     [HapticsHelper.reportSelectionState], che usa un debounce per
+///     ri-armare il colpetto "light" solo dopo una vera fine-selezione (e
+///     non su un attraversamento-zero momentaneo durante un trascinamento —
+///     vedi la doc di quel metodo per il dettaglio);
+///  3. per l'intensità "strong", richiamare esplicitamente
+///     [HapticsHelper.selectionDragTick] ad ogni variazione del range
+///     (garantisce il feedback continuo anche su iOS, dove il framework
+///     vibra nativamente solo alla creazione della selezione).
 class _SelectionHapticBinder {
   _SelectionHapticBinder(this._controller, this._getIntensity) {
     _lastText = _controller.text;
     _lastSelection = _controller.selection;
-    _armed = _controller.selection.isCollapsed;
     _controller.addListener(_onValueChanged);
   }
 
@@ -91,17 +72,6 @@ class _SelectionHapticBinder {
   final HapticIntensity Function() _getIntensity;
   late String _lastText;
   late TextSelection _lastSelection;
-
-  /// true quando la prossima transizione "nessuna selezione -> selezione"
-  /// deve generare il colpetto "light" (vedi doc di classe).
-  bool _armed = true;
-
-  /// Timer di debounce che riarma [_armed] solo dopo un periodo di quiete
-  /// a selezione collassata; cancellato/riavviato ad ogni notifica del
-  /// controller finché la selezione resta collassata.
-  Timer? _rearmTimer;
-
-  static const _rearmDelay = Duration(milliseconds: 200);
 
   void _onValueChanged() {
     final value = _controller.value;
@@ -118,24 +88,18 @@ class _SelectionHapticBinder {
       // sul nuovo cursore): aggiorniamo solo lo stato senza MAI considerarlo
       // inizio selezione da segnalare.
       _lastSelection = selection;
-      _scheduleRearmIfNeeded(isCollapsedNow);
+      HapticsHelper.reportSelectionState(isCollapsed: isCollapsedNow);
       return;
     }
 
     final selectionChanged = selection.start != _lastSelection.start ||
         selection.end != _lastSelection.end;
 
-    // "Light": un solo colpetto, solo se armato dal debounce (vedi sopra).
-    if (_armed && !isCollapsedNow) {
-      HapticsHelper.selectionStart(_getIntensity());
-      _armed = false;
-      _rearmTimer?.cancel();
-    } else {
-      _scheduleRearmIfNeeded(isCollapsedNow);
-    }
+    HapticsHelper.reportSelectionState(isCollapsed: isCollapsedNow);
 
-    // "Strong": ticchettio ad ogni variazione del range mentre si trascina,
-    // indipendentemente dallo stato "armato" usato per "light".
+    // "Strong": ticchettio esplicito ad ogni variazione del range mentre si
+    // trascina (vedi doc di classe per il perché serve anche in aggiunta
+    // alla vibrazione nativa).
     if (selectionChanged && !isCollapsedNow) {
       HapticsHelper.selectionDragTick(_getIntensity());
     }
@@ -143,19 +107,8 @@ class _SelectionHapticBinder {
     _lastSelection = selection;
   }
 
-  /// Cancella sempre il timer pendente (ogni cambiamento "azzera" la quiete
-  /// necessaria al riarmo) e ne pianifica uno nuovo SOLO se la selezione è
-  /// attualmente collassata: se invece è ancora attiva non c'è nulla da
-  /// riarmare finché non torna vuota.
-  void _scheduleRearmIfNeeded(bool isCollapsedNow) {
-    _rearmTimer?.cancel();
-    if (!isCollapsedNow) return;
-    _rearmTimer = Timer(_rearmDelay, () => _armed = true);
-  }
-
   void dispose() {
     _controller.removeListener(_onValueChanged);
-    _rearmTimer?.cancel();
   }
 }
 
