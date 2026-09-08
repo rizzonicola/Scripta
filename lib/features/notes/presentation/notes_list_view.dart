@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
@@ -22,10 +24,32 @@ class NotesListView extends ConsumerStatefulWidget {
 class _NotesListViewState extends ConsumerState<NotesListView> {
   final TextEditingController _searchController = TextEditingController();
 
+  // Debounce della ricerca: il filtro (filteredNotesProvider) è in-memory e
+  // quindi economico anche per singolo carattere, ma su liste di note molto
+  // grandi ricalcolarlo e ricostruire l'intera ListView ad OGNI keystroke
+  // resta lavoro superfluo se l'utente sta ancora digitando. 200ms sono
+  // impercettibili per l'utente ma raggruppano i keystroke di un burst di
+  // digitazione in un solo aggiornamento di stato/rebuild.
+  Timer? _searchDebounceTimer;
+
   @override
   void dispose() {
+    _searchDebounceTimer?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    // Rebuild locale immediato (leggero: aggiorna solo questo widget, es.
+    // la visibilità dell'icona "cancella") separato dall'aggiornamento del
+    // provider (pesante: ricalcola filteredNotesProvider e ricostruisce
+    // l'intera lista), che viene invece debounced.
+    setState(() {});
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      ref.read(notesProvider.notifier).setSearchQuery(value);
+    });
   }
 
   Widget _buildSortMenu(BuildContext context, AppLocalizations l10n, ThemeData theme, NoteSortOrder activeSort) {
@@ -174,9 +198,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: TextField(
               controller: _searchController,
-              onChanged: (val) {
-                ref.read(notesProvider.notifier).setSearchQuery(val);
-              },
+              onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: l10n.searchNotes,
                 hintStyle: theme.textTheme.bodyMedium?.copyWith(
@@ -191,6 +213,9 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                     ? IconButton(
                         icon: const Icon(Icons.clear_rounded, size: 16),
                         onPressed: () {
+                          // Azione esplicita dell'utente: applica subito,
+                          // senza aspettare il debounce del typing.
+                          _searchDebounceTimer?.cancel();
                           _searchController.clear();
                           ref.read(notesProvider.notifier).setSearchQuery('');
                         },

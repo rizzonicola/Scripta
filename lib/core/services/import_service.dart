@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -230,9 +231,22 @@ class ImportService {
   // Estrazione: ZIP
   // ---------------------------------------------------------------------
 
+  /// Decodifica ed estrae le voci di uno ZIP potenzialmente grande.
+  ///
+  /// `ZipDecoder().decodeBytes` è CPU-bound e sincrono: eseguito
+  /// direttamente sull'isolate principale bloccherebbe il thread della UI
+  /// (frame freeze/jank) per l'intera durata della decompressione su backup
+  /// voluminosi. Con [compute] il lavoro pesante viene invece eseguito su un
+  /// isolate dedicato, lasciando la UI reattiva; [_decodeZipEntriesSync] è
+  /// un metodo statico (non una closure) proprio perché è questo il
+  /// requisito di `compute` per poter essere invocato nel nuovo isolate.
   static Future<List<_RawImportEntry>> _extractFromZipBytes(
     Uint8List bytes,
-  ) async {
+  ) {
+    return compute(_decodeZipEntriesSync, bytes);
+  }
+
+  static List<_RawImportEntry> _decodeZipEntriesSync(Uint8List bytes) {
     final archive = ZipDecoder().decodeBytes(bytes);
     final entries = <_RawImportEntry>[];
 

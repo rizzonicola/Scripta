@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-flutter:
     name: Build Flutter Linux Bundle
@@ -69,7 +73,7 @@ jobs:
         with:
           bundle: Scripta.flatpak
           manifest-path: linux/packaging/io.github.scripta.Scripta.json
-          cache-key: flatpak-builder-${{ github.sha }}
+          cache-key: flatpak-builder-${{ hashFiles('linux/packaging/**') }}
           verbose: true
 
       - name: Upload Flatpak Artifact to Release
