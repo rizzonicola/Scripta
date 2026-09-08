@@ -109,7 +109,11 @@ class ImportService {
     WidgetRef ref,
   ) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      // file_picker v12+ (architettura federata): FilePicker.platform è
+      // stato rimosso, i metodi sono ora statici diretti su FilePicker.
+      // pickFiles() continua a restituire FilePickerResult? (nullable),
+      // solo l'accessor '.platform' è sparito.
+      final result = await FilePicker.pickFiles(
         dialogTitle: 'Seleziona un backup ZIP da importare',
         type: FileType.custom,
         allowedExtensions: ['zip'],
@@ -145,7 +149,7 @@ class ImportService {
     WidgetRef ref,
   ) async {
     try {
-      final dirPath = await FilePicker.platform.getDirectoryPath(
+      final dirPath = await FilePicker.getDirectoryPath(
         dialogTitle: 'Seleziona la cartella da importare',
       );
       if (dirPath == null) return;
