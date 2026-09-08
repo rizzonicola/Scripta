@@ -35,77 +35,82 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
 ///  3. l'intensità "strong", che invece vuole un ticchettio ad ogni
 ///     variazione del range per tutta la durata del trascinamento.
 ///
-/// PERCHÉ LA VECCHIA LOGICA ERA DIFETTOSA (causa radice del bug):
-/// La versione precedente decideva basandosi SOLO sul valore istantaneo di
-/// `selection.isCollapsed` prima/dopo ogni notifica del controller: se era
-/// `true` e diventava `false`, scattava un colpetto. Il problema è che
-/// durante un trascinamento reale di una maniglia, quando le due maniglie
-/// si avvicinano/si sfiorano, `TextSelection` PASSA MOMENTANEAMENTE per uno
-/// stato collassato (base == extent) per poi riaprirsi non appena il dito
-/// continua a muoversi: agli occhi della vecchia logica questo È
-/// indistinguibile dall'inizio di una selezione ex-novo, quindi ogni
-/// oscillazione del dito vicino al punto di incontro delle maniglie
-/// generava un NUOVO colpetto — più vibrazioni ravvicinate percepite
-/// dall'utente come un ronzio continuo e fastidioso proprio durante il drag,
-/// cioè esattamente il momento in cui la specifica richiede silenzio totale.
-/// Inoltre l'intensità "strong" non emetteva mai un feedback continuo
-/// durante il trascinamento: chiamava lo stesso identico singolo colpetto
-/// (solo più marcato), senza alcuna vibrazione "di sistema" durante il drag.
+/// CAUSA RADICE (due bug distinti, corretti in due passaggi):
 ///
-/// LA CORREZIONE:
-/// Si introduce uno stato "armato" (`_armed`) che non dipende più dal solo
-/// valore istantaneo di `isCollapsed`, ma dal momento in cui il PUNTATORE
-/// tocca lo schermo (vedi [onPointerDown]/[onPointerUp], agganciati da un
-/// `Listener` attorno al `TextField` in `build()`):
-///  - Se un gesto INIZIA quando non c'è selezione, viene armato: la prima
-///    transizione verso una selezione non vuota nel corso di QUEL gesto fa
-///    scattare un solo colpetto, poi si disarma e resta disarmato per il
-///    resto del gesto, qualunque oscillazione avvenga (risolve il ronzio).
-///  - Se un gesto INIZIA quando una selezione esiste già (l'utente sta
-///    afferrando una maniglia per ridimensionarla), non viene mai armato:
-///    zero vibrazioni per l'intera durata di quel trascinamento, anche se
-///    il range attraversa lo zero, come richiesto dalla specifica.
-///  - Il testo digitato continua ad essere esplicitamente escluso
-///    confrontando il testo prima/dopo: non deve mai generare vibrazione.
-/// In parallelo, l'intensità "strong" ignora questo stato "armato" e
-/// richiama semplicemente [HapticsHelper.selectionDragTick] ad ogni
-/// variazione del range mentre la selezione resta non-collassata,
-/// riproducendo così la vibrazione continua/marcata richiesta.
+/// Bug #1 (versione originale): la decisione si basava SOLO sul valore
+/// istantaneo di `selection.isCollapsed` prima/dopo ogni notifica del
+/// controller. Durante un trascinamento reale di una maniglia, quando le
+/// due maniglie si sfiorano, `TextSelection` passa MOMENTANEAMENTE per uno
+/// stato collassato per poi riaprirsi: la vecchia logica scambiava ogni
+/// oscillazione per l'inizio di una nuova selezione, generando vibrazioni
+/// ravvicinate percepite come un ronzio continuo proprio durante il drag.
+///
+/// Bug #2 (nel primo tentativo di fix): per distinguere "nuova selezione"
+/// da "trascinamento di una maniglia esistente" avevamo usato un
+/// `Listener(onPointerDown/onPointerUp)` intorno al `TextField`, assumendo
+/// di poter dedurre lo stato del gesto dai raw pointer event. Il problema è
+/// che Flutter disegna le maniglie di selezione tramite un `OverlayEntry`
+/// inserito nell'`Overlay` dell'app (in cima all'albero, es. da
+/// `MaterialApp`/`Navigator`) e NON come discendente del `TextField`: il
+/// tocco sulla maniglia avviene quindi in un ramo dell'albero dei render
+/// object completamente separato dal nostro `Listener`, che non riceve MAI
+/// quegli eventi. Risultato: durante il trascinamento di una maniglia il
+/// nostro `_pointerDown` restava bloccato a `false`, quindi ogni volta che
+/// il range attraversava lo zero il codice si "riarmava" e generava un
+/// nuovo colpetto — esattamente il ronzio continuo durante il "riprendo la
+/// selezione per espanderla/ridurla" segnalato.
+///
+/// LA CORREZIONE DEFINITIVA:
+/// Si abbandona ogni inferenza da pointer/overlay e si usa il segnale che
+/// Flutter fornisce ESATTAMENTE per questo scopo: il parametro
+/// `SelectionChangedCause` di `TextField.onSelectionChanged` (vedi
+/// [onSelectionChanged]), che indica il MOTIVO per cui la selezione è
+/// cambiata, indipendentemente da dove si trovi fisicamente il tocco:
+///  - `longPress` / `doubleTap` / `forcePress` -> l'utente sta CREANDO una
+///    selezione ex-novo: se il testo non era selezionato un istante prima,
+///    scatta un solo colpetto "light".
+///  - `drag` -> l'utente sta trascinando una maniglia (sia per allargare la
+///    selezione iniziale sia per ridimensionarne una già esistente): non fa
+///    MAI scattare il colpetto "light", qualunque valore attraversi
+///    `isCollapsed` nel frattempo.
+/// L'intensità "strong" resta invece gestita dal listener sul controller
+/// (vedi [_onValueChanged]), che chiama [HapticsHelper.selectionDragTick]
+/// ad ogni variazione del range mentre la selezione resta non-collassata:
+/// questa parte funzionava già correttamente e non è stata toccata.
 class _SelectionHapticBinder {
   _SelectionHapticBinder(this._controller, this._getIntensity) {
     _lastText = _controller.text;
-    _lastSelection = _controller.selection;
-    _armed = _controller.selection.isCollapsed;
+    _lastSelectionForTick = _controller.selection;
+    _wasCollapsedForLight = _controller.selection.isCollapsed;
     _controller.addListener(_onValueChanged);
   }
 
   final TextEditingController _controller;
   final HapticIntensity Function() _getIntensity;
   late String _lastText;
-  late TextSelection _lastSelection;
 
-  /// true quando la prossima transizione "nessuna selezione -> selezione"
-  /// deve generare il colpetto "light". Si disarma non appena il colpetto
-  /// scatta e NON viene riarmato mentre il dito resta premuto (vedi sopra).
-  bool _armed = true;
+  /// Stato usato SOLO dal ticchettio continuo di "strong" (invariato).
+  late TextSelection _lastSelectionForTick;
 
-  /// true mentre il dito/puntatore è a contatto con il campo di testo.
-  bool _pointerDown = false;
+  /// Stato usato SOLO dal colpetto singolo di "light", aggiornato
+  /// esclusivamente in [onSelectionChanged]/testo digitato: tenerlo separato
+  /// dal listener del controller evita ambiguità sull'ordine di chiamata
+  /// tra `ChangeNotifier` e callback del widget.
+  bool _wasCollapsedForLight = true;
 
-  /// Da agganciare a `Listener.onPointerDown` sul `TextField`: registra lo
-  /// stato di partenza del gesto per decidere se armare o meno il colpetto.
-  void onPointerDown() {
-    _pointerDown = true;
-    _armed = _controller.selection.isCollapsed;
-  }
+  /// Da agganciare a `TextField.onSelectionChanged`.
+  void onSelectionChanged(TextSelection selection, SelectionChangedCause? cause) {
+    final wasCollapsed = _wasCollapsedForLight;
+    _wasCollapsedForLight = selection.isCollapsed;
 
-  /// Da agganciare a `Listener.onPointerUp`/`onPointerCancel`: a dito
-  /// sollevato, se non è rimasta alcuna selezione siamo pronti per un
-  /// futuro, nuovo, "primo colpetto" (es. il prossimo long-press).
-  void onPointerUp() {
-    _pointerDown = false;
-    if (_controller.selection.isCollapsed) {
-      _armed = true;
+    if (_getIntensity() != HapticIntensity.light) return;
+
+    final isCreationCause = cause == SelectionChangedCause.longPress ||
+        cause == SelectionChangedCause.doubleTap ||
+        cause == SelectionChangedCause.forcePress;
+
+    if (isCreationCause && wasCollapsed && !selection.isCollapsed) {
+      HapticsHelper.selectionStart(HapticIntensity.light);
     }
   }
 
@@ -118,10 +123,8 @@ class _SelectionHapticBinder {
       // La digitazione altera spesso anche la selezione (es. la collassa
       // sul nuovo cursore): aggiorniamo solo lo stato senza MAI considerarlo
       // inizio selezione da segnalare.
-      _lastSelection = value.selection;
-      if (!_pointerDown && value.selection.isCollapsed) {
-        _armed = true;
-      }
+      _lastSelectionForTick = value.selection;
+      _wasCollapsedForLight = value.selection.isCollapsed;
       return;
     }
 
@@ -129,27 +132,15 @@ class _SelectionHapticBinder {
     // selection.isCollapsed è true anche per una TextSelection non valida
     // (offset == -1), quindi non serve un controllo separato su isValid.
     final isCollapsedNow = selection.isCollapsed;
-    final selectionChanged = selection.start != _lastSelection.start ||
-        selection.end != _lastSelection.end;
+    final selectionChanged = selection.start != _lastSelectionForTick.start ||
+        selection.end != _lastSelectionForTick.end;
 
-    // "Light": un solo colpetto per gesto, solo se il gesto è partito da
-    // "nessuna selezione". Vedi doc di classe per il perché di `_armed`.
-    if (_armed && !isCollapsedNow) {
-      HapticsHelper.selectionStart(_getIntensity());
-      _armed = false;
-    } else if (!_pointerDown && isCollapsedNow) {
-      // Nessun gesto in corso e nessuna selezione residua: pronti per il
-      // prossimo "primo colpetto".
-      _armed = true;
-    }
-
-    // "Strong": ticchettio ad ogni variazione del range mentre si trascina,
-    // indipendentemente dallo stato "armato" usato per "light".
+    // "Strong": ticchettio ad ogni variazione del range mentre si trascina.
     if (selectionChanged && !isCollapsedNow) {
       HapticsHelper.selectionDragTick(_getIntensity());
     }
 
-    _lastSelection = selection;
+    _lastSelectionForTick = selection;
   }
 
   void dispose() {
@@ -234,25 +225,21 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Title Field
-              Listener(
-                onPointerDown: (_) => _titleHaptics.onPointerDown(),
-                onPointerUp: (_) => _titleHaptics.onPointerUp(),
-                onPointerCancel: (_) => _titleHaptics.onPointerUp(),
-                child: TextField(
-                  controller: widget.titleController,
-                  onChanged: widget.onTitleChanged,
-                  style: titleStyle,
-                  maxLines: null,
-                  keyboardType: TextInputType.multiline,
-                  textInputAction: TextInputAction.next,
-                  decoration: InputDecoration(
-                    hintText: l10n.untitledNote,
-                    hintStyle: titleStyle.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
+              TextField(
+                controller: widget.titleController,
+                onChanged: widget.onTitleChanged,
+                onSelectionChanged: _titleHaptics.onSelectionChanged,
+                style: titleStyle,
+                maxLines: null,
+                keyboardType: TextInputType.multiline,
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
+                  hintText: l10n.untitledNote,
+                  hintStyle: titleStyle.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
                   ),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
                 ),
               ),
 
@@ -264,25 +251,21 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
               const SizedBox(height: 16),
 
               // Markdown Body Field
-              Listener(
-                onPointerDown: (_) => _contentHaptics.onPointerDown(),
-                onPointerUp: (_) => _contentHaptics.onPointerUp(),
-                onPointerCancel: (_) => _contentHaptics.onPointerUp(),
-                child: TextField(
-                  controller: widget.contentController,
-                  undoController: widget.undoController,
-                  onChanged: widget.onContentChanged,
-                  style: contentStyle,
-                  maxLines: null,
-                  keyboardType: TextInputType.multiline,
-                  decoration: InputDecoration(
-                    hintText: l10n.writeMarkdownHere,
-                    hintStyle: contentStyle.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
+              TextField(
+                controller: widget.contentController,
+                undoController: widget.undoController,
+                onChanged: widget.onContentChanged,
+                onSelectionChanged: _contentHaptics.onSelectionChanged,
+                style: contentStyle,
+                maxLines: null,
+                keyboardType: TextInputType.multiline,
+                decoration: InputDecoration(
+                  hintText: l10n.writeMarkdownHere,
+                  hintStyle: contentStyle.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
                   ),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
                 ),
               ),
             ],
