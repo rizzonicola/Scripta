@@ -85,19 +85,4 @@ class _HapticGatingBinaryMessenger implements BinaryMessenger {
   void setMessageHandler(String channel, MessageHandler? handler) {
     _inner.setMessageHandler(channel, handler);
   }
-
-  @override
-  bool checkMessageHandler(String channel, MessageHandler? handler) {
-    return _inner.checkMessageHandler(channel, handler);
-  }
-
-  @override
-  void setMockMessageHandler(String channel, MessageHandler? handler) {
-    _inner.setMockMessageHandler(channel, handler);
-  }
-
-  @override
-  bool checkMockMessageHandler(String channel, MessageHandler? handler) {
-    return _inner.checkMockMessageHandler(channel, handler);
-  }
 }
