@@ -36,11 +36,25 @@ class FolderChangeDto {
 
 /// Speculare a `models.NoteDTO` nel backend Go: il contenuto Markdown
 /// viaggia per intero nel campo `content`, non più come file separato.
+///
+/// [isFavorite]/[isPinned]/[orderIndex] sono metadati mutabili della nota
+/// esattamente come [title]/[content]/[folderId]: viaggiano nel protocollo
+/// di sync e sono soggetti alla stessa risoluzione LWW basata su
+/// [updatedAt]. In precedenza questo DTO non li includeva affatto, quindi
+/// impostare/rimuovere il pin in locale non veniva mai inviato al server né
+/// mai restituito dalla pull: il giro di sync successivo applicava
+/// comunque localmente la nota appena echeggiata dal server (con
+/// updated_at >= a quello locale), sovrascrivendo silenziosamente isPinned
+/// con un default false — questa era la causa del bug "il pin non
+/// persiste dopo la sync".
 class NoteChangeDto {
   final String id;
   final String title;
   final String content;
   final String? folderId;
+  final bool isFavorite;
+  final bool isPinned;
+  final int orderIndex;
   final int updatedAt; // unix millis UTC
   final int? deletedAt; // unix millis UTC, null = attiva
 
@@ -49,6 +63,9 @@ class NoteChangeDto {
     required this.title,
     required this.content,
     required this.folderId,
+    required this.isFavorite,
+    required this.isPinned,
+    required this.orderIndex,
     required this.updatedAt,
     required this.deletedAt,
   });
@@ -58,6 +75,9 @@ class NoteChangeDto {
         'title': title,
         'content': content,
         'folder_id': folderId,
+        'is_favorite': isFavorite,
+        'is_pinned': isPinned,
+        'order_index': orderIndex,
         'updated_at': updatedAt,
         'deleted_at': deletedAt,
       };
@@ -67,6 +87,9 @@ class NoteChangeDto {
         title: json['title'] as String? ?? '',
         content: json['content'] as String? ?? '',
         folderId: json['folder_id'] as String?,
+        isFavorite: json['is_favorite'] as bool? ?? false,
+        isPinned: json['is_pinned'] as bool? ?? false,
+        orderIndex: (json['order_index'] as num?)?.toInt() ?? 0,
         updatedAt: (json['updated_at'] as num?)?.toInt() ?? 0,
         deletedAt: (json['deleted_at'] as num?)?.toInt(),
       );

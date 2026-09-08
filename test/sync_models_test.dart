@@ -51,6 +51,9 @@ void main() {
         title: 'Titolo',
         content: '# Titolo\nContenuto',
         folderId: 'folder-1',
+        isFavorite: false,
+        isPinned: false,
+        orderIndex: 0,
         updatedAt: 1756900000000,
         deletedAt: null,
       );
@@ -60,6 +63,9 @@ void main() {
       expect(jsonMap['title'], 'Titolo');
       expect(jsonMap['content'], '# Titolo\nContenuto');
       expect(jsonMap['folder_id'], 'folder-1');
+      expect(jsonMap['is_favorite'], false);
+      expect(jsonMap['is_pinned'], false);
+      expect(jsonMap['order_index'], 0);
       expect(jsonMap['updated_at'], 1756900000000);
       expect(jsonMap['deleted_at'], isNull);
 
@@ -68,7 +74,34 @@ void main() {
       expect(fromJson.title, change.title);
       expect(fromJson.content, change.content);
       expect(fromJson.folderId, change.folderId);
+      expect(fromJson.isFavorite, change.isFavorite);
+      expect(fromJson.isPinned, change.isPinned);
+      expect(fromJson.orderIndex, change.orderIndex);
       expect(fromJson.updatedAt, change.updatedAt);
+    });
+
+    test('NoteChangeDto round-trips isPinned=true through toJson/fromJson (regressione bug pin)', () {
+      const pinned = NoteChangeDto(
+        id: 'note-pinned',
+        title: 'Nota fissata',
+        content: 'contenuto',
+        folderId: null,
+        isFavorite: true,
+        isPinned: true,
+        orderIndex: 2,
+        updatedAt: 1756900000000,
+        deletedAt: null,
+      );
+
+      final jsonMap = pinned.toJson();
+      expect(jsonMap['is_pinned'], true);
+      expect(jsonMap['is_favorite'], true);
+      expect(jsonMap['order_index'], 2);
+
+      final fromJson = NoteChangeDto.fromJson(jsonMap);
+      expect(fromJson.isPinned, true);
+      expect(fromJson.isFavorite, true);
+      expect(fromJson.orderIndex, 2);
     });
 
     test('SyncRequest carries the cursor plus dirty folders and notes', () {
@@ -78,7 +111,17 @@ void main() {
           FolderChangeDto(id: 'f1', name: 'F1', parentId: null, updatedAt: 1200, deletedAt: null),
         ],
         notes: [
-          NoteChangeDto(id: 'n1', title: 'N1', content: 'c', folderId: 'f1', updatedAt: 1300, deletedAt: null),
+          NoteChangeDto(
+            id: 'n1',
+            title: 'N1',
+            content: 'c',
+            folderId: 'f1',
+            isFavorite: false,
+            isPinned: false,
+            orderIndex: 0,
+            updatedAt: 1300,
+            deletedAt: null,
+          ),
         ],
       );
 

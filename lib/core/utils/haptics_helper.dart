@@ -48,29 +48,36 @@ class HapticsHelper {
     }
   }
 
-  /// Feedback da invocare ESCLUSIVAMENTE nel momento in cui una selezione
-  /// di testo (o un trascinamento) HA INIZIO, mai durante l'aggiornamento
-  /// continuo di un drag (vedi `markdown_editor_field.dart`, che traccia la
-  /// transizione "nessuna selezione -> selezione" e chiama questo metodo
-  /// una sola volta per transizione).
+  /// Colpetto SINGOLO e impercettibile, da invocare ESCLUSIVAMENTE nel
+  /// momento in cui una selezione di testo nasce ex-novo (nessun testo
+  /// selezionato -> testo selezionato). Usato solo dall'intensità "light":
+  /// per "off" e "strong" non fa nulla (per "strong" il feedback continuo
+  /// durante il trascinamento è gestito da [selectionDragTick]).
   static void selectionStart(HapticIntensity intensity) {
-    if (intensity == HapticIntensity.off) return;
+    if (intensity != HapticIntensity.light) return;
     if (_isDesktop) return;
 
     try {
-      switch (intensity) {
-        case HapticIntensity.off:
-          return;
-        case HapticIntensity.light:
-          HapticFeedback.selectionClick();
-          break;
-        case HapticIntensity.strong:
-          HapticFeedback.mediumImpact();
-          break;
-      }
+      HapticFeedback.selectionClick();
     } catch (_) {
       // Best-effort: un plugin/piattaforma che non implementa il metodo
       // non deve mai far crollare l'interazione dell'utente con l'editor.
+    }
+  }
+
+  /// Feedback RIPETUTO, da invocare ad ogni variazione del range di
+  /// selezione mentre l'utente sta trascinando una maniglia (o disegnando
+  /// una nuova selezione). Usato SOLO dall'intensità "strong", per
+  /// riprodurre la vibrazione continua/marcata di sistema richiesta in
+  /// quella modalità. Per "off" e "light" non fa nulla.
+  static void selectionDragTick(HapticIntensity intensity) {
+    if (intensity != HapticIntensity.strong) return;
+    if (_isDesktop) return;
+
+    try {
+      HapticFeedback.mediumImpact();
+    } catch (_) {
+      // Best-effort, vedi sopra.
     }
   }
 }

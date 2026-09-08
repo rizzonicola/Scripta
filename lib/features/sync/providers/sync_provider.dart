@@ -405,6 +405,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         title: r.title,
         content: r.content,
         folderId: r.folderId,
+        isFavorite: r.isFavorite,
+        isPinned: r.isPinned,
+        orderIndex: r.orderIndex,
         updatedAt: r.updatedAt,
         deletedAt: r.deletedAt,
       );
@@ -423,9 +426,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         title: d.title,
         content: d.content,
         folderId: d.folderId,
-        isFavorite: false,
-        isPinned: false,
-        orderIndex: 0,
+        isFavorite: d.isFavorite,
+        isPinned: d.isPinned,
+        orderIndex: d.orderIndex,
         createdAt: d.updatedAt, // valore di fallback: applyRemoteLWW preserva quello locale se già presente
         updatedAt: d.updatedAt,
         deletedAt: d.deletedAt,
