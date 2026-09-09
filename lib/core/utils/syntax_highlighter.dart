@@ -1,17 +1,5 @@
 import 'package:flutter/material.dart';
 
-enum TokenType {
-  plain,
-  keyword,
-  type,
-  string,
-  number,
-  comment,
-  punctuation,
-  property,
-  function,
-}
-
 class ScriptaCodeHighlighter {
   static const Set<String> _commonKeywords = {
     'abstract', 'as', 'assert', 'async', 'await', 'break', 'case', 'catch',

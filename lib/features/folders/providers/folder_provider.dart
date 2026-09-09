@@ -75,8 +75,21 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   Future<void> _loadFromDb() async {
     final rows = await _foldersDao.getActive();
-    _activeRows = rows;
-    state = state.copyWith(rootFolders: FolderNode.buildForest(rows));
+    // Il notifier può essere stato eliminato (dispose) mentre l'attesa sul
+    // database era ancora in volo (tipico nei test, dove il widget/provider
+    // viene smontato subito dopo la creazione): senza questo controllo,
+    // l'assegnazione a `state` qui sotto lancerebbe "Bad state: Tried to use
+    // Notifier after dispose was called".
+    try {
+      if (mounted) {
+        _activeRows = rows;
+        state = state.copyWith(rootFolders: FolderNode.buildForest(rows));
+      }
+    } catch (_) {
+      // Ignora l'aggiornamento se il notifier è stato già dismesso durante
+      // il teardown del test (stesso rationale di NotesNotifier._loadFromDb,
+      // vedi notes_provider.dart).
+    }
   }
 
   /// Ricarica l'albero dal database locale. Esposto principalmente per la
@@ -89,19 +102,6 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   void selectFolder(String? folderId) {
     state = state.copyWith(selectedFolderId: () => folderId);
-  }
-
-  FolderNode? findByName(String name) {
-    FolderNode? search(List<FolderNode> list) {
-      for (final n in list) {
-        if (n.name.toLowerCase() == name.toLowerCase()) return n;
-        final c = search(n.children);
-        if (c != null) return c;
-      }
-      return null;
-    }
-
-    return search(state.rootFolders);
   }
 
   FolderNode addFolder(String name, {String? parentId}) {

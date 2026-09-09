@@ -42,6 +42,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       orElse: () => HapticIntensity.light,
     );
 
+    // Stesso rischio di race condition di NotesNotifier/FolderNotifier: il
+    // notifier può essere stato smontato mentre l'attesa su
+    // SharedPreferences era ancora in corso.
+    if (!mounted) return;
+
     state = AppSettings(
       themeMode: themeMode,
       selectedThemeId: themeId,

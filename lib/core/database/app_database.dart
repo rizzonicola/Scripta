@@ -28,8 +28,6 @@ class AppDatabase {
   AppDatabase._();
   static final AppDatabase instance = AppDatabase._();
 
-  Database? _db;
-
   /// Solo per i test: se valorizzato, il database viene aperto a QUESTO
   /// percorso invece di interrogare `path_provider` (che richiede un
   /// platform channel non disponibile nell'ambiente `flutter test` puro,
@@ -57,9 +55,22 @@ class AppDatabase {
     // Android/iOS: il databaseFactory di default del plugin sqflite va già bene.
   }
 
-  Future<Database> get db async {
-    _db ??= await _open();
-    return _db!;
+  /// Future dell'apertura in corso (o già completata). Va memorizzato IL
+  /// FUTURE stesso, non solo il [Database] risolto: [NotesDao] e
+  /// [FoldersDao] accedono entrambi a questo getter dai rispettivi
+  /// costruttori dei provider (`NotesNotifier`/`FolderNotifier`), che non si
+  /// attendono a vicenda. Se qui si mettesse in cache solo il valore
+  /// risolto (`Database? _db; _db ??= await _open();`), un secondo chiamante
+  /// arrivato PRIMA che il primo `_open()` sia completato vedrebbe ancora
+  /// `_db == null` e avvierebbe una SECONDA `openDatabase()` sullo stesso
+  /// file: esattamente la causa del `SqliteException(1802): disk I/O
+  /// error` osservato nella suite di test (due apertura concorrenti in
+  /// scrittura, con `PRAGMA journal_mode = WAL`, sullo stesso file).
+  Future<Database>? _dbFuture;
+
+  Future<Database> get db {
+    _dbFuture ??= _open();
+    return _dbFuture!;
   }
 
   Future<Database> _open() async {
@@ -137,9 +148,20 @@ class AppDatabase {
 
   /// Chiude la connessione (usato solo nei test, per garantire isolamento
   /// tra un test e l'altro).
+  ///
+  /// Attende esplicitamente un'apertura eventualmente ancora in corso prima
+  /// di chiuderla: un `_loadFromDb()` fire-and-forget innescato dal test
+  /// precedente potrebbe non aver ancora completato `openDatabase()` quando
+  /// il `tearDown` di quel test chiama questo metodo. Senza l'`await` qui
+  /// sotto, quell'apertura “in ritardo” si risolverebbe più avanti puntando
+  /// a un `tempDir` che il `tearDown` ha già cancellato, provocando lo
+  /// stesso `SqliteException` di I/O quando la scrittura successiva la
+  /// raggiunge.
   Future<void> close() async {
-    final d = _db;
-    _db = null;
-    await d?.close();
+    final pending = _dbFuture;
+    _dbFuture = null;
+    if (pending == null) return;
+    final d = await pending;
+    await d.close();
   }
 }

@@ -71,8 +71,6 @@ class NoteModel {
     return content.trim().split(RegExp(r'\s+')).length;
   }
 
-  int get characterCount => content.length;
-
   int get readingTimeMinutes {
     final words = wordCount;
     return (words / 200).ceil().clamp(1, 999);

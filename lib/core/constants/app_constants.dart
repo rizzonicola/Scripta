@@ -1,9 +1,7 @@
 class AppConstants {
   static const String appName = 'Scripta';
   static const String appVersion = '1.0.0';
-  static const String appTagline = 'Minimal & Markdown-First Note Taking';
   static const String githubUrl = 'https://github.com/rizzonicola/Scripta';
-  static const String appLicense = 'GPL 3.0';
 
   // Default backend server URL used when the user has never configured one.
   static const String defaultServerUrl = 'https://scripta.poppi.cc';

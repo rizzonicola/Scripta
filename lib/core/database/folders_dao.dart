@@ -199,9 +199,4 @@ class FoldersDao {
     final placeholders = List.filled(ids.length, '?').join(',');
     await db.delete('folders', where: 'id IN ($placeholders)', whereArgs: ids);
   }
-
-  Future<void> hardDeleteAll() async {
-    final db = await _db;
-    await db.delete('folders');
-  }
 }

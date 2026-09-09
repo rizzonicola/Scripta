@@ -50,18 +50,10 @@ class SecureStorageService {
     await _storage.write(key: _userIdKey, value: userId);
   }
 
-  Future<String?> getUserId() async {
-    return await _storage.read(key: _userIdKey);
-  }
-
   Future<void> clearAuth() async {
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _usernameKey);
     await _storage.delete(key: _userIdKey);
     // Keep serverUrl for user convenience unless explicitly cleared
-  }
-
-  Future<void> clearAll() async {
-    await _storage.deleteAll();
   }
 }

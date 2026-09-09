@@ -4,14 +4,6 @@ import '../models/editor_state_model.dart';
 class EditorNotifier extends StateNotifier<EditorStateModel> {
   EditorNotifier() : super(const EditorStateModel());
 
-  void toggleMode() {
-    state = state.copyWith(
-      mode: state.mode == EditorMode.edit
-          ? EditorMode.readOnly
-          : EditorMode.edit,
-    );
-  }
-
   void setMode(EditorMode mode) {
     state = state.copyWith(mode: mode);
   }

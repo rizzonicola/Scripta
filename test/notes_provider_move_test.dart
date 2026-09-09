@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Fake in-memory di [NotesDao]: evita di aprire un vero database SQLite nei
 /// test unitari (che richiederebbe sqflite_common_ffi), pur esercitando
@@ -52,7 +53,13 @@ class FakeNotesDao implements NotesDao {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('NotesNotifier.moveNote', () {
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+    });
+
     test('updates folderId and bumps updatedAt on move', () async {
       final notifier = NotesNotifier(dao: FakeNotesDao());
       // Nessuna nota preesistente: il DB locale è vuoto al primo avvio
