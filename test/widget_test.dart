@@ -1,7 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart' show inMemoryDatabasePath;
 import 'package:scripta/app.dart';
 import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
@@ -12,64 +14,25 @@ import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:flutter/material.dart';
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-
-  /// [NotesNotifier] e [FolderNotifier] scrivono su SQLite in modo
-  /// "fire-and-forget" per design (`unawaited(_dao.upsert(...))` in
-  /// `createNote`/`moveNote`/`addFolder`/`deleteFolder`/ecc.: vedi il
-  /// commento di classe in `folder_provider.dart` — "aggiornamenti dello
-  /// stato in-memory SEMPRE sincroni, persistenza su SQLite in background".
-  /// È una scelta architetturale intenzionale, che qui NON modifichiamo.
-  ///
-  /// Nei test, però, il corpo di un `test()` può terminare (e quindi far
-  /// scattare `addTearDown(container.dispose)` seguito dal `tearDown`
-  /// globale sotto, che chiude il database) PRIMA che una di queste
-  /// scritture fire-and-forget abbia effettivamente raggiunto SQLite.
-  /// Quando poi quella scrittura in ritardo riprende, trova un
-  /// [AppDatabase] già chiuso → `SqfliteFfiException: This database has
-  /// already been closed`.
-  ///
-  /// Un ciclo di `Future.delayed(Duration.zero)` pompa solo la coda dei
-  /// microtask del proprio isolate: non garantisce di aver atteso una
-  /// risposta che deve ancora arrivare dall'isolate/worker FFI di
-  /// `sqflite_common_ffi` se quella risposta richiede un tempo reale (anche
-  /// minimo) per completarsi. Un'attesa basata su una durata reale
-  /// (`Duration(milliseconds: ...)`, non zero) lascia invece effettivamente
-  /// passare quel tempo, dando a QUALSIASI scrittura fire-and-forget ancora
-  /// in volo l'occasione di completarsi prima che il `tearDown` chiuda il
-  /// database.
-  Future<void> flushPendingDbWrites() async {
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-  }
+  Directory? tempDir;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
 
     // sqflite_common_ffi funziona nell'ambiente `flutter test` puro (usa
     // sqlite3 nativo via FFI, non un platform channel), a differenza di
-    // `path_provider`.
-    //
-    // Database IN-MEMORY (`:memory:`) invece di un file temporaneo su
-    // `/tmp/`: ogni apertura di `inMemoryDatabasePath` crea un'istanza
-    // SQLite indipendente e isolata (stessa garanzia di isolamento fra un
-    // test e l'altro che si aveva con un file temp per-test), ma senza
-    // alcun file reale su disco — quindi nessuna possibile contesa di I/O o
-    // lock di file, e nessun rischio di "apertura in ritardo che punta a
-    // una directory già cancellata dal tearDown" (vedi AppDatabase.close(),
-    // che comunque resta protetto anche per l'uso su file reali in altri
-    // contesti).
+    // `path_provider`: per questo ogni test punta il database locale a un
+    // file temporaneo isolato invece di interrogare la directory reale
+    // dell'app (vedi AppDatabase.debugDatabasePathOverride).
     AppDatabase.ensureFactoryInitialized();
     await AppDatabase.instance.close();
-    AppDatabase.debugDatabasePathOverride = inMemoryDatabasePath;
+    tempDir = await Directory.systemTemp.createTemp('scripta_test_');
+    AppDatabase.debugDatabasePathOverride = p.join(tempDir!.path, 'scripta_test.db');
   });
 
   tearDown(() async {
-    // Lasciamo assestare qualunque scrittura DAO fire-and-forget avviata
-    // dal test appena concluso PRIMA di chiudere il database: altrimenti
-    // quella scrittura, riprendendo in ritardo, troverebbe una connessione
-    // già chiusa (vedi commento su [flushPendingDbWrites] sopra).
-    await flushPendingDbWrites();
     await AppDatabase.instance.close();
+    await tempDir?.delete(recursive: true);
   });
 
   test('MarkdownToolbarActions wraps selection with tags properly', () {
@@ -109,11 +72,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // Ulteriore margine per qualunque scrittura fire-and-forget dei
-    // notifier (_loadFromDb dei provider creati dall'albero widget) che
-    // pumpAndSettle, non essendo legata a frame/animazioni, potrebbe non
-    // attendere.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
 
     // Scripta title should be present
     expect(find.text('Scripta'), findsWidgets);
@@ -162,10 +120,6 @@ void main() {
     notesNotifier.moveNote(note.id, null);
     final rootNote = container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
     expect(rootNote.folderId, isNull);
-
-    // Lasciamo evadere le scritture fire-and-forget (createNote/moveNote
-    // x2) prima che il test termini e il tearDown chiuda il database.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
   });
 
   test('moveFolder moves folder and prevents cyclic moves', () async {
@@ -191,10 +145,6 @@ void main() {
 
     final roots = container.read(folderProvider).rootFolders;
     expect(roots.any((f) => f.id == child.id), isTrue);
-
-    // Lasciamo evadere le scritture fire-and-forget (addFolder x2 +
-    // moveFolder) prima che il test termini e il tearDown chiuda il database.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
   });
 
   test('deleteFolder cascades to subfolders and notes inside them', () async {

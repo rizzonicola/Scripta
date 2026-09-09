@@ -11,10 +11,6 @@ class OnboardingNotifier extends StateNotifier<bool?> {
     final prefs = await SharedPreferences.getInstance();
     final completed =
         prefs.getBool(AppConstants.prefOnboardingCompleted) ?? false;
-    // Stesso rischio di race condition di NotesNotifier/FolderNotifier: il
-    // notifier può essere stato smontato mentre l'attesa su
-    // SharedPreferences era ancora in corso.
-    if (!mounted) return;
     state = completed;
   }
 

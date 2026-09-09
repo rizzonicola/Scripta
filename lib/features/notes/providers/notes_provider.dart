@@ -134,24 +134,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
       }
     }
 
-    // Il notifier può essere stato eliminato (dispose) mentre queste due
-    // operazioni asincrone erano ancora in volo (tipico nei test, dove il
-    // widget/provider viene smontato subito dopo la creazione): senza
-    // questo controllo, l'assegnazione a `state` qui sotto lancerebbe
-    // "Bad state: Tried to use Notifier after dispose was called".
-    try {
-      if (mounted) {
-        state = state.copyWith(
-          notes: _sortNotes(notes, sortOrder),
-          activeNoteId: () => notes.isNotEmpty ? notes.first.id : null,
-          sortOrder: sortOrder,
-        );
-      }
-    } catch (_) {
-      // Ignora l'aggiornamento se il notifier è stato già dismesso durante
-      // il teardown del test (o comunque nella finestra fra il controllo
-      // `mounted` sopra e l'assegnazione).
-    }
+    state = state.copyWith(
+      notes: _sortNotes(notes, sortOrder),
+      activeNoteId: () => notes.isNotEmpty ? notes.first.id : null,
+      sortOrder: sortOrder,
+    );
   }
 
   /// Ricarica l'elenco note dal database locale, preservando la nota
@@ -161,17 +148,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
   Future<void> refreshFromDb() async {
     final rows = await _dao.getActive();
     final notes = _sortNotes(rows.map(NoteModel.fromRow).toList(), state.sortOrder);
-    try {
-      if (mounted) {
-        final activeStillExists = notes.any((n) => n.id == state.activeNoteId);
-        state = state.copyWith(
-          notes: notes,
-          activeNoteId: () => activeStillExists ? state.activeNoteId : (notes.isNotEmpty ? notes.first.id : null),
-        );
-      }
-    } catch (_) {
-      // Stessa rete di sicurezza di _loadFromDb, vedi sopra.
-    }
+    final activeStillExists = notes.any((n) => n.id == state.activeNoteId);
+    state = state.copyWith(
+      notes: notes,
+      activeNoteId: () => activeStillExists ? state.activeNoteId : (notes.isNotEmpty ? notes.first.id : null),
+    );
   }
 
   /// Cancella il debounce di autosave pendente e scrive IMMEDIATAMENTE (e in
@@ -260,6 +241,15 @@ class NotesNotifier extends StateNotifier<NotesState> {
       }
     });
     return sorted;
+  }
+
+  NoteModel? get activeNote {
+    if (state.activeNoteId == null) return null;
+    try {
+      return state.notes.firstWhere((n) => n.id == state.activeNoteId);
+    } catch (_) {
+      return state.notes.isNotEmpty ? state.notes.first : null;
+    }
   }
 
   void selectNote(String? id) {
@@ -466,6 +456,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     state = state.copyWith(notes: _sortNotes(updatedList, state.sortOrder));
     unawaited(_dao.upsert(updatedNote.toRow()));
   }
+
 }
 
 final notesProvider = StateNotifierProvider<NotesNotifier, NotesState>((ref) {
