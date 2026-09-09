@@ -5,6 +5,51 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../settings/providers/settings_provider.dart';
 
+/// Notifica SOLO quando lo stato "almeno un campo ha una selezione non
+/// collassata" cambia (true<->false), mai sulle variazioni intermedie
+/// dell'estensione della selezione durante un trascinamento.
+///
+/// CAUSA RADICE DELL'ASIMMETRIA SU/GIÙ (confermata da uno screen recording
+/// fornito dall'utente, che mostra la posizione di scroll oscillare avanti
+/// e indietro — non un semplice "arriva troppo veloce e si ferma" — mentre
+/// si ridimensiona una selezione trascinando verso l'alto):
+/// la `SingleChildScrollView` che contiene titolo e corpo ha un proprio
+/// riconoscitore di trascinamento (serve per lo scroll manuale a dito).
+/// Quando l'utente trascina una maniglia di selezione, ANCHE quel
+/// riconoscitore vede lo stesso puntatore muoversi verticalmente e può
+/// competere nella arena dei gesti con il riconoscitore privato della
+/// maniglia (gestito da `EditableText`/`RenderEditable`, disegnato in un
+/// `OverlayEntry` sopra tutto). Quando entrambi processano per un po' lo
+/// stesso trascinamento prima che l'arena si risolva, si ottengono DUE
+/// sistemi che spostano la stessa posizione di scroll in tempi leggermente
+/// sfasati: uno segue il dito "a fisica" (drag diretto), l'altro rincorre
+/// programmaticamente l'estremo della selezione (`ensureVisible`) — da qui
+/// il rimbalzo avanti/indietro osservato, molto più percepibile trascinando
+/// verso l'alto (verso il basso i due target coincidono quasi sempre,
+/// perché il testo "va incontro" al dito).
+///
+/// FIX: mentre una selezione è attiva (non collassata) su uno dei due
+/// campi, la `SingleChildScrollView` esterna smette di accettare il
+/// trascinamento manuale (`NeverScrollableScrollPhysics`). Questo NON
+/// blocca lo scroll programmatico: `ScrollPosition.animateTo`/`jumpTo`
+/// (ciò che `EditableText` usa per `ensureVisible`) agiscono direttamente
+/// sulla posizione e ignorano la fisica "utente" — che è esattamente lo
+/// scopo di `NeverScrollableScrollPhysics` (impedisce SOLO il trascinamento
+/// a dito, non lo scroll pilotato da codice). Tolta la concorrenza nella
+/// arena dei gesti, resta un solo sistema a guidare lo scroll durante il
+/// resize della selezione, in entrambe le direzioni.
+class _SelectionActivityNotifier extends ChangeNotifier {
+  bool _active = false;
+  bool get active => _active;
+
+  void _setActive(bool value) {
+    if (_active == value) return;
+    _active = value;
+    notifyListeners();
+  }
+}
+
+
 class MarkdownEditorField extends ConsumerStatefulWidget {
   final TextEditingController titleController;
   final TextEditingController contentController;
@@ -116,6 +161,14 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   late _SelectionHapticBinder _titleHaptics;
   late _SelectionHapticBinder _contentHaptics;
 
+  final _selectionActivity = _SelectionActivityNotifier();
+
+  void _updateSelectionActivity() {
+    final active = !widget.titleController.selection.isCollapsed ||
+        !widget.contentController.selection.isCollapsed;
+    _selectionActivity._setActive(active);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -127,6 +180,8 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
       widget.contentController,
       () => ref.read(settingsProvider).hapticIntensity,
     );
+    widget.titleController.addListener(_updateSelectionActivity);
+    widget.contentController.addListener(_updateSelectionActivity);
   }
 
   @override
@@ -137,6 +192,8 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
     // riattacchiamo i listener a quelli nuovi per evitare di restare agganciati
     // a controller ormai fuori uso (o, peggio, già disposti dal chiamante).
     if (oldWidget.titleController != widget.titleController) {
+      oldWidget.titleController.removeListener(_updateSelectionActivity);
+      widget.titleController.addListener(_updateSelectionActivity);
       _titleHaptics.dispose();
       _titleHaptics = _SelectionHapticBinder(
         widget.titleController,
@@ -144,6 +201,8 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
       );
     }
     if (oldWidget.contentController != widget.contentController) {
+      oldWidget.contentController.removeListener(_updateSelectionActivity);
+      widget.contentController.addListener(_updateSelectionActivity);
       _contentHaptics.dispose();
       _contentHaptics = _SelectionHapticBinder(
         widget.contentController,
@@ -154,6 +213,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
 
   @override
   void dispose() {
+    widget.titleController.removeListener(_updateSelectionActivity);
+    widget.contentController.removeListener(_updateSelectionActivity);
+    _selectionActivity.dispose();
     _titleHaptics.dispose();
     _contentHaptics.dispose();
     super.dispose();
@@ -180,8 +242,20 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
       color: theme.colorScheme.onSurface,
     );
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(28, 20, 28, 96),
+    return AnimatedBuilder(
+      animation: _selectionActivity,
+      builder: (context, child) {
+        return SingleChildScrollView(
+          // Durante il resize di una selezione, niente trascinamento
+          // manuale: vedi la doc di `_SelectionActivityNotifier` sopra.
+          // Fuori da quella finestra, comportamento identico all'originale.
+          physics: _selectionActivity.active
+              ? const NeverScrollableScrollPhysics()
+              : const ClampingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(28, 20, 28, 96),
+          child: child,
+        );
+      },
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 840),
