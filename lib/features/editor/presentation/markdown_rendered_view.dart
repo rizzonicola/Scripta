@@ -25,7 +25,14 @@ import '../../settings/providers/settings_provider.dart';
 /// un caricamento totale); per note molto lunghe, `ListView.builder`
 /// costruisce solo i blocchi dentro il viewport + la zona di overscan,
 /// caricando gli altri blocchi poco prima che si avvicinino allo schermo
-/// durante lo scroll.
+/// durante lo scroll. Il buffer è espresso in multipli dell'altezza del
+/// viewport (non pixel fissi), così si adatta a schermi di dimensioni
+/// diverse — vedi `_overscanBufferViewports`.
+///
+/// SELEZIONE TESTO: un'UNICA `SelectionArea` copre l'intero documento
+/// (titolo incluso), esattamente come prima dell'introduzione della
+/// virtualizzazione: si può trascinare una selezione che attraversi più
+/// blocchi/paragrafi senza limitazioni.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -42,14 +49,22 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 }
 
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
-  /// Zona di overscan (in pixel logici, simmetrica prima/dopo il viewport)
-  /// entro cui `ListView.builder` mantiene i blocchi già costruiti pronti,
-  /// anche se non ancora visibili. Volutamente molto generosa (diversi
-  /// "schermi" di contenuto): è quello che rende il caricamento
-  /// impercettibile per note piccole/medie (il cui contenuto totale sta
-  /// quasi sempre entro questa soglia) mantenendo comunque lo scroll fluido
-  /// nelle note grandi, dove entra in gioco solo oltre questa distanza.
-  static const double _overscanBufferPx = 6000;
+  /// Zona di overscan/pre-costruzione attorno al viewport, espressa come
+  /// MULTIPLO dell'altezza del viewport (`CacheExtentStyle.viewport`)
+  /// invece che come valore fisso in pixel: si adatta automaticamente a
+  /// schermi di dimensioni diverse (telefono vs tablet vs desktop), invece
+  /// di essere generosa su un telefono piccolo e relativamente stretta su
+  /// un monitor grande. 14 viewport = ~14 "schermate" di contenuto
+  /// pre-costruite sopra e sotto la parte visibile: sufficiente a coprire
+  /// per intero la stragrande maggioranza delle note (quindi nessun
+  /// caricamento percepibile), e a mantenere MOLTI meno "confini" da
+  /// attraversare durante uno scroll prolungato in note molto lunghe — ogni
+  /// confine attraversato è un punto in cui `ListView` deve costruire nuovi
+  /// blocchi e ricalcolare l'estensione scrollabile stimata, che è la causa
+  /// più probabile delle interruzioni di scroll riscontrate nelle note
+  /// grandi: con un buffer così ampio, questi ricalcoli diventano rari
+  /// invece che praticamente ad ogni gesto.
+  static const double _overscanBufferViewports = 14;
 
   late List<String> _blocks;
   late String _blocksSourceContent;
@@ -202,12 +217,23 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
     final itemCount = blocks.length + (hasTitle ? 1 : 0);
 
+    // Un'UNICA `SelectionArea` copre l'intero documento (selezione fluida
+    // anche tra blocchi diversi, come prima della virtualizzazione — nessun
+    // compromesso su questo). La causa più probabile dell'interruzione di
+    // scroll osservata nelle note grandi non è la selezione in sé, ma la
+    // frequenza con cui `ListView` deve costruire nuovi blocchi e
+    // ricalcolare l'estensione scrollabile stimata durante uno scroll
+    // prolungato (blocchi di altezza variabile, non nota in anticipo): con
+    // un buffer di pre-costruzione molto più ampio (vedi
+    // `_overscanBufferViewports`), questi "confini" da attraversare
+    // diventano rari invece che quasi ad ogni gesto.
     return SelectionArea(
       child: ListView.builder(
         // Overscan generoso e UNICO meccanismo di lazy loading della vista
-        // (vedi doc di classe): niente caricamento "a pagine" separato, solo
-        // questo cacheExtent applicato uniformemente a tutti i blocchi.
-        cacheExtent: _overscanBufferPx,
+        // (vedi doc di classe): niente caricamento "a pagine" separato,
+        // solo questo buffer applicato uniformemente a tutti i blocchi.
+        cacheExtent: _overscanBufferViewports,
+        cacheExtentStyle: CacheExtentStyle.viewport,
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
         itemCount: itemCount,
         itemBuilder: (context, index) {
@@ -243,7 +269,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           return centered(
             MarkdownBody(
               data: blocks[blockIndex],
-              selectable: false, // Handled seamlessly by parent SelectionArea
+              selectable: false, // Gestita dalla SelectionArea del documento
               styleSheet: markdownStyleSheet,
               builders: {
                 'pre': _CodeBlockBuilder(fontSize: settings.fontSize),
