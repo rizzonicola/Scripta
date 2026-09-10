@@ -30,7 +30,13 @@ class NoteModel {
   final bool isPinned;
   final int orderIndex;
 
-  const NoteModel({
+  // Costruttore non `const`: i campi obbligatori (`createdAt`/`updatedAt`)
+  // sono `DateTime`, che non ha un costruttore const, quindi un
+  // `const NoteModel(...)` non sarebbe comunque mai stato invocabile nella
+  // pratica. Serve inoltre un costruttore NON const perché sotto, il campo
+  // `previewSnippet`, è un `late final` con inizializzatore: combinazione
+  // non ammessa dal compilatore Dart con un costruttore `const`.
+  NoteModel({
     required this.id,
     required this.title,
     required this.content,
