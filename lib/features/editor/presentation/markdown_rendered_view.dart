@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_list_view/flutter_list_view.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -15,24 +16,37 @@ import '../../settings/providers/settings_provider.dart';
 /// Vista di sola lettura ("Preview") del contenuto Markdown di una nota.
 ///
 /// LAZY LOADING / VIRTUALIZZAZIONE: il contenuto viene suddiviso in blocchi
-/// indipendenti (vedi [MarkdownBlockSplitter]) e renderizzato tramite
-/// `ListView.builder` con un `cacheExtent` molto generoso invece che con un
-/// singolo `MarkdownBody` monolitico su tutto il documento. Questo è
-/// l'UNICO meccanismo di lazy loading della vista (nessun sistema
-/// parallelo/duplicato): per note piccole/medie, il buffer di overscan
-/// copre l'intero contenuto e tutti i blocchi vengono costruiti
-/// immediatamente (nessun "flash" o ritardo visibile, esperienza identica a
-/// un caricamento totale); per note molto lunghe, `ListView.builder`
-/// costruisce solo i blocchi dentro il viewport + la zona di overscan,
-/// caricando gli altri blocchi poco prima che si avvicinino allo schermo
-/// durante lo scroll. Il buffer è espresso in multipli dell'altezza del
-/// viewport (non pixel fissi), così si adatta a schermi di dimensioni
-/// diverse — vedi `_overscanBufferViewports`.
+/// indipendenti (vedi [MarkdownBlockSplitter]) e renderizzato tramite il
+/// pacchetto open source `flutter_list_view` (MIT, di robert-luoqing —
+/// https://github.com/robert-luoqing/flutter_list_view, compare
+/// automaticamente nella pagina "Licenze open source" dell'app) invece che
+/// con `ListView.builder`.
+///
+/// PERCHÉ NON `ListView.builder`: la vecchia implementazione (vedi storia
+/// del file) usava `ListView.builder`, che per liste con altezza degli
+/// item NON nota in anticipo (il nostro caso: un blocco Markdown può
+/// essere una riga o un blocco di codice di 200 righe) può solo STIMARE
+/// l'estensione scrollabile totale finché non ha effettivamente disposto
+/// ogni blocco. Durante uno scroll veloce in una nota grande, questa stima
+/// viene continuamente corretta man mano che nuovi blocchi vengono
+/// disposti, il che può interrompere/alterare la simulazione fisica dello
+/// scroll in corso — il sintomo osservato di micro-scatti che impediscono
+/// di scendere velocemente (un trascinamento lento, che non innesca mai
+/// una vera simulazione "fling", non ne risentiva). Aumentare il buffer di
+/// pre-costruzione (`cacheExtent`) riduceva la frequenza del problema ma
+/// non lo eliminava in note davvero grandi. `flutter_list_view` risolve
+/// questo alla radice: tiene traccia dell'altezza REALE di ogni blocco già
+/// disposto (non di una stima) e riusa gli elementi già misurati, quindi
+/// l'estensione scrollabile nella zona già visitata è sempre esatta.
 ///
 /// SELEZIONE TESTO: un'UNICA `SelectionArea` copre l'intero documento
-/// (titolo incluso), esattamente come prima dell'introduzione della
-/// virtualizzazione: si può trascinare una selezione che attraversi più
+/// (titolo incluso): si può trascinare una selezione che attraversi più
 /// blocchi/paragrafi senza limitazioni.
+///
+/// EVIDENZIAZIONE CODICE: precalcolata tutta insieme all'apertura/cambio
+/// della nota (vedi [_ensureHighlightCache]) invece che blocco per blocco
+/// durante lo scroll, per evitare lavoro sincrono costoso nel thread UI
+/// proprio nei frame in cui un blocco di codice entra in vista.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -49,36 +63,11 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 }
 
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
-  /// Zona di overscan/pre-costruzione attorno al viewport, espressa come
-  /// MULTIPLO dell'altezza del viewport (`CacheExtentStyle.viewport`)
-  /// invece che come valore fisso in pixel: si adatta automaticamente a
-  /// schermi di dimensioni diverse (telefono vs tablet vs desktop), invece
-  /// di essere generosa su un telefono piccolo e relativamente stretta su
-  /// un monitor grande. 14 viewport = ~14 "schermate" di contenuto
-  /// pre-costruite sopra e sotto la parte visibile: sufficiente a coprire
-  /// per intero la stragrande maggioranza delle note (quindi nessun
-  /// caricamento percepibile), e a mantenere MOLTI meno "confini" da
-  /// attraversare durante uno scroll prolungato in note molto lunghe — ogni
-  /// confine attraversato è un punto in cui `ListView` deve costruire nuovi
-  /// blocchi e ricalcolare l'estensione scrollabile stimata, che è la causa
-  /// più probabile delle interruzioni di scroll riscontrate nelle note
-  /// grandi: con un buffer così ampio, questi ricalcoli diventano rari
-  /// invece che praticamente ad ogni gesto.
-  static const double _overscanBufferViewports = 14;
-
   late List<String> _blocks;
   late String _blocksSourceContent;
 
-  // CACHE DI EVIDENZIAZIONE SINTATTICA — vedi nota di classe più sotto per
-  // il motivo per cui esiste: senza questa cache, l'evidenziazione di ogni
-  // blocco di codice veniva ricalcolata (tokenizzazione carattere per
-  // carattere) sincronamente nel thread UI esattamente nel frame in cui
-  // quel blocco entrava nella finestra di `cacheExtent` durante lo scroll —
-  // per note grandi con blocchi di codice lunghi/numerosi, questo poteva
-  // superare il budget di un frame e causare i micro-scatti ("non riesco a
-  // scendere velocemente") segnalati nelle note grandi. Precalcolando tutto
-  // in un colpo solo quando la nota si apre/cambia, lo scroll successivo
-  // trova sempre un risultato già pronto (lookup O(1), nessun lavoro).
+  // Vedi doc di classe: precalcolo dell'evidenziazione sintattica di tutti
+  // i blocchi di codice, fatto una volta sola (non durante lo scroll).
   final Map<int, TextSpan> _highlightCache = {};
   bool? _highlightCacheIsDark;
   double? _highlightCacheFontSize;
@@ -109,8 +98,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// Se [block] è per intero un blocco di codice delimitato da ``` o ~~~
   /// (lo split garantisce che un fence non venga mai spezzato tra due
   /// blocchi — vedi `MarkdownBlockSplitter`), estrae linguaggio e codice.
-  /// Altrimenti torna `null`. Rispecchia il riconoscimento del fence usato
-  /// dallo splitter stesso, per restare sempre coerente con esso.
+  /// Altrimenti torna `null`.
   ({String language, String code})? _tryParseFencedCode(String block) {
     final lines = block.split('\n');
     if (lines.isEmpty) return null;
@@ -138,10 +126,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   /// Precalcola (se non già in cache per il tema/dimensione font correnti)
   /// l'evidenziazione sintattica di TUTTI i blocchi di codice della nota in
-  /// un colpo solo. Chiamato da `build()`, quindi gira una volta per ogni
-  /// apertura/cambio nota o cambio tema/font — mai durante lo scroll, che
-  /// non richiama `build()` di questo widget (solo `itemBuilder`, che dopo
-  /// questa chiamata trova già tutto pronto in `_highlightCache`).
+  /// un colpo solo. Chiamato da `build()`, non durante lo scroll.
   void _ensureHighlightCache({
     required List<String> blocks,
     required bool isDark,
@@ -288,8 +273,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
     // Vedi doc di `_ensureHighlightCache`: precalcola tutta l'evidenziazione
     // sintattica ORA (in questo build, non durante lo scroll) così che i
-    // blocchi di codice che entrano nel buffer mentre l'utente scorre
-    // trovino il risultato già pronto invece di doverlo calcolare al volo.
+    // blocchi di codice trovino il risultato già pronto invece di doverlo
+    // calcolare al volo mentre l'elemento entra in vista.
     _ensureHighlightCache(
       blocks: blocks,
       isDark: isDark,
@@ -305,93 +290,97 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       }
     }
 
-    Widget centered(Widget child) => Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: child,
+    final itemCount = blocks.length + (hasTitle ? 1 : 0);
+
+    // Padding orizzontale/verticale del documento: non essendoci un
+    // parametro `padding` diretto su `FlutterListView` (a differenza di
+    // `ListView`), lo applichiamo per-item: 28px orizzontali su ogni
+    // blocco (dentro il vincolo di larghezza massima 840), 24px sopra il
+    // primo elemento e 64px sotto l'ultimo — stesso risultato visivo di
+    // prima.
+    Widget centered(Widget child, {required int index}) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            28,
+            index == 0 ? 24 : 0,
+            28,
+            index == itemCount - 1 ? 64 : 0,
+          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 840),
+              child: child,
+            ),
           ),
         );
 
-    final itemCount = blocks.length + (hasTitle ? 1 : 0);
+    Widget buildItem(BuildContext context, int index) {
+      if (hasTitle && index == 0) {
+        return centered(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  title,
+                  style: AppTheme.getTextStyleForFont(
+                    settings.fontFamily,
+                    fontSize: settings.fontSize * 2.2,
+                    fontWeight: FontWeight.w800,
+                    color: theme.colorScheme.onSurface,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Divider(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  thickness: 1,
+                ),
+              ],
+            ),
+          ),
+          index: index,
+        );
+      }
+
+      final blockIndex = index - (hasTitle ? 1 : 0);
+      return centered(
+        MarkdownBody(
+          data: blocks[blockIndex],
+          selectable: false, // Gestita dalla SelectionArea del documento
+          styleSheet: markdownStyleSheet,
+          builders: {
+            'pre': _CodeBlockBuilder(
+              fontSize: settings.fontSize,
+              // Risultato già pronto da `_ensureHighlightCache`: se
+              // presente, `CodeBlockWidget` lo userà direttamente senza
+              // ricalcolarlo durante lo scroll (vedi doc di classe).
+              precomputedHighlight: _highlightCache[blockIndex],
+            ),
+            'code': _InlineCodeBuilder(
+              style: inlineCodeStyle,
+              isDark: isDark,
+              primaryColor: theme.colorScheme.primary,
+            ),
+          },
+          onTapLink: onTapLink,
+        ),
+        index: index,
+      );
+    }
 
     // Un'UNICA `SelectionArea` copre l'intero documento (selezione fluida
-    // anche tra blocchi diversi, come prima della virtualizzazione — nessun
-    // compromesso su questo). La causa più probabile dell'interruzione di
-    // scroll osservata nelle note grandi non è la selezione in sé, ma la
-    // frequenza con cui `ListView` deve costruire nuovi blocchi e
-    // ricalcolare l'estensione scrollabile stimata durante uno scroll
-    // prolungato (blocchi di altezza variabile, non nota in anticipo): con
-    // un buffer di pre-costruzione molto più ampio (vedi
-    // `_overscanBufferViewports`), questi "confini" da attraversare
-    // diventano rari invece che quasi ad ogni gesto.
-    // `ListView.builder` non espone `cacheExtentStyle` (disponibile solo sul
-    // costruttore base `ListView()`/`CustomScrollView`): il buffer, pensato
-    // in multipli dell'altezza del viewport, viene quindi convertito qui in
-    // pixel usando l'altezza disponibile, per ottenere lo stesso effetto.
-    final overscanBufferPixels =
-        MediaQuery.of(context).size.height * _overscanBufferViewports;
-
+    // anche tra blocchi diversi): nessun compromesso su questo.
     return SelectionArea(
-      child: ListView.builder(
-        // Overscan generoso e UNICO meccanismo di lazy loading della vista
-        // (vedi doc di classe): niente caricamento "a pagine" separato,
-        // solo questo buffer applicato uniformemente a tutti i blocchi.
-        cacheExtent: overscanBufferPixels,
-        padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-        itemCount: itemCount,
-        itemBuilder: (context, index) {
-          if (hasTitle && index == 0) {
-            return centered(
-              Padding(
-                padding: const EdgeInsets.only(bottom: 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      title,
-                      style: AppTheme.getTextStyleForFont(
-                        settings.fontFamily,
-                        fontSize: settings.fontSize * 2.2,
-                        fontWeight: FontWeight.w800,
-                        color: theme.colorScheme.onSurface,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Divider(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.3),
-                      thickness: 1,
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          final blockIndex = index - (hasTitle ? 1 : 0);
-          return centered(
-            MarkdownBody(
-              data: blocks[blockIndex],
-              selectable: false, // Gestita dalla SelectionArea del documento
-              styleSheet: markdownStyleSheet,
-              builders: {
-                'pre': _CodeBlockBuilder(
-                  fontSize: settings.fontSize,
-                  // Risultato già pronto da `_ensureHighlightCache`: se
-                  // presente, `CodeBlockWidget` lo userà direttamente senza
-                  // ricalcolarlo durante lo scroll (vedi doc di classe).
-                  precomputedHighlight: _highlightCache[blockIndex],
-                ),
-                'code': _InlineCodeBuilder(
-                  style: inlineCodeStyle,
-                  isDark: isDark,
-                  primaryColor: theme.colorScheme.primary,
-                ),
-              },
-              onTapLink: onTapLink,
-            ),
-          );
-        },
+      child: FlutterListView(
+        delegate: FlutterListViewDelegate(
+          buildItem,
+          childCount: itemCount,
+          // Chiave stabile per blocco: permette a `flutter_list_view` di
+          // riconoscere lo stesso blocco quando viene ricreato dopo essere
+          // uscito e rientrato dalla finestra visibile (riuso corretto).
+          onItemKey: (index) => 'md_block_$index',
+        ),
       ),
     );
   }
@@ -482,9 +471,10 @@ class CodeBlockWidget extends StatefulWidget {
   // scroll (vedi `_ensureHighlightCache`). Se presente ed valida per il
   // tema corrente, viene usata direttamente: evita di rifare la
   // tokenizzazione del codice nel frame in cui questo blocco entra nel
-  // buffer di `cacheExtent` durante lo scroll — la causa dei micro-scatti
-  // nelle note grandi con molto codice. `_highlightedTextCache` resta
-  // comunque come rete di sicurezza per gli eventuali casi non coperti.
+  // buffer di pre-caricamento di `flutter_list_view` durante lo scroll — la
+  // causa dei micro-scatti nelle note grandi con molto codice.
+  // `_highlightedTextCache` resta comunque come rete di sicurezza per gli
+  // eventuali casi non coperti.
   final TextSpan? precomputedHighlight;
 
   const CodeBlockWidget({

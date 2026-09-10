@@ -22,6 +22,15 @@ dependencies:
   flutter_markdown: ^0.7.3
   markdown: ^7.2.2
 
+  # Virtualizzazione liste con altezza variabile (usata per il rendering
+  # "lazy" delle note Markdown lunghe in markdown_rendered_view.dart): a
+  # differenza di ListView.builder, tiene traccia dell'altezza REALE di
+  # ogni blocco già disposto invece di stimarla, evitando i ricalcoli/
+  # correzioni dell'estensione scrollabile durante lo scroll veloce che
+  # causavano micro-scatti nelle note grandi. MIT license (compare
+  # automaticamente nella pagina licenze open source dell'app).
+  flutter_list_view: ^1.1.29
+
   # Persistence & Storage
   shared_preferences: ^2.2.3
   # Database locale (Local-First): sqflite su Android/iOS, sqflite_common_ffi
