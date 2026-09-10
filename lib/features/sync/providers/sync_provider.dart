@@ -378,6 +378,12 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
   /// Hook for app lifecycle (pause / exit)
   void onAppPaused() {
+    // Ferma il poll periodico di connettività mentre l'app è in background:
+    // senza questo, il watchdog continuerebbe a contattare l'endpoint di
+    // health ogni `_connectivityPollInterval` anche a finestra minimizzata
+    // (rilevante soprattutto su desktop, dove l'isolate Dart resta vivo),
+    // sprecando rete/batteria senza alcun beneficio percepibile dall'utente.
+    _stopConnectivityWatchdog();
     if (state.isAuthenticated && state.syncOnAppLifecycle && !state.isSyncing) {
       triggerSync();
     }
@@ -389,6 +395,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   void onAppResumed() {
     if (state.isAuthenticated && !state.isSyncing) {
       checkConnection();
+      // Riavvia il poll periodico messo in pausa da onAppPaused (annulla
+      // internamente eventuali timer residui, quindi è sicuro anche se non
+      // era mai stato fermato).
+      _startConnectivityWatchdog();
     }
   }
 
@@ -510,12 +520,12 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // Applica le entità restituite dal server (già risolte LWW lato
       // server) al database locale, con LWW anche qui come difesa in
       // profondità contro modifiche fatte durante il round-trip di rete.
-      for (final f in response.folders) {
-        await _foldersDao.applyRemoteLWW(_fromFolderDto(f));
-      }
-      for (final n in response.notes) {
-        await _notesDao.applyRemoteLWW(_fromNoteDto(n));
-      }
+      // Applicazione in batch (un'unica transazione per tabella) invece di
+      // un `await` sequenziale per entità: stessa identica logica LWW,
+      // molto meno overhead di I/O per sync con molte entità (es. prima
+      // sync dopo una reinstallazione, o dopo un lungo periodo offline).
+      await _foldersDao.applyRemoteLWWBatch(response.folders.map(_fromFolderDto).toList());
+      await _notesDao.applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
 
       // Purge locale dei tombstone appena confermati dal server: una volta
       // che il server li ha ricevuti, non serve più tenerli anche

@@ -76,7 +76,19 @@ class NoteModel {
     return (words / 200).ceil().clamp(1, 999);
   }
 
-  String get previewSnippet {
+  /// Anteprima "pulita" (senza simboli di formattazione Markdown) mostrata
+  /// nelle card della lista note.
+  ///
+  /// `late final` invece di un getter ricalcolato: [NoteModel] è
+  /// immutabile (ogni modifica passa da [copyWith], che produce una nuova
+  /// istanza), quindi le 5 passate di `RegExp.replaceAll` sul contenuto
+  /// vengono eseguite al più una volta per istanza (alla prima lettura),
+  /// invece che ad ogni singolo rebuild di `NoteCard` — che con liste note
+  /// grandi può voler dire molte volte per la stessa identica istanza,
+  /// senza alcun bisogno di ripetere il calcolo.
+  late final String previewSnippet = _buildPreviewSnippet();
+
+  String _buildPreviewSnippet() {
     // Strip markdown formatting symbols for clean preview
     final cleaned = content
         .replaceAll(RegExp(r'#+\s*'), '')

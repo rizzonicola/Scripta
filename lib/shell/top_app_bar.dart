@@ -28,7 +28,10 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
-    final editorState = ref.watch(editorProvider);
+    // Solo il campo effettivamente usato (mode): evita di ricostruire
+    // l'intera TopAppBar per cambi di editorProvider che non riguardano
+    // questo widget (es. canUndo/canRedo, isFocusMode).
+    final editorMode = ref.watch(editorProvider.select((s) => s.mode));
     final isDesktop = ResponsiveBreakpoints.isDesktop(context);
     final screenWidth = MediaQuery.sizeOf(context).width;
     final compactMode = screenWidth < 520;
@@ -99,7 +102,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                         title: compactMode ? null : l10n.edit,
                         icon: Icons.edit_outlined,
                         tooltip: l10n.edit,
-                        isSelected: editorState.mode == EditorMode.edit,
+                        isSelected: editorMode == EditorMode.edit,
                         onTap: () {
                           ref
                               .read(editorProvider.notifier)
@@ -110,7 +113,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                         title: compactMode ? null : l10n.readOnly,
                         icon: Icons.visibility_outlined,
                         tooltip: l10n.readOnly,
-                        isSelected: editorState.mode == EditorMode.readOnly,
+                        isSelected: editorMode == EditorMode.readOnly,
                         onTap: () {
                           ref
                               .read(editorProvider.notifier)
@@ -136,8 +139,19 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                 const SizedBox(width: 2),
                 Consumer(
                   builder: (context, ref, _) {
-                    final syncConfig = ref.watch(syncProvider);
-                    if (!syncConfig.isAuthenticated) {
+                    // Solo i 3 campi usati da questo indicatore, invece
+                    // dell'intero SyncConfig: con l'uguaglianza per valore
+                    // ora presente su SyncConfig, `.select` qui evita anche
+                    // il rebuild "silenzioso" che il poll di connettività
+                    // periodico altrimenti causerebbe ad ogni ciclo.
+                    final isAuthenticated =
+                        ref.watch(syncProvider.select((s) => s.isAuthenticated));
+                    final isSyncing =
+                        ref.watch(syncProvider.select((s) => s.isSyncing));
+                    final isOnline =
+                        ref.watch(syncProvider.select((s) => s.isOnline));
+
+                    if (!isAuthenticated) {
                       return IconButton(
                         icon: Icon(
                           Icons.cloud_off_outlined,
@@ -150,7 +164,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                         onPressed: () => SettingsView.show(context),
                       );
                     }
-                    if (syncConfig.isSyncing) {
+                    if (isSyncing) {
                       return const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 8),
                         child: SizedBox(
@@ -162,15 +176,15 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     }
                     return IconButton(
                       icon: Icon(
-                        syncConfig.isOnline
+                        isOnline
                             ? Icons.cloud_done_outlined
                             : Icons.cloud_off_outlined,
                         size: 19,
-                        color: syncConfig.isOnline
+                        color: isOnline
                             ? const Color(0xFF10B981)
                             : Colors.amber,
                       ),
-                      tooltip: syncConfig.isOnline
+                      tooltip: isOnline
                           ? 'Sincronizzato: Online (Tocca per sincronizzare)'
                           : 'Server non raggiungibile (Offline)',
                       visualDensity: VisualDensity.compact,

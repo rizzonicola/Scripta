@@ -142,6 +142,57 @@ class NotesDao {
     }
   }
 
+  /// Equivalente "batch" di [applyRemoteLWW]: applica una lista di righe
+  /// remote in un'UNICA transazione invece di una sequenza di operazioni
+  /// separate (ciascuna delle quali, fuori da una transazione esplicita, è
+  /// un round-trip/commit a sé). Stessa identica logica LWW riga per riga
+  /// di [applyRemoteLWW] (non duplicata concettualmente, solo eseguita
+  /// dentro `db.transaction` per ridurre drasticamente l'overhead su batch
+  /// di sync numerosi), quindi nessun cambio di comportamento osservabile:
+  /// solo meno round-trip al plugin sqflite.
+  Future<void> applyRemoteLWWBatch(List<NoteRow> remotes) async {
+    if (remotes.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final remote in remotes) {
+        final rows = await txn.query('notes', where: 'id = ?', whereArgs: [remote.id], limit: 1);
+        if (rows.isEmpty) {
+          await txn.insert('notes', remote.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+          continue;
+        }
+        final local = NoteRow.fromMap(rows.first);
+        if (remote.updatedAt >= local.updatedAt) {
+          final merged = NoteRow(
+            id: remote.id,
+            title: remote.title,
+            content: remote.content,
+            folderId: remote.folderId,
+            isFavorite: remote.isFavorite,
+            isPinned: remote.isPinned,
+            orderIndex: remote.orderIndex,
+            createdAt: local.createdAt,
+            updatedAt: remote.updatedAt,
+            deletedAt: remote.deletedAt,
+          );
+          await txn.insert('notes', merged.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
+    });
+  }
+
+  /// Scrive più righe in un'unica transazione (usato da
+  /// `NotesNotifier.reorderNotes`, dove altrimenti un riordino coinvolgerebbe
+  /// N scritture sequenziali separate, una per nota).
+  Future<void> upsertBatch(List<NoteRow> rows) async {
+    if (rows.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final row in rows) {
+        await txn.insert('notes', row.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
   Future<List<NoteRow>> listDirtySince(int sinceMillis) async {
     final db = await _db;
     final rows = await db.query('notes', where: 'updated_at > ?', whereArgs: [sinceMillis]);

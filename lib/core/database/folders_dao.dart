@@ -127,6 +127,29 @@ class FoldersDao {
     }
   }
 
+  /// Equivalente "batch" di [applyRemoteLWW] (vedi commento analogo in
+  /// `NotesDao.applyRemoteLWWBatch`): stessa logica LWW, ma tutte le righe
+  /// remote vengono applicate dentro un'UNICA transazione invece di N
+  /// round-trip separati al plugin sqflite.
+  Future<void> applyRemoteLWWBatch(List<FolderRow> remotes) async {
+    if (remotes.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final remote in remotes) {
+        final rows = await txn.query('folders', where: 'id = ?', whereArgs: [remote.id], limit: 1);
+        if (rows.isEmpty) {
+          await txn.insert('folders', remote.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+          continue;
+        }
+        final local = FolderRow.fromMap(rows.first);
+        if (remote.updatedAt >= local.updatedAt) {
+          final merged = remote.copyWith(isExpanded: local.isExpanded);
+          await txn.insert('folders', merged.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
+    });
+  }
+
   Future<List<FolderRow>> listDirtySince(int sinceMillis) async {
     final db = await _db;
     final rows = await db.query('folders', where: 'updated_at > ?', whereArgs: [sinceMillis]);

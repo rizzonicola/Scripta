@@ -13,7 +13,14 @@ class FolderTreeView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final folderState = ref.watch(folderProvider);
+    // Due `.select` mirati invece di un `ref.watch(folderProvider)` pieno:
+    // questo widget NON deve ricostruirsi per un semplice
+    // espandi/comprimi o una selezione di un nodo (quello lo gestisce ora
+    // il singolo `_FolderNodeView`, vedi sotto), solo quando cambia
+    // l'insieme delle cartelle radice o si passa a/da "Tutte le note".
+    final rootFolders = ref.watch(folderProvider.select((s) => s.rootFolders));
+    final isAllNotesSelected =
+        ref.watch(folderProvider.select((s) => s.selectedFolderId == null));
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
 
@@ -99,7 +106,7 @@ class FolderTreeView extends ConsumerWidget {
             child: _FolderItemTile(
               title: l10n.allNotes,
               icon: Icons.notes_rounded,
-              isSelected: folderState.selectedFolderId == null,
+              isSelected: isAllNotesSelected,
               onTap: () =>
                   ref.read(folderProvider.notifier).selectFolder(null),
             ),
@@ -114,8 +121,12 @@ class FolderTreeView extends ConsumerWidget {
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              children: folderState.rootFolders
-                  .map((node) => _buildFolderNode(context, ref, node, 0))
+              children: rootFolders
+                  .map((node) => _FolderNodeView(
+                        key: ValueKey(node.id),
+                        node: node,
+                        depth: 0,
+                      ))
                   .toList(),
             ),
           ),
@@ -136,43 +147,9 @@ class FolderTreeView extends ConsumerWidget {
       ),
     );
   }
+}
 
-  Widget _buildFolderNode(
-    BuildContext context,
-    WidgetRef ref,
-    FolderNode node,
-    int depth,
-  ) {
-    final folderState = ref.watch(folderProvider);
-    final isSelected = folderState.selectedFolderId == node.id;
-    final hasChildren = node.children.isNotEmpty;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _FolderItemTile(
-          title: node.name,
-          icon: node.isExpanded
-              ? Icons.folder_open_outlined
-              : Icons.folder_outlined,
-          depth: depth,
-          isSelected: isSelected,
-          hasChildren: hasChildren,
-          isExpanded: node.isExpanded,
-          onToggleExpand: () =>
-              ref.read(folderProvider.notifier).toggleExpand(node.id),
-          onTap: () =>
-              ref.read(folderProvider.notifier).selectFolder(node.id),
-          onMoreOptions: () => _showFolderOptions(context, ref, node),
-        ),
-        if (hasChildren && node.isExpanded)
-          ...node.children
-              .map((child) => _buildFolderNode(context, ref, child, depth + 1)),
-      ],
-    );
-  }
-
-  void _showAddFolderDialog(
+void _showAddFolderDialog(
     BuildContext context,
     WidgetRef ref, {
     String? parentId,
@@ -519,6 +496,60 @@ class FolderTreeView extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+
+/// Nodo dell'albero cartelle come widget indipendente (con `key` stabile
+/// per identità), invece di un metodo ricorsivo che ricostruiva l'intero
+/// sottoalbero visibile ad ogni cambiamento di stato. Osserva SOLO se
+/// QUESTO specifico nodo è selezionato (`.select`), quindi selezionare una
+/// cartella o espanderne un'altra non fa più ricostruire l'intero albero:
+/// solo i due nodi effettivamente coinvolti (quello deselezionato e quello
+/// selezionato) si ricostruiscono.
+class _FolderNodeView extends ConsumerWidget {
+  final FolderNode node;
+  final int depth;
+
+  const _FolderNodeView({
+    super.key,
+    required this.node,
+    required this.depth,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isSelected = ref.watch(
+      folderProvider.select((s) => s.selectedFolderId == node.id),
+    );
+    final hasChildren = node.children.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _FolderItemTile(
+          title: node.name,
+          icon: node.isExpanded
+              ? Icons.folder_open_outlined
+              : Icons.folder_outlined,
+          depth: depth,
+          isSelected: isSelected,
+          hasChildren: hasChildren,
+          isExpanded: node.isExpanded,
+          onToggleExpand: () =>
+              ref.read(folderProvider.notifier).toggleExpand(node.id),
+          onTap: () =>
+              ref.read(folderProvider.notifier).selectFolder(node.id),
+          onMoreOptions: () => _showFolderOptions(context, ref, node),
+        ),
+        if (hasChildren && node.isExpanded)
+          ...node.children.map(
+            (child) => _FolderNodeView(
+              key: ValueKey(child.id),
+              node: child,
+              depth: depth + 1,
+            ),
+          ),
+      ],
     );
   }
 }

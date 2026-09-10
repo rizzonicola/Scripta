@@ -39,4 +39,30 @@ class AppSettings {
       hapticIntensity: hapticIntensity ?? this.hapticIntensity,
     );
   }
+
+  // Uguaglianza per valore (vedi motivazione analoga in `SyncConfig`).
+  // `Locale` implementa già `==`/`hashCode` per valore nel SDK Flutter.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is AppSettings &&
+        other.themeMode == themeMode &&
+        other.selectedThemeId == selectedThemeId &&
+        other.locale == locale &&
+        other.fontFamily == fontFamily &&
+        other.fontSize == fontSize &&
+        other.lineHeight == lineHeight &&
+        other.hapticIntensity == hapticIntensity;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        themeMode,
+        selectedThemeId,
+        locale,
+        fontFamily,
+        fontSize,
+        lineHeight,
+        hapticIntensity,
+      );
 }

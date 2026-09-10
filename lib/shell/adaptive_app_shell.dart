@@ -80,7 +80,7 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       }
     });
 
-    final editorState = ref.watch(editorProvider);
+    final editorFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
     final screenType = ResponsiveBreakpoints.getScreenType(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -96,7 +96,7 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     Widget shellContent;
 
     // 1. FOCUS MODE: Distraction-free full-screen writing or reading
-    if (editorState.isFocusMode) {
+    if (editorFocusMode) {
       shellContent = const Scaffold(
         body: SafeArea(
           child: NoteEditorPane(),

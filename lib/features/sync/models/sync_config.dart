@@ -63,4 +63,47 @@ class SyncConfig {
       lastError: lastError != null ? lastError() : this.lastError,
     );
   }
+
+  // Uguaglianza per valore: senza questa, `StateNotifier` (che confronta
+  // `_state == value` prima di notificare i listener) tratta OGNI
+  // `copyWith` come "cambiato" anche quando produce valori identici a
+  // quelli già presenti — rilevante soprattutto per il poll periodico di
+  // connettività (ogni 25s), che altrimenti farebbe ricostruire tutti i
+  // widget che osservano `syncProvider` anche quando `isOnline` non cambia
+  // davvero.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is SyncConfig &&
+        other.syncOnAppLaunch == syncOnAppLaunch &&
+        other.syncOnAppLifecycle == syncOnAppLifecycle &&
+        other.syncOnNoteSwitch == syncOnNoteSwitch &&
+        other.syncOnInactivity == syncOnInactivity &&
+        other.inactivitySeconds == inactivitySeconds &&
+        other.serverUrl == serverUrl &&
+        other.username == username &&
+        other.isAuthenticated == isAuthenticated &&
+        other.isOnline == isOnline &&
+        other.isSyncing == isSyncing &&
+        other.lastSyncTime == lastSyncTime &&
+        other.lastSyncMessage == lastSyncMessage &&
+        other.lastError == lastError;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        syncOnAppLaunch,
+        syncOnAppLifecycle,
+        syncOnNoteSwitch,
+        syncOnInactivity,
+        inactivitySeconds,
+        serverUrl,
+        username,
+        isAuthenticated,
+        isOnline,
+        isSyncing,
+        lastSyncTime,
+        lastSyncMessage,
+        lastError,
+      );
 }

@@ -29,4 +29,21 @@ class EditorStateModel {
       canRedo: canRedo ?? this.canRedo,
     );
   }
+
+  // Uguaglianza per valore (vedi motivazione analoga in `SyncConfig`): tutti
+  // i campi sono primitivi, quindi un confronto per valore completo è
+  // economico ed evita rebuild dei widget che osservano l'intero provider
+  // (es. `AdaptiveAppShell`, `TopAppBar`) quando nulla è realmente cambiato.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is EditorStateModel &&
+        other.mode == mode &&
+        other.isFocusMode == isFocusMode &&
+        other.canUndo == canUndo &&
+        other.canRedo == canRedo;
+  }
+
+  @override
+  int get hashCode => Object.hash(mode, isFocusMode, canUndo, canRedo);
 }

@@ -27,6 +27,20 @@ class FakeNotesDao implements NotesDao {
   }
 
   @override
+  Future<void> applyRemoteLWWBatch(List<NoteRow> remotes) async {
+    for (final remote in remotes) {
+      await applyRemoteLWW(remote);
+    }
+  }
+
+  @override
+  Future<void> upsertBatch(List<NoteRow> rows) async {
+    for (final row in rows) {
+      _rows[row.id] = row;
+    }
+  }
+
+  @override
   Future<List<NoteRow>> listDirtySince(int sinceMillis) async =>
       _rows.values.where((r) => r.updatedAt > sinceMillis).toList();
 

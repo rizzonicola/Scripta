@@ -35,6 +35,30 @@ class NotesState {
       sortOrder: sortOrder ?? this.sortOrder,
     );
   }
+
+  // Uguaglianza per valore (vedi motivazione analoga in `SyncConfig` e
+  // `FolderState`). `notes` è confrontata per riferimento: `copyWith` senza
+  // passare `notes` mantiene automaticamente lo stesso riferimento di
+  // lista, quindi la comparazione per riferimento è già corretta per il
+  // caso comune (es. `selectNote`, `setSearchQuery`) senza il costo di un
+  // confronto elemento-per-elemento su liste di note potenzialmente grandi.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is NotesState &&
+        identical(other.notes, notes) &&
+        other.searchQuery == searchQuery &&
+        other.activeNoteId == activeNoteId &&
+        other.sortOrder == sortOrder;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        identityHashCode(notes),
+        searchQuery,
+        activeNoteId,
+        sortOrder,
+      );
 }
 
 /// Gestisce l'elenco delle note sopra il database locale SQLite ([NotesDao]).
@@ -296,9 +320,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
   }
 
   Future<void> _persistAll(List<NoteModel> notes) async {
-    for (final n in notes) {
-      await _dao.upsert(n.toRow());
-    }
+    // Scrittura in un'unica transazione (vedi NotesDao.upsertBatch) invece
+    // di N upsert sequenziali: un riordino può coinvolgere l'intera lista.
+    await _dao.upsertBatch(notes.map((n) => n.toRow()).toList());
   }
 
   /// Inserisce in blocco un elenco di note nuove (usato dall'importazione,

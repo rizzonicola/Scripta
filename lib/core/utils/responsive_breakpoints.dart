@@ -9,7 +9,13 @@ enum DeviceScreenType {
 
 class ResponsiveBreakpoints {
   static DeviceScreenType getScreenType(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
+    // MediaQuery.sizeOf (invece di MediaQuery.of(context).size) sottoscrive
+    // il chiamante SOLO ai cambi di dimensione, non a qualunque campo di
+    // MediaQueryData: MediaQuery.of(context).size.width faceva ricostruire
+    // l'intera shell radice (vedi AdaptiveAppShell) anche solo per
+    // l'apertura/chiusura della tastiera software (che cambia viewInsets,
+    // non size).
+    final width = MediaQuery.sizeOf(context).width;
     if (width >= AppConstants.tabletBreakpoint) {
       return DeviceScreenType.desktop;
     } else if (width >= AppConstants.mobileBreakpoint) {
@@ -29,8 +35,8 @@ class ResponsiveBreakpoints {
       getScreenType(context) == DeviceScreenType.desktop;
 
   static bool isLandscape(BuildContext context) =>
-      MediaQuery.of(context).orientation == Orientation.landscape;
+      MediaQuery.orientationOf(context) == Orientation.landscape;
 
   static bool isPortrait(BuildContext context) =>
-      MediaQuery.of(context).orientation == Orientation.portrait;
+      MediaQuery.orientationOf(context) == Orientation.portrait;
 }

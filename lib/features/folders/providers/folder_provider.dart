@@ -28,6 +28,25 @@ class FolderState {
           : this.selectedFolderId,
     );
   }
+
+  // Uguaglianza per valore (vedi motivazione analoga in `SyncConfig`):
+  // evita notifiche/rebuild quando `copyWith` non cambia nulla di
+  // osservabile. `rootFolders` è confrontata per riferimento (non in
+  // profondità, ricorsivamente, dentro l'albero): è sufficiente per il
+  // caso comune — es. `selectFolder`/`toggleExpand`, che tramite
+  // `copyWith` senza passare `rootFolders` mantengono automaticamente lo
+  // STESSO riferimento di lista — senza pagare il costo di una comparazione
+  // ricorsiva profonda dell'intero albero ad ogni confronto di stato.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is FolderState &&
+        identical(other.rootFolders, rootFolders) &&
+        other.selectedFolderId == selectedFolderId;
+  }
+
+  @override
+  int get hashCode => Object.hash(identityHashCode(rootFolders), selectedFolderId);
 }
 
 /// Gestisce l'albero delle cartelle sopra il database locale SQLite
