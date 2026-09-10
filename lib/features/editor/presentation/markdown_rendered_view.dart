@@ -69,6 +69,20 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   late List<String> _blocks;
   late String _blocksSourceContent;
 
+  // CACHE DI EVIDENZIAZIONE SINTATTICA — vedi nota di classe più sotto per
+  // il motivo per cui esiste: senza questa cache, l'evidenziazione di ogni
+  // blocco di codice veniva ricalcolata (tokenizzazione carattere per
+  // carattere) sincronamente nel thread UI esattamente nel frame in cui
+  // quel blocco entrava nella finestra di `cacheExtent` durante lo scroll —
+  // per note grandi con blocchi di codice lunghi/numerosi, questo poteva
+  // superare il budget di un frame e causare i micro-scatti ("non riesco a
+  // scendere velocemente") segnalati nelle note grandi. Precalcolando tutto
+  // in un colpo solo quando la nota si apre/cambia, lo scroll successivo
+  // trova sempre un risultato già pronto (lookup O(1), nessun lavoro).
+  final Map<int, TextSpan> _highlightCache = {};
+  bool? _highlightCacheIsDark;
+  double? _highlightCacheFontSize;
+
   @override
   void initState() {
     super.initState();
@@ -86,6 +100,79 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     if (widget.content != _blocksSourceContent) {
       _blocksSourceContent = widget.content;
       _blocks = MarkdownBlockSplitter.split(widget.content);
+      // Il contenuto è cambiato: gli indici dei blocchi non corrispondono
+      // più a quanto in cache (invalida tutto, verrà ripopolata in build).
+      _highlightCache.clear();
+    }
+  }
+
+  /// Se [block] è per intero un blocco di codice delimitato da ``` o ~~~
+  /// (lo split garantisce che un fence non venga mai spezzato tra due
+  /// blocchi — vedi `MarkdownBlockSplitter`), estrae linguaggio e codice.
+  /// Altrimenti torna `null`. Rispecchia il riconoscimento del fence usato
+  /// dallo splitter stesso, per restare sempre coerente con esso.
+  ({String language, String code})? _tryParseFencedCode(String block) {
+    final lines = block.split('\n');
+    if (lines.isEmpty) return null;
+    final firstLine = lines.first.trimLeft();
+    final openMatch =
+        RegExp(r'^(`{3,}|~{3,})\s*(\S*)').firstMatch(firstLine);
+    if (openMatch == null) return null;
+    final fenceChar = openMatch.group(1)!.substring(0, 1);
+    final fenceLen = openMatch.group(1)!.length;
+    final language = openMatch.group(2) ?? '';
+
+    final closeRegex =
+        RegExp('^(${RegExp.escape(fenceChar)}{$fenceLen,})\\s*\$');
+    var closeIndex = -1;
+    for (var i = lines.length - 1; i >= 1; i--) {
+      if (closeRegex.hasMatch(lines[i].trimLeft())) {
+        closeIndex = i;
+        break;
+      }
+    }
+    if (closeIndex == -1) return null;
+
+    return (language: language, code: lines.sublist(1, closeIndex).join('\n'));
+  }
+
+  /// Precalcola (se non già in cache per il tema/dimensione font correnti)
+  /// l'evidenziazione sintattica di TUTTI i blocchi di codice della nota in
+  /// un colpo solo. Chiamato da `build()`, quindi gira una volta per ogni
+  /// apertura/cambio nota o cambio tema/font — mai durante lo scroll, che
+  /// non richiama `build()` di questo widget (solo `itemBuilder`, che dopo
+  /// questa chiamata trova già tutto pronto in `_highlightCache`).
+  void _ensureHighlightCache({
+    required List<String> blocks,
+    required bool isDark,
+    required double fontSize,
+  }) {
+    if (_highlightCacheIsDark == isDark &&
+        _highlightCacheFontSize == fontSize &&
+        _highlightCache.length ==
+            blocks.where((b) => _tryParseFencedCode(b) != null).length) {
+      return; // Cache già valida e completa per queste condizioni.
+    }
+
+    _highlightCache.clear();
+    _highlightCacheIsDark = isDark;
+    _highlightCacheFontSize = fontSize;
+
+    final monoStyle = GoogleFonts.jetBrainsMono(
+      fontSize: fontSize * 0.9,
+      height: 1.55,
+      color: isDark ? const Color(0xFFE2E8F0) : const Color(0xFF1E293B),
+    );
+
+    for (var i = 0; i < blocks.length; i++) {
+      final fenced = _tryParseFencedCode(blocks[i]);
+      if (fenced == null) continue;
+      _highlightCache[i] = ScriptaCodeHighlighter.highlight(
+        code: fenced.code,
+        language: fenced.language,
+        isDark: isDark,
+        baseStyle: monoStyle,
+      );
     }
   }
 
@@ -199,6 +286,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // un singolo blocco).
     final blocks = _blocks.isEmpty ? const ['*Nessun contenuto*'] : _blocks;
 
+    // Vedi doc di `_ensureHighlightCache`: precalcola tutta l'evidenziazione
+    // sintattica ORA (in questo build, non durante lo scroll) così che i
+    // blocchi di codice che entrano nel buffer mentre l'utente scorre
+    // trovino il risultato già pronto invece di doverlo calcolare al volo.
+    _ensureHighlightCache(
+      blocks: blocks,
+      isDark: isDark,
+      fontSize: settings.fontSize,
+    );
+
     Future<void> onTapLink(String text, String? href, String linkTitle) async {
       if (href != null) {
         final uri = Uri.tryParse(href);
@@ -278,7 +375,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
               selectable: false, // Gestita dalla SelectionArea del documento
               styleSheet: markdownStyleSheet,
               builders: {
-                'pre': _CodeBlockBuilder(fontSize: settings.fontSize),
+                'pre': _CodeBlockBuilder(
+                  fontSize: settings.fontSize,
+                  // Risultato già pronto da `_ensureHighlightCache`: se
+                  // presente, `CodeBlockWidget` lo userà direttamente senza
+                  // ricalcolarlo durante lo scroll (vedi doc di classe).
+                  precomputedHighlight: _highlightCache[blockIndex],
+                ),
                 'code': _InlineCodeBuilder(
                   style: inlineCodeStyle,
                   isDark: isDark,
@@ -296,8 +399,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
 class _CodeBlockBuilder extends MarkdownElementBuilder {
   final double fontSize;
+  final TextSpan? precomputedHighlight;
 
-  _CodeBlockBuilder({required this.fontSize});
+  _CodeBlockBuilder({required this.fontSize, this.precomputedHighlight});
 
   @override
   Widget? visitElementAfterWithContext(
@@ -328,6 +432,7 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
       code: code,
       language: language,
       fontSize: fontSize,
+      precomputedHighlight: precomputedHighlight,
     );
   }
 }
@@ -373,12 +478,21 @@ class CodeBlockWidget extends StatefulWidget {
   final String code;
   final String language;
   final double fontSize;
+  // Evidenziazione già calcolata da `_MarkdownRenderedViewState` PRIMA dello
+  // scroll (vedi `_ensureHighlightCache`). Se presente ed valida per il
+  // tema corrente, viene usata direttamente: evita di rifare la
+  // tokenizzazione del codice nel frame in cui questo blocco entra nel
+  // buffer di `cacheExtent` durante lo scroll — la causa dei micro-scatti
+  // nelle note grandi con molto codice. `_highlightedTextCache` resta
+  // comunque come rete di sicurezza per gli eventuali casi non coperti.
+  final TextSpan? precomputedHighlight;
 
   const CodeBlockWidget({
     super.key,
     required this.code,
     required this.language,
     required this.fontSize,
+    this.precomputedHighlight,
   });
 
   @override
@@ -400,6 +514,14 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
   TextSpan _highlightedText(bool isDark, TextStyle monoStyle) {
     if (_highlightedTextCache != null && _highlightedForIsDark == isDark) {
       return _highlightedTextCache!;
+    }
+    // Percorso rapido: risultato già pronto dal precalcolo a livello di
+    // nota (vedi doc di `precomputedHighlight`) — nessuna tokenizzazione
+    // da fare qui, quindi nessun rischio di jank durante lo scroll.
+    if (widget.precomputedHighlight != null) {
+      _highlightedTextCache = widget.precomputedHighlight;
+      _highlightedForIsDark = isDark;
+      return widget.precomputedHighlight!;
     }
     final span = ScriptaCodeHighlighter.highlight(
       code: widget.code,
