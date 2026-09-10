@@ -227,13 +227,19 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // un buffer di pre-costruzione molto più ampio (vedi
     // `_overscanBufferViewports`), questi "confini" da attraversare
     // diventano rari invece che quasi ad ogni gesto.
+    // `ListView.builder` non espone `cacheExtentStyle` (disponibile solo sul
+    // costruttore base `ListView()`/`CustomScrollView`): il buffer, pensato
+    // in multipli dell'altezza del viewport, viene quindi convertito qui in
+    // pixel usando l'altezza disponibile, per ottenere lo stesso effetto.
+    final overscanBufferPixels =
+        MediaQuery.of(context).size.height * _overscanBufferViewports;
+
     return SelectionArea(
       child: ListView.builder(
         // Overscan generoso e UNICO meccanismo di lazy loading della vista
         // (vedi doc di classe): niente caricamento "a pagine" separato,
         // solo questo buffer applicato uniformemente a tutti i blocchi.
-        cacheExtent: _overscanBufferViewports,
-        cacheExtentStyle: CacheExtentStyle.viewport,
+        cacheExtent: overscanBufferPixels,
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
         itemCount: itemCount,
         itemBuilder: (context, index) {
