@@ -304,7 +304,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           // in blocco unico, `MarkdownStyleSheet.blockSpacing` applica
           // automaticamente tra un blocco e il successivo.
           padding: EdgeInsets.only(
-            bottom: isLastBlock ? 0 : markdownStyleSheet.blockSpacing,
+            bottom: isLastBlock ? 0 : (markdownStyleSheet.blockSpacing ?? 16.0),
           ),
           child: MarkdownBody(
             data: blocks[blockIndex],
