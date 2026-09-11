@@ -10,16 +10,44 @@ class MarkdownToolbar extends ConsumerWidget {
   final TextEditingController contentController;
   final UndoHistoryController? undoController;
 
+  /// Chiamato con il testo AGGIORNATO del controller dopo ogni azione della
+  /// toolbar che lo modifica.
+  ///
+  /// PERCHÉ SERVE: `TextEditingController.text = ...` (usato da
+  /// `MarkdownToolbarActions` per grassetto, tabella, code block, liste,
+  /// ecc.) aggiorna il testo visibile nel campo ma NON attiva mai
+  /// `TextField.onChanged` — quel callback scatta solo per modifiche che
+  /// arrivano dal vero input utente (tastiera/IME), non per assegnazioni
+  /// programmatiche al controller. Senza questo collegamento esplicito, ogni
+  /// inserimento da toolbar restava quindi SOLO nel controller locale: mai
+  /// passato a `notesProvider` (quindi mai salvato su disco/sync). Al
+  /// successivo esco-e-rientro nella nota, il controller viene ripopolato
+  /// dal contenuto realmente salvato — che non includeva l'inserimento — e
+  /// il testo "spariva". Bastava digitare qualcosa dopo (che quello sì
+  /// attiva `onChanged` con l'intero testo aggiornato, inserimento
+  /// incluso) perché tutto tornasse a salvarsi correttamente: da qui
+  /// l'impressione di un problema intermittente.
+  final ValueChanged<String>? onContentChanged;
+
   const MarkdownToolbar({
     super.key,
     required this.contentController,
     this.undoController,
+    this.onContentChanged,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
+
+    // Esegue `action` (che muta `contentController`) e propaga subito il
+    // testo risultante a `onContentChanged`, così ogni pulsante della
+    // toolbar salva esattamente come farebbe una digitazione manuale.
+    void runAndPersist(VoidCallback action) {
+      action();
+      onContentChanged?.call(contentController.text);
+    }
 
     return Container(
       height: 48,
@@ -53,7 +81,7 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.undo_rounded,
               tooltip: l10n.undo,
               onPressed: () {
-                undoController?.undo();
+                runAndPersist(() => undoController?.undo());
               },
             ),
 
@@ -62,7 +90,7 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.redo_rounded,
               tooltip: l10n.redo,
               onPressed: () {
-                undoController?.redo();
+                runAndPersist(() => undoController?.redo());
               },
             ),
 
@@ -73,12 +101,12 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_bold_rounded,
               tooltip: l10n.bold,
               onPressed: () {
-                MarkdownToolbarActions.wrapSelection(
-                  contentController,
-                  '**',
-                  '**',
-                  defaultText: 'bold text',
-                );
+                runAndPersist(() => MarkdownToolbarActions.wrapSelection(
+                      contentController,
+                      '**',
+                      '**',
+                      defaultText: 'bold text',
+                    ));
               },
             ),
 
@@ -87,12 +115,12 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_italic_rounded,
               tooltip: l10n.italic,
               onPressed: () {
-                MarkdownToolbarActions.wrapSelection(
-                  contentController,
-                  '*',
-                  '*',
-                  defaultText: 'italic text',
-                );
+                runAndPersist(() => MarkdownToolbarActions.wrapSelection(
+                      contentController,
+                      '*',
+                      '*',
+                      defaultText: 'italic text',
+                    ));
               },
             ),
 
@@ -103,21 +131,24 @@ class MarkdownToolbar extends ConsumerWidget {
               label: 'H1',
               tooltip: l10n.heading1,
               onPressed: () {
-                MarkdownToolbarActions.prependLine(contentController, '# ');
+                runAndPersist(
+                    () => MarkdownToolbarActions.prependLine(contentController, '# '));
               },
             ),
             _ToolbarButton(
               label: 'H2',
               tooltip: l10n.heading2,
               onPressed: () {
-                MarkdownToolbarActions.prependLine(contentController, '## ');
+                runAndPersist(
+                    () => MarkdownToolbarActions.prependLine(contentController, '## '));
               },
             ),
             _ToolbarButton(
               label: 'H3',
               tooltip: l10n.heading3,
               onPressed: () {
-                MarkdownToolbarActions.prependLine(contentController, '### ');
+                runAndPersist(
+                    () => MarkdownToolbarActions.prependLine(contentController, '### '));
               },
             ),
 
@@ -128,7 +159,8 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_list_bulleted_rounded,
               tooltip: l10n.bulletList,
               onPressed: () {
-                MarkdownToolbarActions.prependLine(contentController, '- ');
+                runAndPersist(
+                    () => MarkdownToolbarActions.prependLine(contentController, '- '));
               },
             ),
 
@@ -137,7 +169,8 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_list_numbered_rounded,
               tooltip: l10n.numberedList,
               onPressed: () {
-                MarkdownToolbarActions.prependLine(contentController, '1. ');
+                runAndPersist(
+                    () => MarkdownToolbarActions.prependLine(contentController, '1. '));
               },
             ),
 
@@ -146,8 +179,8 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.check_box_outlined,
               tooltip: l10n.taskList,
               onPressed: () {
-                MarkdownToolbarActions.prependLine(
-                    contentController, '- [ ] ');
+                runAndPersist(() =>
+                    MarkdownToolbarActions.prependLine(contentController, '- [ ] '));
               },
             ),
 
@@ -158,7 +191,8 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.code_rounded,
               tooltip: l10n.codeBlock,
               onPressed: () {
-                MarkdownToolbarActions.insertCodeBlock(contentController);
+                runAndPersist(
+                    () => MarkdownToolbarActions.insertCodeBlock(contentController));
               },
             ),
 
@@ -167,7 +201,7 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.link_rounded,
               tooltip: l10n.link,
               onPressed: () {
-                MarkdownToolbarActions.insertLink(contentController);
+                runAndPersist(() => MarkdownToolbarActions.insertLink(contentController));
               },
             ),
 
@@ -176,7 +210,7 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.table_chart_outlined,
               tooltip: l10n.table,
               onPressed: () {
-                MarkdownToolbarActions.insertTable(contentController);
+                runAndPersist(() => MarkdownToolbarActions.insertTable(contentController));
               },
             ),
 

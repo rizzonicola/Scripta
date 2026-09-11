@@ -268,7 +268,17 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // l'intera lista resterebbe un unico, enorme blocco e la
     // virtualizzazione non avrebbe alcun effetto.
     final effectiveContent = content.isEmpty ? '*Nessun contenuto*' : content;
-    final blocks = _splitMarkdownIntoBlocks(effectiveContent);
+    List<String> blocks;
+    try {
+      blocks = _splitMarkdownIntoBlocks(effectiveContent);
+    } catch (_) {
+      // Non lasciamo mai che un caso limite nello splitter (es. un
+      // paste malformato) faccia fallire la build dell'intera vista: nel
+      // peggiore dei casi questa nota perde la virtualizzazione per questa
+      // build (torna a un unico blocco, come prima dell'ottimizzazione),
+      // ma il contenuto resta sempre visibile e non "sparisce" mai.
+      blocks = [effectiveContent];
+    }
     final blockIsListItem =
         blocks.map(_isTopLevelListMarkerBlock).toList(growable: false);
     final hasTitle = title.trim().isNotEmpty;
@@ -287,10 +297,20 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       return markdownStyleSheet.blockSpacing ?? 16.0;
     }
 
-    Widget wrapCentered(Widget child) => Center(
+    // NB: un `Center` da solo NON basta — se il blocco (es. un singolo
+    // elemento di lista breve) è più stretto della viewport, si
+    // restringerebbe al contenuto e verrebbe centrato invece di allargarsi
+    // fino a `maxWidth`, con l'effetto di indentazione "casuale" osservato
+    // (elementi brevi spostati verso il centro, quelli lunghi no). Lo
+    // `SizedBox(width: double.infinity)` forza il figlio a occupare sempre
+    // tutta la larghezza disponibile fino a `maxWidth`, replicando lo
+    // stretch che prima veniva dato dalla `Column` con
+    // `crossAxisAlignment: CrossAxisAlignment.stretch`.
+    Widget wrapCentered(Widget child) => Align(
+          alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 840),
-            child: child,
+            child: SizedBox(width: double.infinity, child: child),
           ),
         );
 
@@ -373,10 +393,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 }
 
 /// Suddivide una stringa Markdown in blocchi indipendenti da usare come
-/// elementi di `ListView.builder`, preservando due casi che una divisione
+/// elementi di `ListView.builder`, preservando i casi che una divisione
 /// ingenua per riga vuota romperebbe:
-///  - i fenced code block (``` o ~~~) NON vengono mai spezzati, anche se
-///    contengono righe vuote al loro interno;
+///  - i fenced code block (``` o ~~~) NON vengono mai spezzati internamente,
+///    anche se contengono righe vuote al loro interno;
 ///  - le blockquote "loose" (separate da singole righe vuote) restano nello
 ///    stesso blocco.
 ///
@@ -396,6 +416,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 /// sola volta; il risultato serve solo a dare a `ListView.builder` unità
 /// discrete su cui applicare la virtualizzazione del rendering.
 final RegExp _topLevelListMarkerRe = RegExp(r'^(-|\*|\+)\s|^\d+[.)]\s');
+final RegExp _fenceOpenRe = RegExp(r'^\s{0,3}(`{3,}|~{3,})');
 
 bool _isTopLevelListMarkerLine(String line) =>
     _topLevelListMarkerRe.hasMatch(line);
@@ -413,23 +434,22 @@ List<String> _splitMarkdownIntoBlocks(String content) {
   final blocks = <String>[];
   final buffer = <String>[];
 
-  final fenceOpenRe = RegExp(r'^\s{0,3}(`{3,}|~{3,})');
   String? fenceMarker;
 
   bool isQuoteLine(String line) => line.trimLeft().startsWith('> ');
 
   bool bufferEndsInQuote() {
-    for (var i = buffer.length - 1; i >= 0; i--) {
-      if (buffer[i].trim().isEmpty) continue;
-      return isQuoteLine(buffer[i]);
+    for (var k = buffer.length - 1; k >= 0; k--) {
+      if (buffer[k].trim().isEmpty) continue;
+      return isQuoteLine(buffer[k]);
     }
     return false;
   }
 
   bool nextNonBlankContinuesQuote(int fromIndex) {
-    for (var j = fromIndex; j < lines.length; j++) {
-      if (lines[j].trim().isEmpty) continue;
-      return isQuoteLine(lines[j]);
+    for (var k = fromIndex; k < lines.length; k++) {
+      if (lines[k].trim().isEmpty) continue;
+      return isQuoteLine(lines[k]);
     }
     return false;
   }
@@ -441,7 +461,8 @@ List<String> _splitMarkdownIntoBlocks(String content) {
     buffer.clear();
   }
 
-  for (var i = 0; i < lines.length; i++) {
+  var i = 0;
+  while (i < lines.length) {
     final line = lines[i];
 
     if (fenceMarker != null) {
@@ -449,13 +470,18 @@ List<String> _splitMarkdownIntoBlocks(String content) {
       if (line.trimLeft().startsWith(fenceMarker)) {
         fenceMarker = null;
       }
+      i++;
       continue;
     }
 
-    final fenceMatch = fenceOpenRe.firstMatch(line);
+    final fenceMatch = _fenceOpenRe.firstMatch(line);
     if (fenceMatch != null) {
+      // Non spezzare mai l'INTERNO di un fenced code block (anche se
+      // contiene righe vuote): resta unito al blocco corrente finché non
+      // incontra la riga di chiusura.
       fenceMarker = fenceMatch.group(1);
       buffer.add(line);
+      i++;
       continue;
     }
 
@@ -465,24 +491,28 @@ List<String> _splitMarkdownIntoBlocks(String content) {
       // (paragrafo, elemento di lista precedente...) e ne apre uno nuovo.
       flushBuffer();
       buffer.add(line);
+      i++;
       continue;
     }
 
     if (line.trim().isEmpty) {
-      if (buffer.isEmpty) continue;
-      if (bufferEndsInQuote() && nextNonBlankContinuesQuote(i + 1)) {
-        // Riga vuota "interna" a una blockquote loose: resta nel blocco
-        // corrente per non spezzarne l'aspetto in più widget separati.
-        buffer.add(line);
-        continue;
+      if (buffer.isNotEmpty) {
+        if (bufferEndsInQuote() && nextNonBlankContinuesQuote(i + 1)) {
+          // Riga vuota "interna" a una blockquote loose: resta nel blocco
+          // corrente per non spezzarne l'aspetto in più widget separati.
+          buffer.add(line);
+        } else {
+          flushBuffer();
+        }
       }
-      flushBuffer();
+      i++;
       continue;
     }
 
     // Riga di continuazione: testo di un paragrafo, oppure contenuto
     // annidato/rientrato di un elemento di lista già aperto sopra.
     buffer.add(line);
+    i++;
   }
   flushBuffer();
 

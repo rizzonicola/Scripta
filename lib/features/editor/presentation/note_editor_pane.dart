@@ -121,6 +121,18 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       );
     }
 
+    // Condivisa tra il campo di editing e la toolbar: entrambi i percorsi
+    // devono salvare esattamente allo stesso modo (vedi doc di
+    // `MarkdownToolbar.onContentChanged` per il perché è indispensabile
+    // anche per i pulsanti della toolbar, non solo per la digitazione).
+    void handleContentChanged(String val) {
+      ref.read(notesProvider.notifier).updateNote(
+            activeNoteId,
+            content: val,
+          );
+      ref.read(syncProvider.notifier).notifyEditorActivity();
+    }
+
     return Stack(
       children: [
         Column(
@@ -131,6 +143,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               MarkdownToolbar(
                 contentController: _contentController,
                 undoController: _undoController,
+                onContentChanged: handleContentChanged,
               ),
             ],
 
@@ -158,15 +171,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                                 .read(syncProvider.notifier)
                                 .notifyEditorActivity();
                           },
-                          onContentChanged: (val) {
-                            ref.read(notesProvider.notifier).updateNote(
-                                  activeNoteId,
-                                  content: val,
-                                );
-                            ref
-                                .read(syncProvider.notifier)
-                                .notifyEditorActivity();
-                          },
+                          onContentChanged: handleContentChanged,
                         ),
                       ),
               ),
