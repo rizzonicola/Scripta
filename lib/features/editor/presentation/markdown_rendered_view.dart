@@ -380,12 +380,46 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // enorme non richiede quindi mai di ridisegnare un unico layer gigante,
     // ma solo di ricompositare i pochi layer già rasterizzati dei blocchi
     // realmente visibili.
+    //
+    // FIX "flash bianco" / freeze su selezione ampia o "Seleziona tutto":
+    // `SelectionArea` non aspetta lo scroll per raggiungere i blocchi fuori
+    // schermo. Quando l'utente estende la selezione (o usa "Seleziona
+    // tutto"), `SelectionRegistrar` interroga direttamente il `Viewport`
+    // per ottenere i `RenderObject` dei blocchi Markdown non ancora
+    // costruiti. Con il `cacheExtent` di default di Flutter (~250 px),
+    // questi blocchi semplicemente non esistono nell'albero di render:
+    // Flutter è quindi costretto a materializzarli sincronamente, uno alla
+    // volta, DENTRO la stessa fase di selection-layout, invalidando di
+    // nuovo il layout ad ogni blocco appena creato → loop di relayout →
+    // flash bianco e freeze della UI. Con lo scroll "a forza" (fling) il
+    // problema non si presenta perché la fisica dello scroll materializza
+    // i widget mancanti PRIMA che `SelectionArea` li richieda.
+    //
+    // La correzione è pre-costruire (non pre-caricare dati: il testo è già
+    // tutto in memoria, qui si parla solo di `RenderObject` già presenti
+    // nell'albero) una finestra di blocchi molto più ampia dello schermo
+    // visibile, così che qualunque estensione "ragionevole" della
+    // selezione trovi sempre i blocchi già pronti e non forzi mai una
+    // costruzione sincrona a cascata durante l'hit-test di selezione.
+    // 3000px equivalgono a diversi schermi di contenuto sopra/sotto la
+    // viewport corrente: sufficienti per "Seleziona tutto" su note di
+    // lunghezza tipica e per drag di selezione rapidi, senza dover
+    // costruire l'intero documento in anticipo (che vanificherebbe la
+    // virtualizzazione su note molto lunghe). Il `RepaintBoundary` per
+    // blocco resta comunque attivo: i blocchi pre-costruiti fuori
+    // viewport vengono comunque compositati come layer separati e non
+    // pesano sul repaint di quelli realmente visibili.
     return RepaintBoundary(
       child: SelectionArea(
         child: ListView.builder(
           padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
           itemCount: itemCount,
           itemBuilder: buildItem,
+          // Estende la zona di pre-costruzione sopra e sotto la viewport
+          // (in logical pixel, su entrambi i lati) così che `SelectionArea`
+          // trovi sempre i `RenderObject` già pronti quando estende la
+          // selezione, senza dover forzare un rebuild sincrono a cascata.
+          cacheExtent: 3000.0,
         ),
       ),
     );
