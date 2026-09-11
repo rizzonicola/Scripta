@@ -40,6 +40,16 @@ import '../../settings/providers/settings_provider.dart';
 ///     sul proprio layer grafico: qualunque repaint circostante (cursore,
 ///     hover, animazioni della toolbar, ecc.) non forza mai un repaint dei
 ///     pixel già renderizzati della nota.
+///  4. Il contenuto è renderizzato con `ListView.builder`, un blocco
+///     Markdown di primo livello per elemento (vedi
+///     `_splitMarkdownIntoBlocks`), invece di un unico `MarkdownBody`
+///     dentro una `Column`/`SingleChildScrollView` non virtualizzata: su
+///     note molto lunghe, quest'ultima è la causa reale del lag durante lo
+///     SCROLL (Flutter deve comunque layoutare/dipingere anche i blocchi
+///     fuori schermo). Il testo resta parsato per intero, in un solo
+///     passaggio, prima di essere suddiviso: non è lazy loading né
+///     paginazione del contenuto, solo virtualizzazione del rendering dei
+///     blocchi già pronti.
 ///
 /// Il ripristino "a caldo" resta corretto: quando l'utente passa in modalità
 /// modifica e poi torna in visualizzazione, `NoteEditorPane` smonta questo
@@ -238,70 +248,203 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       ),
     );
 
+    // Suddivisione in blocchi di primo livello: il testo è già interamente
+    // in memoria e viene attraversato una sola volta qui (nessun
+    // caricamento incrementale, nessuna paginazione) — serve solo a dare a
+    // ListView.builder unità discrete da costruire/disegnare una alla
+    // volta, invece dell'intero documento in un'unica Column non
+    // virtualizzata (il vero collo di bottiglia per lo scroll su note
+    // molto lunghe: senza virtualizzazione, Flutter deve layoutare e
+    // dipingere anche i blocchi fuori schermo).
+    final effectiveContent = content.isEmpty ? '*Nessun contenuto*' : content;
+    final blocks = _splitMarkdownIntoBlocks(effectiveContent);
+    final hasTitle = title.trim().isNotEmpty;
+    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
+
+    Widget wrapCentered(Widget child) => Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 840),
+            child: child,
+          ),
+        );
+
+    Widget buildItem(BuildContext context, int index) {
+      if (hasTitle && index == 0) {
+        return wrapCentered(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                title,
+                style: AppTheme.getTextStyleForFont(
+                  fontFamily,
+                  fontSize: fontSize * 2.2,
+                  fontWeight: FontWeight.w800,
+                  color: theme.colorScheme.onSurface,
+                  height: 1.25,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Divider(
+                color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                thickness: 1,
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      }
+
+      final blockIndex = hasTitle ? index - 1 : index;
+      final isLastBlock = blockIndex == blocks.length - 1;
+
+      return wrapCentered(
+        Padding(
+          // Riproduce lo spacing verticale che, in un documento renderizzato
+          // in blocco unico, `MarkdownStyleSheet.blockSpacing` applica
+          // automaticamente tra un blocco e il successivo.
+          padding: EdgeInsets.only(
+            bottom: isLastBlock ? 0 : markdownStyleSheet.blockSpacing,
+          ),
+          child: MarkdownBody(
+            data: blocks[blockIndex],
+            selectable: false, // Gestita da SelectionArea nel genitore
+            styleSheet: markdownStyleSheet,
+            builders: {
+              'pre': _CodeBlockBuilder(fontSize: fontSize),
+              'code': _InlineCodeBuilder(
+                style: inlineCodeStyle,
+                isDark: isDark,
+                primaryColor: theme.colorScheme.primary,
+              ),
+            },
+            onTapLink: (text, href, title) async {
+              if (href != null) {
+                final uri = Uri.tryParse(href);
+                if (uri != null && await canLaunchUrl(uri)) {
+                  await launchUrl(uri);
+                }
+              }
+            },
+          ),
+        ),
+      );
+    }
+
     // RepaintBoundary: isola il layer grafico della nota renderizzata da
     // quello del resto dell'interfaccia (toolbar, cursore, animazioni di
     // focus mode, ecc.), così un repaint "vicino" non forza mai Flutter a
-    // ridisegnare anche questi pixel, già presenti nel proprio layer.
+    // ridisegnare anche questi pixel. `ListView.builder` aggiunge inoltre
+    // automaticamente un `RepaintBoundary` per ciascun blocco costruito
+    // (`addRepaintBoundaries`, attivo di default): lo scroll di una nota
+    // enorme non richiede quindi mai di ridisegnare un unico layer gigante,
+    // ma solo di ricompositare i pochi layer già rasterizzati dei blocchi
+    // realmente visibili.
     return RepaintBoundary(
       child: SelectionArea(
-        child: SingleChildScrollView(
+        child: ListView.builder(
           padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 840),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Rendered Note Title
-                  if (title.trim().isNotEmpty) ...[
-                    Text(
-                      title,
-                      style: AppTheme.getTextStyleForFont(
-                        fontFamily,
-                        fontSize: fontSize * 2.2,
-                        fontWeight: FontWeight.w800,
-                        color: theme.colorScheme.onSurface,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Divider(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.3),
-                      thickness: 1,
-                    ),
-                    const SizedBox(height: 20),
-                  ],
-
-                  // Rendered Markdown Body with integrated Code Block
-                  MarkdownBody(
-                    data: content.isEmpty ? '*Nessun contenuto*' : content,
-                    selectable: false, // Handled seamlessly by parent SelectionArea
-                    styleSheet: markdownStyleSheet,
-                    builders: {
-                      'pre': _CodeBlockBuilder(fontSize: fontSize),
-                      'code': _InlineCodeBuilder(
-                        style: inlineCodeStyle,
-                        isDark: isDark,
-                        primaryColor: theme.colorScheme.primary,
-                      ),
-                    },
-                    onTapLink: (text, href, title) async {
-                      if (href != null) {
-                        final uri = Uri.tryParse(href);
-                        if (uri != null && await canLaunchUrl(uri)) {
-                          await launchUrl(uri);
-                        }
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
+          itemCount: itemCount,
+          itemBuilder: buildItem,
         ),
       ),
     );
   }
+}
+
+/// Suddivide una stringa Markdown nei suoi blocchi di primo livello
+/// (separati da una riga vuota), preservando due casi che una divisione
+/// ingenua per riga vuota romperebbe:
+///  - i fenced code block (``` o ~~~) NON vengono mai spezzati, anche se
+///    contengono righe vuote al loro interno;
+///  - gli elementi di una lista puntata/numerata o di una blockquote
+///    "loose" (separati da singole righe vuote) restano nello stesso
+///    blocco, così numerazione e aspetto visivo restano identici a un
+///    rendering monolitico.
+///
+/// Non introduce alcun caricamento incrementale né paginazione: il testo è
+/// già interamente disponibile in memoria e viene scandito linearmente una
+/// sola volta; il risultato serve solo a dare a `ListView.builder` unità
+/// discrete su cui applicare la virtualizzazione del rendering.
+List<String> _splitMarkdownIntoBlocks(String content) {
+  final lines = content.split('\n');
+  final blocks = <String>[];
+  final buffer = <String>[];
+
+  final fenceOpenRe = RegExp(r'^\s{0,3}(`{3,}|~{3,})');
+  String? fenceMarker;
+
+  bool isListOrQuoteLine(String line) {
+    final trimmed = line.trimLeft();
+    final indented = line.startsWith('  ') || line.startsWith('\t');
+    return indented ||
+        trimmed.startsWith('- ') ||
+        trimmed.startsWith('* ') ||
+        trimmed.startsWith('+ ') ||
+        trimmed.startsWith('> ') ||
+        RegExp(r'^\d+[.)]\s').hasMatch(trimmed);
+  }
+
+  bool bufferEndsInListOrQuote() {
+    for (var i = buffer.length - 1; i >= 0; i--) {
+      if (buffer[i].trim().isEmpty) continue;
+      return isListOrQuoteLine(buffer[i]);
+    }
+    return false;
+  }
+
+  bool nextNonBlankContinuesListOrQuote(int fromIndex) {
+    for (var j = fromIndex; j < lines.length; j++) {
+      if (lines[j].trim().isEmpty) continue;
+      return isListOrQuoteLine(lines[j]);
+    }
+    return false;
+  }
+
+  void flushBuffer() {
+    if (buffer.isEmpty) return;
+    final text = buffer.join('\n').trimRight();
+    if (text.trim().isNotEmpty) blocks.add(text);
+    buffer.clear();
+  }
+
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+
+    if (fenceMarker != null) {
+      buffer.add(line);
+      if (line.trimLeft().startsWith(fenceMarker)) {
+        fenceMarker = null;
+      }
+      continue;
+    }
+
+    final fenceMatch = fenceOpenRe.firstMatch(line);
+    if (fenceMatch != null) {
+      fenceMarker = fenceMatch.group(1);
+      buffer.add(line);
+      continue;
+    }
+
+    if (line.trim().isEmpty) {
+      if (buffer.isEmpty) continue;
+      if (bufferEndsInListOrQuote() &&
+          nextNonBlankContinuesListOrQuote(i + 1)) {
+        // Riga vuota "interna" a una lista/blockquote loose: resta nel
+        // blocco corrente per non spezzarne numerazione/aspetto in più
+        // widget separati.
+        buffer.add(line);
+        continue;
+      }
+      flushBuffer();
+      continue;
+    }
+
+    buffer.add(line);
+  }
+  flushBuffer();
+
+  return blocks.isEmpty ? [content] : blocks;
 }
 
 class _CodeBlockBuilder extends MarkdownElementBuilder {
