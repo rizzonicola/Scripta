@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,8 +8,20 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/syntax_highlighter.dart';
 import '../../settings/providers/settings_provider.dart';
+
+// Import esplicito da `rendering.dart`: `SelectedContent` è il tipo restituito
+// da `SelectionArea.onSelectionChanged` (usato più sotto per la "Seamless
+// Text Selection"). È tecnicamente raggiungibile anche solo tramite
+// `material.dart` in molte versioni del framework, ma affidarsi a
+// un'esportazione transitiva è fragile: basta un refactor interno di
+// Flutter (o una versione del framework che riorganizzi gli export) perché
+// la pipeline CI/CD (Linux/Android build) smetta di compilare con un
+// "undefined name SelectedContent". Importarlo esplicitamente da dove è
+// realmente definito rende la dipendenza esplicita e stabile.
+import 'package:flutter/rendering.dart' show SelectedContent;
 
 /// Vista di sola lettura di una nota Markdown.
 ///
@@ -31,13 +42,12 @@ import '../../settings/providers/settings_provider.dart';
 ///     invece dell'intero oggetto impostazioni.
 ///  2. Il sottoalbero renderizzato (titolo + `MarkdownBody`) viene
 ///     memorizzato in `State` e ricostruito SOLO quando uno degli input che
-///     lo determinano (contenuto, titolo, font, tema, o lo stato di
-///     selezione — vedi punto 5) è realmente cambiato rispetto all'ultima
-///     build. Se `build()` viene rieseguito per un motivo estraneo, si
-///     restituisce la STESSA istanza di widget già costruita in
-///     precedenza: Flutter la riconosce (`identical`) e salta interamente
-///     rebuild/relayout/repaint di quel sottoalbero, senza bisogno di
-///     spezzettare o ritardare il rendering del testo.
+///     lo determinano (contenuto, titolo, font, tema) è realmente cambiato
+///     rispetto all'ultima build. Se `build()` viene rieseguito per un
+///     motivo estraneo, si restituisce la STESSA istanza di widget già
+///     costruita in precedenza: Flutter la riconosce (`identical`) e salta
+///     interamente rebuild/relayout/repaint di quel sottoalbero, senza
+///     bisogno di spezzettare o ritardare il rendering del testo.
 ///  3. Il sottoalbero è avvolto in un `RepaintBoundary`, così viene isolato
 ///     sul proprio layer grafico: qualunque repaint circostante (cursore,
 ///     hover, animazioni della toolbar, ecc.) non forza mai un repaint dei
@@ -46,34 +56,15 @@ import '../../settings/providers/settings_provider.dart';
 ///     elemento (vedi `_splitMarkdownIntoBlocks`), invece di un unico
 ///     `MarkdownBody` dentro una `Column`/`SingleChildScrollView` non
 ///     virtualizzata: su note molto lunghe, quest'ultima è la causa reale
-///     del lag durante lo SCROLL — non solo perché Flutter deve comunque
-///     layoutare/dipingere anche i blocchi fuori schermo, ma perché un
-///     `RepaintBoundary` che copre l'INTERO documento può superare la
-///     dimensione massima di texture che la GPU riesce a compositare come
-///     singolo layer: oltre quel limite, Flutter è costretto a ridisegnare
-///     tutto ad ogni frame di scroll invece di limitarsi a traslare
-///     un'immagine già rasterizzata (verificato: causa uno scroll
-///     visibilmente scattoso su note lunghe). Le liste "tight" (senza
-///     righe vuote tra un elemento e l'altro — il caso più pesante in
-///     pratica: una singola lista lunga centinaia di righe) vengono
-///     spezzate un elemento alla volta, non solo sulle righe vuote,
-///     altrimenti resterebbero un unico blocco gigante e la
-///     virtualizzazione non avrebbe alcun effetto. Il testo resta parsato
-///     per intero, in un solo passaggio, prima di essere suddiviso: non è
-///     lazy loading né paginazione del contenuto, solo virtualizzazione
-///     del rendering di blocchi già pronti.
-///  5. FIX flash bianco/freeze su selezione ampia o "Seleziona tutto":
-///     la virtualizzazione del punto 4 è indispensabile per lo scroll, ma
-///     espone `SelectionArea` al rischio di dover raggiungere blocchi non
-///     ancora costruiti durante un hit-test di selezione, causando un loop
-///     di relayout. La soluzione non è rimuovere la virtualizzazione (che
-///     peggiorerebbe lo scroll, vedi punto 4), ma rendere dinamico il
-///     `cacheExtent` della `ListView.builder`: resta piccolo durante lo
-///     scroll normale, e viene allargato SOLO per la durata di una
-///     selezione attiva, dal momento in cui il dito tocca lo schermo
-///     (`onPointerDown`, ben prima che il long-press di avvio selezione
-///     venga riconosciuto) fino a quando la selezione torna vuota (con un
-///     breve debounce). Vedi i commenti su `_selectionExpanded` più sotto.
+///     del lag durante lo SCROLL (Flutter deve comunque layoutare/dipingere
+///     anche i blocchi fuori schermo). Le liste "tight" (senza righe vuote
+///     tra un elemento e l'altro — il caso più pesante in pratica: una
+///     singola lista lunga centinaia di righe) vengono spezzate un elemento
+///     alla volta, non solo sulle righe vuote, altrimenti resterebbero un
+///     unico blocco gigante e la virtualizzazione non avrebbe alcun
+///     effetto. Il testo resta parsato per intero, in un solo passaggio,
+///     prima di essere suddiviso: non è lazy loading né paginazione del
+///     contenuto, solo virtualizzazione del rendering di blocchi già pronti.
 ///
 /// Il ripristino "a caldo" resta corretto: quando l'utente passa in modalità
 /// modifica e poi torna in visualizzazione, `NoteEditorPane` smonta questo
@@ -96,11 +87,77 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
       _MarkdownRenderedViewState();
 }
 
+/// ============================================================================
+/// SEAMLESS TEXT SELECTION — note di approccio
+/// ============================================================================
+///
+/// PROBLEMA: `flutter_markdown_plus` in modalità `selectable: true` avvolge
+/// OGNI elemento (paragrafo, voce di lista, cella di tabella...) nel proprio
+/// `SelectableRegion`/`Text` indipendente. Trascinare una selezione che
+/// attraversa più elementi (il caso normale: selezionare due righe) obbliga
+/// Flutter a fondere selezioni provenienti da widget "fratelli" scollegati:
+/// è la causa nota di offset che saltano, caratteri duplicati/mancanti e, su
+/// note lunghe, del lag descritto nell'obiettivo. Per questo la vista
+/// corrente passa già `selectable: false` a `MarkdownBody` e delega la
+/// selezione a UN SOLO `SelectionArea` esterno (vedi più sotto).
+///
+/// SOLUZIONE ("seamless"): un `SelectionArea` rileva come "selezionabile"
+/// qualunque `Text`/`RichText` presente nel suo sottoalbero al momento in cui
+/// esegue l'hit-test — non è legato all'istanza di widget che si trovava
+/// sotto il dito quando la selezione è partita. Possiamo quindi, blocco per
+/// blocco, SOSTITUIRE al volo il contenuto (da `MarkdownBody` formattato a un
+/// singolo `Text` con il markdown grezzo) SENZA smontare o ricreare il
+/// `SelectionArea` stesso: il drag in corso continua a funzionare, ma ora
+/// opera su un unico `RenderParagraph` piatto per quel blocco → corrispondenza
+/// 1:1 esatta tra offset del tocco e carattere selezionato, zero fusione tra
+/// widget fratelli.
+///
+/// TRIGGER (quando un blocco passa a "raw"): non intercettiamo i gesture
+/// grezzi in competizione con i recognizer di `SelectionArea` (rischierebbe
+/// di rubargli l'arena e rompere la selezione nativa). Usiamo invece il
+/// canale che Flutter già espone per questo: `SelectionArea.onSelectionChanged`
+/// riporta il contenuto testuale non appena una parola viene selezionata
+/// (tap-and-hold o doppio tap, sia touch che desktop) — è il segnale stesso
+/// di "gesture di selezione iniziata" richiesto dalla spec, semplicemente
+/// osservato dal livello giusto invece che da un `Listener`/`GestureDetector`
+/// grezzo che dovrebbe poi reimplementare la logica di long-press/doppio tap
+/// già presente (e testata) dentro `SelectionArea`. Il testo selezionato
+/// viene confrontato (via cache) con il testo "reso" di ciascun blocco per
+/// capire quale blocco coinvolge, e SOLO quello passa a raw.
+///
+/// USCITA dalla modalità raw: `onSelectionChanged(null)` (tap altrove /
+/// deselezione) oppure pressione di "Copia" nel menu contestuale (intercettata
+/// tramite `contextMenuBuilder`) riportano il blocco a Markdown formattato.
+///
+/// SCROLL: sostituire un blocco raw/formattato ne cambia l'altezza (il
+/// markdown grezzo contiene caratteri di sintassi in più/meno rispetto al
+/// testo reso). Per non perdere il punto a cui l'utente sta guardando NON
+/// stimiamo l'offset con un calcolo approssimativo (es. "N px per riga"):
+/// misuriamo la posizione VERTICALE REALE del blocco (via `GlobalKey` +
+/// `RenderBox.localToGlobal`) subito prima e subito dopo lo swap, e
+/// compensiamo lo `ScrollController` esattamente della differenza misurata.
+/// È un aggiustamento basato su geometria già disposta (layout reale), non su
+/// un'euristica sui pixel per riga — l'ancoraggio segue quindi il blocco
+/// (e con esso il testo/offset di carattere che l'utente stava toccando),
+/// non una quantità di scroll indovinata a priori.
+///
+/// PRESTAZIONI: la costosa suddivisione in blocchi + costruzione dello
+/// stylesheet resta cache-ata esattamente come prima (invariata da
+/// contenuto/font/tema). In aggiunta, ogni blocco FORMATTATO viene
+/// costruito una sola volta come istanza di widget e riusato `identical`
+/// finché il suo stato raw/formattato non cambia: attivare la selezione
+/// grezza su un blocco NON invalida né ricostruisce gli altri blocchi della
+/// nota (niente reparse Markdown "di massa" durante il drag di selezione).
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
-  // Sottoalbero già costruito (titolo + MarkdownBody) e gli input esatti che
-  // lo hanno prodotto. Finché questi input non cambiano, `build()` restituisce
-  // sempre questa stessa istanza invece di ricostruire/riparsare da capo.
-  Widget? _cachedSubtree;
+  // --- Cache degli "ingredienti" costosi (invariata nello spirito rispetto
+  // alla versione precedente): ricalcolati SOLO quando cambia davvero
+  // contenuto/titolo/font/tema, mai per un cambio di selezione. ---
+  List<String>? _cachedBlocks;
+  List<bool>? _cachedBlockIsListItem;
+  List<Widget>? _cachedFormattedItems;
+  Widget? _cachedTitleWidget;
+  bool _cachedHasTitle = false;
+  TextStyle? _cachedRawTextStyle;
   String? _cachedTitle;
   String? _cachedContent;
   String? _cachedFontFamily;
@@ -108,75 +165,170 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   double? _cachedLineHeight;
   ColorScheme? _cachedColorScheme;
   Brightness? _cachedBrightness;
-  bool _cachedSelectionExpanded = false;
 
-  // FIX "flash bianco" / freeze su selezione ampia o "Seleziona tutto",
-  // SENZA rinunciare alla virtualizzazione (che resta la `ListView.builder`
-  // a blocchi qui sotto, invariata):
-  //
-  // Il `cacheExtent` della lista resta PICCOLO durante lo scroll normale
-  // (virtualizzazione piena, stesse prestazioni di sempre) e viene allargato
-  // SOLO per la durata di un'effettiva selezione, quando serve che tutti i
-  // blocchi del documento abbiano già un `RenderObject` costruito per non
-  // far incappare `SelectionArea` in zone non renderizzate durante
-  // l'hit-test/auto-scroll (la causa del loop di relayout → flash bianco).
-  //
-  // Il segnale "l'utente sta per selezionare" arriva da `onPointerDown`
-  // (vedi `Listener` nel subtree costruito da `_buildSubtree`): scatta nel
-  // momento stesso in cui il dito tocca lo schermo, PRIMA che il long-press
-  // per l'avvio della selezione venga anche solo riconosciuto da Flutter
-  // (che richiede ~500ms di pressione). Il `cacheExtent` è quindi già
-  // ampio quando la selezione parte davvero: nessun blocco mancante,
-  // nessuna corsa a costruirli "al volo" durante il gesto.
-  //
-  // Il ripristino avviene quando `SelectionArea.onSelectionChanged` segnala
-  // una selezione vuota (deselezionata, dopo un tap altrove o dopo la
-  // copia), con un breve debounce — stesso pattern già usato altrove in
-  // questo progetto per il feedback aptico (vedi
-  // `HapticsHelper.reportSelectionState`) — per non restringere e
-  // riallargare il `cacheExtent` di continuo durante micro-interruzioni
-  // dello stesso gesto di trascinamento.
-  bool _selectionExpanded = false;
-  Timer? _shrinkCacheExtentTimer;
-  static const double _normalCacheExtent = 250.0; // default di Flutter
-  static const double _selectionCacheExtent = 60000.0;
-  static const _shrinkDebounce = Duration(milliseconds: 400);
-
-  void _expandCacheForSelection() {
-    _shrinkCacheExtentTimer?.cancel();
-    if (!_selectionExpanded) {
-      setState(() => _selectionExpanded = true);
-    }
-  }
-
-  void _handleSelectionChanged(SelectedContent? content) {
-    final isEmpty = content == null || content.plainText.isEmpty;
-    if (isEmpty) {
-      _shrinkCacheExtentTimer?.cancel();
-      _shrinkCacheExtentTimer = Timer(_shrinkDebounce, () {
-        if (mounted && _selectionExpanded) {
-          setState(() => _selectionExpanded = false);
-        }
-      });
-    } else {
-      // Selezione attiva/non vuota: annulla un eventuale restringimento
-      // già pianificato, anche se il dito si è appena sollevato — la
-      // selezione resta evidenziata finché l'utente non la cancella o
-      // copia, e i blocchi selezionati fuori viewport devono restare
-      // costruiti finché è così.
-      _shrinkCacheExtentTimer?.cancel();
-    }
-  }
+  // --- Stato di selezione "seamless" (vedi doc di classe sopra). ---
+  final ScrollController _scrollController = ScrollController();
+  final Map<int, GlobalKey> _blockKeys = {};
+  final Map<int, Widget> _cachedRawItems = {};
+  final Map<String, String> _renderedPlainTextCache = {};
+  Set<int> _rawBlockIndices = const {};
 
   @override
   void dispose() {
     // Rilascia esplicitamente i riferimenti pesanti (testo della nota e
     // sottoalbero renderizzato) non appena la vista viene smontata, così non
     // restano agganciati più a lungo del necessario in attesa della GC.
-    _shrinkCacheExtentTimer?.cancel();
-    _cachedSubtree = null;
+    _cachedFormattedItems = null;
+    _cachedTitleWidget = null;
     _cachedContent = null;
+    _blockKeys.clear();
+    _cachedRawItems.clear();
+    _renderedPlainTextCache.clear();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Testo "reso" approssimato di un blocco: il testo visibile dopo che il
+  /// markdown è stato interpretato (es. `**bold**` → `bold`, `# Titolo` →
+  /// `Titolo`), usato SOLO per capire quale blocco corrisponde al testo che
+  /// `SelectionArea.onSelectionChanged` riporta come selezionato. Calcolato
+  /// una sola volta per blocco (cache tenuta in vita quanto il blocco
+  /// stesso) e mai ricalcolato durante un drag di selezione, che può
+  /// invocare questo confronto molte volte al secondo.
+  String _renderedPlainTextFor(String block) {
+    return _renderedPlainTextCache.putIfAbsent(block, () {
+      try {
+        final document = md.Document(extensionSet: md.ExtensionSet.gitHubWeb);
+        final nodes = document.parseLines(block.split('\n'));
+        final buffer = StringBuffer();
+        for (final node in nodes) {
+          buffer.writeln(node.textContent);
+        }
+        return buffer.toString();
+      } catch (_) {
+        // Fallback prudente: se il parsing del singolo blocco fallisse per
+        // un caso limite, usiamo il testo grezzo stesso come approssimazione
+        // — nel peggiore dei casi il matching sarà un po' meno preciso, ma
+        // non blocca mai la funzionalità né fa fallire la build.
+        return block;
+      }
+    });
+  }
+
+  /// Determina quali blocchi (indici in `_cachedBlocks`) sono coinvolti dal
+  /// testo attualmente selezionato, confrontandolo con il testo reso di
+  /// ciascun blocco. Una selezione può attraversare più blocchi: per questo
+  /// si confronta sia il testo intero sia riga per riga.
+  Set<int> _activeBlocksFor(String selectedPlainText) {
+    final normalizedSelected = selectedPlainText.trim();
+    final blocks = _cachedBlocks;
+    if (normalizedSelected.isEmpty || blocks == null) return const {};
+
+    final segments = normalizedSelected
+        .split('\n')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList(growable: false);
+
+    final active = <int>{};
+    for (var i = 0; i < blocks.length; i++) {
+      final normalizedBlock = _renderedPlainTextFor(blocks[i]).trim();
+      if (normalizedBlock.isEmpty) continue;
+      final wholeMatch = normalizedBlock.contains(normalizedSelected) ||
+          normalizedSelected.contains(normalizedBlock);
+      final segmentMatch =
+          !wholeMatch && segments.any(normalizedBlock.contains);
+      if (wholeMatch || segmentMatch) active.add(i);
+    }
+    return active;
+  }
+
+  bool _sameIndexSet(Set<int> a, Set<int> b) {
+    if (a.length != b.length) return false;
+    for (final value in a) {
+      if (!b.contains(value)) return false;
+    }
+    return true;
+  }
+
+  /// Callback di `SelectionArea.onSelectionChanged`: unico punto da cui la
+  /// "gesture di selezione" viene osservata (vedi doc di classe). Aggiorna
+  /// anche l'aptica tramite lo stesso canale già usato dall'editor
+  /// (`HapticsHelper.reportSelectionState`), così un tap-and-hold in
+  /// sola-lettura si comporta in modo coerente con quello nel campo di
+  /// modifica, invece di introdurre una logica aptica parallela.
+  void _handleSelectionChanged(SelectedContent? content) {
+    final hasSelection =
+        content != null && content.plainText.trim().isNotEmpty;
+    HapticsHelper.reportSelectionState(isCollapsed: !hasSelection);
+
+    if (!hasSelection) {
+      if (_rawBlockIndices.isNotEmpty) {
+        setState(() => _rawBlockIndices = const {});
+      }
+      return;
+    }
+
+    final nextActive = _activeBlocksFor(content.plainText);
+    if (nextActive.isEmpty || _sameIndexSet(_rawBlockIndices, nextActive)) {
+      return;
+    }
+
+    // Ancora lo scroll sul primo blocco coinvolto: è quello su cui il dito
+    // (o il cursore) si trova con maggiore probabilità in questo istante.
+    _swapPreservingScrollAnchor(
+      anchorBlockIndex: nextActive.first,
+      applyChange: () => setState(() => _rawBlockIndices = nextActive),
+    );
+  }
+
+  /// Riporta tutti i blocchi a Markdown formattato. Usata sia quando la
+  /// selezione si azzera (gestito già in `_handleSelectionChanged`), sia
+  /// esplicitamente dopo "Copia" dal menu contestuale (vedi
+  /// `_buildContextMenu`), perché su alcune piattaforme la selezione visibile
+  /// può restare attiva dopo la copia invece di azzerarsi da sola.
+  void _revertAllRawBlocks() {
+    if (_rawBlockIndices.isEmpty) return;
+    setState(() => _rawBlockIndices = const {});
+  }
+
+  /// Misura la posizione verticale REALE (non stimata) del blocco indicato
+  /// prima di applicare `applyChange`, e la rimisura a frame concluso,
+  /// compensando lo `ScrollController` della differenza esatta così che il
+  /// punto guardato dall'utente non "salti" quando il blocco cambia altezza
+  /// passando da formattato a grezzo (o viceversa).
+  void _swapPreservingScrollAnchor({
+    required int anchorBlockIndex,
+    required VoidCallback applyChange,
+  }) {
+    double? beforeTop;
+    final beforeBox = _blockKeys[anchorBlockIndex]
+        ?.currentContext
+        ?.findRenderObject();
+    if (beforeBox is RenderBox && beforeBox.attached) {
+      beforeTop = beforeBox.localToGlobal(Offset.zero).dy;
+    }
+
+    applyChange();
+
+    if (beforeTop == null) return;
+    final anchor = beforeTop;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final afterBox = _blockKeys[anchorBlockIndex]
+          ?.currentContext
+          ?.findRenderObject();
+      if (afterBox is! RenderBox || !afterBox.attached) return;
+
+      final afterTop = afterBox.localToGlobal(Offset.zero).dy;
+      final delta = afterTop - anchor;
+      if (delta.abs() < 0.5) return;
+
+      final position = _scrollController.position;
+      final target = (_scrollController.offset + delta)
+          .clamp(position.minScrollExtent, position.maxScrollExtent);
+      _scrollController.jumpTo(target);
+    });
   }
 
   @override
@@ -191,42 +343,39 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
     );
 
-    final canReuseCache = _cachedSubtree != null &&
-        _cachedTitle == widget.title &&
-        _cachedContent == widget.content &&
-        _cachedFontFamily == fontFamily &&
-        _cachedFontSize == fontSize &&
-        _cachedLineHeight == lineHeight &&
-        _cachedColorScheme == theme.colorScheme &&
-        _cachedBrightness == theme.brightness &&
-        _cachedSelectionExpanded == _selectionExpanded;
+    final ingredientsStale = _cachedFormattedItems == null ||
+        _cachedTitle != widget.title ||
+        _cachedContent != widget.content ||
+        _cachedFontFamily != fontFamily ||
+        _cachedFontSize != fontSize ||
+        _cachedLineHeight != lineHeight ||
+        _cachedColorScheme != theme.colorScheme ||
+        _cachedBrightness != theme.brightness;
 
-    if (canReuseCache) {
-      return _cachedSubtree!;
+    if (ingredientsStale) {
+      _rebuildIngredients(
+        context: context,
+        theme: theme,
+        fontFamily: fontFamily,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+      );
     }
 
-    final subtree = _buildSubtree(
-      context: context,
-      theme: theme,
-      fontFamily: fontFamily,
-      fontSize: fontSize,
-      lineHeight: lineHeight,
-    );
-
-    _cachedSubtree = subtree;
-    _cachedTitle = widget.title;
-    _cachedContent = widget.content;
-    _cachedFontFamily = fontFamily;
-    _cachedFontSize = fontSize;
-    _cachedLineHeight = lineHeight;
-    _cachedColorScheme = theme.colorScheme;
-    _cachedBrightness = theme.brightness;
-    _cachedSelectionExpanded = _selectionExpanded;
-
-    return subtree;
+    return _buildListSubtree();
   }
 
-  Widget _buildSubtree({
+  /// Ricalcola tutto ciò che dipende da contenuto/titolo/font/tema: lo
+  /// splitting in blocchi, lo stylesheet e — punto chiave per le
+  /// prestazioni — le ISTANZE di widget formattate di ciascun blocco,
+  /// costruite una volta sola e poi riusate `identical` da `buildItem` finché
+  /// quel blocco resta in modalità formattata (vedi doc di classe).
+  ///
+  /// Contenuto/titolo cambiati significa quasi sempre "nota diversa" (o nota
+  /// modificata altrove): lo stato di selezione grezza precedente non ha più
+  /// senso e viene azzerato, così come le cache che indicizzano i blocchi
+  /// per posizione.
+  void _rebuildIngredients({
     required BuildContext context,
     required ThemeData theme,
     required String fontFamily,
@@ -365,13 +514,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     final blockIsListItem =
         blocks.map(_isTopLevelListMarkerBlock).toList(growable: false);
     final hasTitle = title.trim().isNotEmpty;
-    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
 
     // Spaziatura tra un blocco e il successivo: tra due elementi della
     // STESSA lista usiamo un gap minimo (come tra due righe consecutive di
     // una lista tight renderizzata in un unico blocco); altrove usiamo lo
     // spacing "ufficiale" dello stylesheet tra blocchi di tipo diverso
-    // (paragrafi, heading, code block...).
+    // (paragrafi, heading, code block...). Calcolato una sola volta qui e
+    // tenuto in cache: serve identico sia quando il blocco è formattato sia
+    // quando passa temporaneamente a raw.
     double gapAfterBlock(int blockIndex) {
       if (blockIndex >= blocks.length - 1) return 0;
       if (blockIsListItem[blockIndex] && blockIsListItem[blockIndex + 1]) {
@@ -397,61 +547,164 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           ),
         );
 
-    Widget buildItem(BuildContext context, int index) {
-      if (hasTitle && index == 0) {
-        return wrapCentered(
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                title,
-                style: AppTheme.getTextStyleForFont(
-                  fontFamily,
-                  fontSize: fontSize * 2.2,
-                  fontWeight: FontWeight.w800,
-                  color: theme.colorScheme.onSurface,
-                  height: 1.25,
-                ),
+    // Testo grezzo: stesso font di base e stessa altezza riga del testo
+    // reso (per minimizzare — non azzerare, è impossibile dato che il
+    // markdown grezzo ha più/meno caratteri — la differenza di altezza tra
+    // le due modalità), ma monospaziato e leggermente attenuato: comunica
+    // visivamente "stai selezionando la sorgente", coerente con l'estetica
+    // già usata per i code block.
+    final rawTextStyle = GoogleFonts.jetBrainsMono(
+      fontSize: fontSize * 0.95,
+      height: lineHeight,
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.87),
+    );
+
+    // Istanze formattate: costruite una sola volta per blocco. `buildItem`
+    // (in `_buildListSubtree`) le restituirà `identical` finché il blocco
+    // resta in modalità formattata, cioè quasi sempre — Flutter salta quindi
+    // interamente rebuild/relayout/riparsing di `MarkdownBody` per i blocchi
+    // non coinvolti da una selezione in corso.
+    final formattedItems = <Widget>[
+      for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++)
+        KeyedSubtree(
+          key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
+          child: wrapCentered(
+            Padding(
+              padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
+              child: MarkdownBody(
+                data: blocks[blockIndex],
+                selectable: false, // Gestita dal SelectionArea del genitore
+                styleSheet: markdownStyleSheet,
+                builders: {
+                  'pre': _CodeBlockBuilder(fontSize: fontSize),
+                  'code': _InlineCodeBuilder(
+                    style: inlineCodeStyle,
+                    isDark: isDark,
+                    primaryColor: theme.colorScheme.primary,
+                  ),
+                },
+                onTapLink: (text, href, title) async {
+                  if (href != null) {
+                    final uri = Uri.tryParse(href);
+                    if (uri != null && await canLaunchUrl(uri)) {
+                      await launchUrl(uri);
+                    }
+                  }
+                },
               ),
-              const SizedBox(height: 16),
-              Divider(
-                color: theme.colorScheme.outline.withValues(alpha: 0.3),
-                thickness: 1,
-              ),
-              const SizedBox(height: 20),
-            ],
+            ),
           ),
-        );
-      }
+        ),
+    ];
 
-      final blockIndex = hasTitle ? index - 1 : index;
+    final titleWidget = hasTitle
+        ? wrapCentered(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  title,
+                  style: AppTheme.getTextStyleForFont(
+                    fontFamily,
+                    fontSize: fontSize * 2.2,
+                    fontWeight: FontWeight.w800,
+                    color: theme.colorScheme.onSurface,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Divider(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  thickness: 1,
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
+          )
+        : const SizedBox.shrink();
 
-      return wrapCentered(
-        Padding(
-          padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-          child: MarkdownBody(
-            data: blocks[blockIndex],
-            selectable: false, // Gestita da SelectionArea nel genitore
-            styleSheet: markdownStyleSheet,
-            builders: {
-              'pre': _CodeBlockBuilder(fontSize: fontSize),
-              'code': _InlineCodeBuilder(
-                style: inlineCodeStyle,
-                isDark: isDark,
-                primaryColor: theme.colorScheme.primary,
-              ),
-            },
-            onTapLink: (text, href, title) async {
-              if (href != null) {
-                final uri = Uri.tryParse(href);
-                if (uri != null && await canLaunchUrl(uri)) {
-                  await launchUrl(uri);
-                }
-              }
-            },
+    // I blocchi sono cambiati: qualunque indice raw precedente non
+    // corrisponde più necessariamente allo stesso contenuto — così come le
+    // cache che indicizzano per posizione. Le puliamo tutte insieme.
+    _rawBlockIndices = const {};
+    _cachedRawItems.clear();
+    _renderedPlainTextCache.clear();
+    _blockKeys.removeWhere((index, _) => index >= blocks.length);
+
+    _cachedBlocks = blocks;
+    _cachedBlockIsListItem = blockIsListItem;
+    _cachedFormattedItems = formattedItems;
+    _cachedTitleWidget = titleWidget;
+    _cachedHasTitle = hasTitle;
+    _cachedRawTextStyle = rawTextStyle;
+    _cachedTitle = title;
+    _cachedContent = content;
+    _cachedFontFamily = fontFamily;
+    _cachedFontSize = fontSize;
+    _cachedLineHeight = lineHeight;
+    _cachedColorScheme = theme.colorScheme;
+    _cachedBrightness = theme.brightness;
+  }
+
+  /// Versione "raw" (markdown grezzo, testo piatto) di un blocco, costruita
+  /// pigramente e tenuta in cache: passare avanti e indietro più volte tra
+  /// formattato e grezzo durante lo stesso drag di selezione non ricrea il
+  /// widget ogni volta.
+  Widget _rawItemFor(int blockIndex, {required Widget Function(Widget) wrapCentered}) {
+    return _cachedRawItems.putIfAbsent(blockIndex, () {
+      final gap = blockIndex >= (_cachedBlocks!.length - 1)
+          ? 0.0
+          : (_cachedBlockIsListItem![blockIndex] &&
+                  _cachedBlockIsListItem![blockIndex + 1]
+              ? 2.0
+              : 16.0);
+      return KeyedSubtree(
+        key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
+        child: wrapCentered(
+          Container(
+            width: double.infinity,
+            margin: EdgeInsets.only(bottom: gap),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: _cachedColorScheme!.primary.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(_cachedBlocks![blockIndex], style: _cachedRawTextStyle),
           ),
         ),
       );
+    });
+  }
+
+  /// Assembla il sottoalbero finale a partire dagli "ingredienti" già in
+  /// cache (blocchi formattati, blocco titolo) e dallo stato di selezione
+  /// corrente. È l'unica parte ricostruita quando cambia SOLO
+  /// `_rawBlockIndices`: nessun reparse Markdown, nessuna ricostruzione
+  /// dello stylesheet, e i blocchi non coinvolti vengono restituiti come
+  /// istanze `identical` a quelle già disegnate (vedi doc di classe).
+  Widget _buildListSubtree() {
+    final blocks = _cachedBlocks!;
+    final formattedItems = _cachedFormattedItems!;
+    final hasTitle = _cachedHasTitle;
+    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
+
+    Widget wrapCentered(Widget child) => Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 840),
+            child: SizedBox(width: double.infinity, child: child),
+          ),
+        );
+
+    Widget buildItem(BuildContext context, int index) {
+      if (hasTitle && index == 0) {
+        return _cachedTitleWidget!;
+      }
+      final blockIndex = hasTitle ? index - 1 : index;
+      if (_rawBlockIndices.contains(blockIndex)) {
+        return _rawItemFor(blockIndex, wrapCentered: wrapCentered);
+      }
+      return formattedItems[blockIndex];
     }
 
     // RepaintBoundary: isola il layer grafico della nota renderizzata da
@@ -463,32 +716,34 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // enorme non richiede quindi mai di ridisegnare un unico layer gigante,
     // ma solo di ricompositare i pochi layer già rasterizzati dei blocchi
     // realmente visibili.
-    //
-    // `Listener` esterno, "traslucido" (non assorbe il gesto, si limita a
-    // osservarlo): al primo tocco allarga `cacheExtent` PRIMA che il
-    // long-press di avvio selezione venga riconosciuto da Flutter (che
-    // richiede ~500ms), così tutti i blocchi del documento sono già
-    // costruiti quando la selezione parte davvero. `onSelectionChanged`
-    // pianifica il ritorno al `cacheExtent` normale (con debounce) non
-    // appena la selezione torna vuota. Vedi i commenti sui campi
-    // `_selectionExpanded`/`_expandCacheForSelection`/
-    // `_handleSelectionChanged` in cima a questo `State` per il dettaglio
-    // di come questo elimina il flash bianco/freeze senza sacrificare la
-    // virtualizzazione durante lo scroll normale.
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => _expandCacheForSelection(),
-      child: RepaintBoundary(
-        child: SelectionArea(
-          onSelectionChanged: _handleSelectionChanged,
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-            itemCount: itemCount,
-            itemBuilder: buildItem,
-            cacheExtent: _selectionExpanded
-                ? _selectionCacheExtent
-                : _normalCacheExtent,
-          ),
+    return RepaintBoundary(
+      child: SelectionArea(
+        onSelectionChanged: _handleSelectionChanged,
+        contextMenuBuilder: (context, selectableRegionState) {
+          final items = selectableRegionState.contextMenuButtonItems
+              .map((item) {
+            if (item.type != ContextMenuButtonType.copy) return item;
+            final originalOnPressed = item.onPressed;
+            return item.copyWith(
+              onPressed: () {
+                // Esegue prima la copia originale (clipboard invariato),
+                // poi riporta i blocchi coinvolti a Markdown formattato:
+                // "fine della selezione" per copia esplicita, come da spec.
+                originalOnPressed?.call();
+                _revertAllRawBlocks();
+              },
+            );
+          }).toList(growable: false);
+          return AdaptiveTextSelectionToolbar.buttonItems(
+            anchors: selectableRegionState.contextMenuAnchors,
+            buttonItems: items,
+          );
+        },
+        child: ListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+          itemCount: itemCount,
+          itemBuilder: buildItem,
         ),
       ),
     );
