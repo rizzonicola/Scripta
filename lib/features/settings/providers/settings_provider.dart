@@ -1,5 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (non
+// rimossi, ma spostati fuori dall'API principale) per scoraggiarne l'uso a
+// favore di Notifier/AsyncNotifier. Qui la classe resta volutamente una
+// StateNotifier: la logica di persistenza/push verso il server (vedi
+// _pushRemoteSettings/applyRemoteSettings) è delicata e già corretta, quindi
+// viene preservata 1:1 — la migrazione riguarda solo l'import necessario a
+// compilare sotto Riverpod 3.
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/haptics_helper.dart';

@@ -1,6 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
+// in questo import separato, non rimossi). NotesNotifier resta
+// deliberatamente una StateNotifier: contiene la logica di autosave/debounce
+// (_pendingNote/flushPendingSaves) critica per la correttezza della sync, ed
+// è istanziata direttamente (senza ProviderContainer) dai test unitari in
+// test/notes_provider_move_test.dart — comportamento che la nuova API
+// Notifier non supporta (richiede sempre un container). Riscriverla come
+// Notifier/AsyncNotifier è un passo di modernizzazione ulteriore possibile,
+// ma va fatto insieme a un riadattamento dei test verso
+// ProviderContainer(overrides: [...]) per non perdere copertura.
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 

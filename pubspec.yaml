@@ -5,8 +5,8 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.2.0 <4.0.0'
-  flutter: ">=3.16.0"
+  sdk: '>=3.6.0 <4.0.0'
+  flutter: ">=3.27.0"
 
 dependencies:
   flutter:
@@ -16,11 +16,20 @@ dependencies:
   intl: any
 
   # State Management
-  flutter_riverpod: ^2.5.1
+  # Riverpod 3.x: StateNotifier/StateNotifierProvider sono ora "legacy"
+  # (spostati in package:flutter_riverpod/legacy.dart, non rimossi) a favore
+  # della nuova API Notifier/AsyncNotifier. Vedi i provider in lib/features/*
+  # per il dettaglio di quali usano ancora la StateNotifier API legacy
+  # (mantenuta 1:1 per non alterare la logica di business/sync) e quali sono
+  # stati migrati alla nuova API Notifier.
+  flutter_riverpod: ^3.4.0
 
   # Markdown Rendering & Parsing
-  flutter_markdown: ^0.7.3
-  markdown: ^7.2.2
+  # flutter_markdown (Google) è stato dismesso (discontinued); usiamo il
+  # fork mantenuto dalla community, drop-in replacement con la stessa API
+  # pubblica (Markdown/MarkdownBody/MarkdownStyleSheet/MarkdownElementBuilder).
+  flutter_markdown_plus: ^1.0.12
+  markdown: ^7.3.1
 
   # Persistence & Storage
   shared_preferences: ^2.2.3
@@ -47,7 +56,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
 
 dependency_overrides:
   path_provider_android: 2.2.15

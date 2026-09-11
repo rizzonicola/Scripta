@@ -1,5 +1,11 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati in
+// questo import separato, non rimossi). SyncNotifier resta deliberatamente
+// una StateNotifier: implementa il protocollo di sync (payload, endpoint,
+// retry, risoluzione LWW) 1:1 speculare al backend Go — la logica NON viene
+// toccata in questa modernizzazione, solo l'import necessario a compilare.
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/database/folders_dao.dart';

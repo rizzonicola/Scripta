@@ -1,6 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
+// in questo import separato, non rimossi). La classe resta una
+// StateNotifier per preservare 1:1 la logica dell'albero cartelle/cascade
+// delete già corretta e testata (vedi test/notes_provider_move_test.dart e
+// commenti di classe più sotto).
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/database/folders_dao.dart';
