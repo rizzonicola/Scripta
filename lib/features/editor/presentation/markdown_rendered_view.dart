@@ -40,16 +40,19 @@ import '../../settings/providers/settings_provider.dart';
 ///     sul proprio layer grafico: qualunque repaint circostante (cursore,
 ///     hover, animazioni della toolbar, ecc.) non forza mai un repaint dei
 ///     pixel già renderizzati della nota.
-///  4. Il contenuto è renderizzato con `ListView.builder`, un blocco
-///     Markdown di primo livello per elemento (vedi
-///     `_splitMarkdownIntoBlocks`), invece di un unico `MarkdownBody`
-///     dentro una `Column`/`SingleChildScrollView` non virtualizzata: su
-///     note molto lunghe, quest'ultima è la causa reale del lag durante lo
-///     SCROLL (Flutter deve comunque layoutare/dipingere anche i blocchi
-///     fuori schermo). Il testo resta parsato per intero, in un solo
-///     passaggio, prima di essere suddiviso: non è lazy loading né
-///     paginazione del contenuto, solo virtualizzazione del rendering dei
-///     blocchi già pronti.
+///  4. Il contenuto è renderizzato con `ListView.builder`, un blocco per
+///     elemento (vedi `_splitMarkdownIntoBlocks`), invece di un unico
+///     `MarkdownBody` dentro una `Column`/`SingleChildScrollView` non
+///     virtualizzata: su note molto lunghe, quest'ultima è la causa reale
+///     del lag durante lo SCROLL (Flutter deve comunque layoutare/dipingere
+///     anche i blocchi fuori schermo). Le liste "tight" (senza righe vuote
+///     tra un elemento e l'altro — il caso più pesante in pratica: una
+///     singola lista lunga centinaia di righe) vengono spezzate un elemento
+///     alla volta, non solo sulle righe vuote, altrimenti resterebbero un
+///     unico blocco gigante e la virtualizzazione non avrebbe alcun
+///     effetto. Il testo resta parsato per intero, in un solo passaggio,
+///     prima di essere suddiviso: non è lazy loading né paginazione del
+///     contenuto, solo virtualizzazione del rendering di blocchi già pronti.
 ///
 /// Il ripristino "a caldo" resta corretto: quando l'utente passa in modalità
 /// modifica e poi torna in visualizzazione, `NoteEditorPane` smonta questo
@@ -256,10 +259,33 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // virtualizzata (il vero collo di bottiglia per lo scroll su note
     // molto lunghe: senza virtualizzazione, Flutter deve layoutare e
     // dipingere anche i blocchi fuori schermo).
+    //
+    // IMPORTANTE: le liste puntate/numerate "tight" (senza righe vuote tra
+    // un elemento e l'altro — il caso più comune e più pesante: una singola
+    // lista lunga centinaia di righe) NON vengono spezzate dalle sole righe
+    // vuote. Per questo ogni elemento di primo livello di una lista diventa
+    // comunque un blocco a sé (vedi `_splitMarkdownIntoBlocks`), altrimenti
+    // l'intera lista resterebbe un unico, enorme blocco e la
+    // virtualizzazione non avrebbe alcun effetto.
     final effectiveContent = content.isEmpty ? '*Nessun contenuto*' : content;
     final blocks = _splitMarkdownIntoBlocks(effectiveContent);
+    final blockIsListItem =
+        blocks.map(_isTopLevelListMarkerBlock).toList(growable: false);
     final hasTitle = title.trim().isNotEmpty;
     final itemCount = (hasTitle ? 1 : 0) + blocks.length;
+
+    // Spaziatura tra un blocco e il successivo: tra due elementi della
+    // STESSA lista usiamo un gap minimo (come tra due righe consecutive di
+    // una lista tight renderizzata in un unico blocco); altrove usiamo lo
+    // spacing "ufficiale" dello stylesheet tra blocchi di tipo diverso
+    // (paragrafi, heading, code block...).
+    double gapAfterBlock(int blockIndex) {
+      if (blockIndex >= blocks.length - 1) return 0;
+      if (blockIsListItem[blockIndex] && blockIsListItem[blockIndex + 1]) {
+        return 2.0;
+      }
+      return markdownStyleSheet.blockSpacing ?? 16.0;
+    }
 
     Widget wrapCentered(Widget child) => Center(
           child: ConstrainedBox(
@@ -296,16 +322,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       }
 
       final blockIndex = hasTitle ? index - 1 : index;
-      final isLastBlock = blockIndex == blocks.length - 1;
 
       return wrapCentered(
         Padding(
-          // Riproduce lo spacing verticale che, in un documento renderizzato
-          // in blocco unico, `MarkdownStyleSheet.blockSpacing` applica
-          // automaticamente tra un blocco e il successivo.
-          padding: EdgeInsets.only(
-            bottom: isLastBlock ? 0 : (markdownStyleSheet.blockSpacing ?? 16.0),
-          ),
+          padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
           child: MarkdownBody(
             data: blocks[blockIndex],
             selectable: false, // Gestita da SelectionArea nel genitore
@@ -352,20 +372,42 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   }
 }
 
-/// Suddivide una stringa Markdown nei suoi blocchi di primo livello
-/// (separati da una riga vuota), preservando due casi che una divisione
+/// Suddivide una stringa Markdown in blocchi indipendenti da usare come
+/// elementi di `ListView.builder`, preservando due casi che una divisione
 /// ingenua per riga vuota romperebbe:
 ///  - i fenced code block (``` o ~~~) NON vengono mai spezzati, anche se
 ///    contengono righe vuote al loro interno;
-///  - gli elementi di una lista puntata/numerata o di una blockquote
-///    "loose" (separati da singole righe vuote) restano nello stesso
-///    blocco, così numerazione e aspetto visivo restano identici a un
-///    rendering monolitico.
+///  - le blockquote "loose" (separate da singole righe vuote) restano nello
+///    stesso blocco.
+///
+/// Le liste puntate/numerate meritano un trattamento a parte: nel caso
+/// d'uso più comune e più pesante per lo scroll (una lista "tight" lunga
+/// centinaia di righe, SENZA alcuna riga vuota tra un elemento e l'altro —
+/// es. una watchlist), dividere solo sulle righe vuote lascerebbe l'intera
+/// lista come un unico, enorme blocco e la virtualizzazione non avrebbe
+/// alcun effetto. Per questo ogni elemento di primo livello di una lista
+/// (riga che inizia con `- `, `* `, `+ ` o `1. ` a colonna 0, quindi MAI
+/// una riga rientrata: quelle restano correttamente unite come contenuto
+/// annidato dell'elemento genitore) diventa comunque un blocco a sé,
+/// indipendentemente dalla presenza di righe vuote.
 ///
 /// Non introduce alcun caricamento incrementale né paginazione: il testo è
 /// già interamente disponibile in memoria e viene scandito linearmente una
 /// sola volta; il risultato serve solo a dare a `ListView.builder` unità
 /// discrete su cui applicare la virtualizzazione del rendering.
+final RegExp _topLevelListMarkerRe = RegExp(r'^(-|\*|\+)\s|^\d+[.)]\s');
+
+bool _isTopLevelListMarkerLine(String line) =>
+    _topLevelListMarkerRe.hasMatch(line);
+
+/// Vero se il blocco (già suddiviso) è un elemento di lista di primo
+/// livello, usato per decidere lo spacing minimo tra elementi consecutivi
+/// della stessa lista in `gapAfterBlock`.
+bool _isTopLevelListMarkerBlock(String block) {
+  final firstLine = block.split('\n').first;
+  return _isTopLevelListMarkerLine(firstLine);
+}
+
 List<String> _splitMarkdownIntoBlocks(String content) {
   final lines = content.split('\n');
   final blocks = <String>[];
@@ -374,29 +416,20 @@ List<String> _splitMarkdownIntoBlocks(String content) {
   final fenceOpenRe = RegExp(r'^\s{0,3}(`{3,}|~{3,})');
   String? fenceMarker;
 
-  bool isListOrQuoteLine(String line) {
-    final trimmed = line.trimLeft();
-    final indented = line.startsWith('  ') || line.startsWith('\t');
-    return indented ||
-        trimmed.startsWith('- ') ||
-        trimmed.startsWith('* ') ||
-        trimmed.startsWith('+ ') ||
-        trimmed.startsWith('> ') ||
-        RegExp(r'^\d+[.)]\s').hasMatch(trimmed);
-  }
+  bool isQuoteLine(String line) => line.trimLeft().startsWith('> ');
 
-  bool bufferEndsInListOrQuote() {
+  bool bufferEndsInQuote() {
     for (var i = buffer.length - 1; i >= 0; i--) {
       if (buffer[i].trim().isEmpty) continue;
-      return isListOrQuoteLine(buffer[i]);
+      return isQuoteLine(buffer[i]);
     }
     return false;
   }
 
-  bool nextNonBlankContinuesListOrQuote(int fromIndex) {
+  bool nextNonBlankContinuesQuote(int fromIndex) {
     for (var j = fromIndex; j < lines.length; j++) {
       if (lines[j].trim().isEmpty) continue;
-      return isListOrQuoteLine(lines[j]);
+      return isQuoteLine(lines[j]);
     }
     return false;
   }
@@ -426,13 +459,20 @@ List<String> _splitMarkdownIntoBlocks(String content) {
       continue;
     }
 
+    if (_isTopLevelListMarkerLine(line)) {
+      // Ogni elemento di lista di primo livello è sempre un blocco a sé,
+      // riga vuota o meno prima di esso: chiude qualunque cosa precedesse
+      // (paragrafo, elemento di lista precedente...) e ne apre uno nuovo.
+      flushBuffer();
+      buffer.add(line);
+      continue;
+    }
+
     if (line.trim().isEmpty) {
       if (buffer.isEmpty) continue;
-      if (bufferEndsInListOrQuote() &&
-          nextNonBlankContinuesListOrQuote(i + 1)) {
-        // Riga vuota "interna" a una lista/blockquote loose: resta nel
-        // blocco corrente per non spezzarne numerazione/aspetto in più
-        // widget separati.
+      if (bufferEndsInQuote() && nextNonBlankContinuesQuote(i + 1)) {
+        // Riga vuota "interna" a una blockquote loose: resta nel blocco
+        // corrente per non spezzarne l'aspetto in più widget separati.
         buffer.add(line);
         continue;
       }
@@ -440,6 +480,8 @@ List<String> _splitMarkdownIntoBlocks(String content) {
       continue;
     }
 
+    // Riga di continuazione: testo di un paragrafo, oppure contenuto
+    // annidato/rientrato di un elemento di lista già aperto sopra.
     buffer.add(line);
   }
   flushBuffer();
