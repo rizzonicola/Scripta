@@ -179,11 +179,27 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// disattivato in blocco da `_handleSelectionChanged`.
   bool _isRawMode = false;
 
+  /// Debounce per il ritorno a Markdown formattato (vedi
+  /// `_handleSelectionChanged`): entrare in modalità grezza sostituisce il
+  /// widget selezionato (da `MarkdownBody` a `Text`), il che DISTRUGGE il
+  /// `Selectable` a cui la selezione nativa era agganciata. Se l'utente
+  /// solleva il dito subito dopo un tap-and-hold, senza trascinare, non c'è
+  /// alcun evento successivo che "riattacchi" la selezione al nuovo testo
+  /// grezzo: la selezione risulta quindi momentaneamente vuota per un
+  /// motivo puramente interno (lo scambio di widget appena fatto), non
+  /// perché l'utente abbia davvero deselezionato. Reagire a QUELL'istante
+  /// tornando subito a formattato produce il doppio scatto/artefatto visivo
+  /// osservato. Attendere una brevissima finestra prima di agire assorbe
+  /// questo caso senza introdurre un ritardo percepibile per una
+  /// deselezione vera (tap altrove).
+  Timer? _pendingRevertTimer;
+
   @override
   void dispose() {
     // Rilascia esplicitamente i riferimenti pesanti (testo della nota e
     // sottoalbero renderizzato) non appena la vista viene smontata, così non
     // restano agganciati più a lungo del necessario in attesa della GC.
+    _pendingRevertTimer?.cancel();
     _cachedFormattedItems = null;
     _cachedRawItems = null;
     _cachedTitleWidget = null;
@@ -294,35 +310,59 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// "gesture di selezione" viene osservata (vedi doc di classe). Non appena
   /// una selezione diventa non vuota, TUTTO il documento passa a markdown
   /// grezzo; non appena torna vuota (tap altrove / selezione azzerata),
-  /// TUTTO torna formattato. Aggiorna anche l'aptica tramite lo stesso
-  /// canale già usato dall'editor (`HapticsHelper.reportSelectionState`),
-  /// così un tap-and-hold in sola-lettura si comporta in modo coerente con
-  /// quello nel campo di modifica, invece di introdurre una logica aptica
-  /// parallela.
+  /// TUTTO torna formattato — con un breve debounce, vedi `_pendingRevertTimer`.
+  /// Aggiorna anche l'aptica tramite lo stesso canale già usato dall'editor
+  /// (`HapticsHelper.reportSelectionState`), così un tap-and-hold in
+  /// sola-lettura si comporta in modo coerente con quello nel campo di
+  /// modifica, invece di introdurre una logica aptica parallela.
   void _handleSelectionChanged(SelectedContent? content) {
     final hasSelection =
         content != null && content.plainText.trim().isNotEmpty;
     HapticsHelper.reportSelectionState(isCollapsed: !hasSelection);
 
-    if (hasSelection == _isRawMode) return; // già nella modalità corretta
+    if (hasSelection) {
+      // Una selezione (ri)compare: un eventuale ritorno a formattato in
+      // attesa a causa di un azzeramento solo momentaneo non ha più motivo
+      // di scattare.
+      _pendingRevertTimer?.cancel();
+      _pendingRevertTimer = null;
 
-    final anchorIndex = hasSelection
-        ? (_blockIndexContainingSelection(content.plainText) ??
-            _topVisibleBlockIndex())
-        : _topVisibleBlockIndex();
+      if (_isRawMode) return; // già in modalità grezza
 
-    _swapPreservingScrollAnchor(
-      anchorBlockIndex: anchorIndex,
-      applyChange: () => setState(() => _isRawMode = hasSelection),
-    );
+      final anchorIndex = _blockIndexContainingSelection(content.plainText) ??
+          _topVisibleBlockIndex();
+      _swapPreservingScrollAnchor(
+        anchorBlockIndex: anchorIndex,
+        applyChange: () => setState(() => _isRawMode = true),
+      );
+      return;
+    }
+
+    if (!_isRawMode) return; // già formattato, nessuna azione
+
+    // Selezione vuota: NON torniamo a formattato nello stesso istante (vedi
+    // la doc di `_pendingRevertTimer` per il perché). Se entro questa
+    // brevissima finestra arriva una nuova selezione non vuota — un drag
+    // che continua, o la selezione che si "riattacca" da sola al nuovo
+    // testo grezzo — il ramo sopra annulla questo timer e non succede nulla
+    // di visibile: nessun doppio scatto, nessuna evidenziazione fuori
+    // posto.
+    _pendingRevertTimer?.cancel();
+    _pendingRevertTimer = Timer(const Duration(milliseconds: 160), () {
+      _pendingRevertTimer = null;
+      if (!mounted) return;
+      _revertToFormatted();
+    });
   }
 
-  /// Riporta l'intero documento a Markdown formattato. Usata sia quando la
-  /// selezione si azzera (gestito già in `_handleSelectionChanged`), sia
-  /// esplicitamente dopo "Copia" dal menu contestuale (vedi
-  /// `_buildListSubtree`), perché su alcune piattaforme la selezione visibile
-  /// può restare attiva dopo la copia invece di azzerarsi da sola.
+  /// Riporta l'intero documento a Markdown formattato. Usata sia
+  /// (con debounce) quando la selezione si azzera, sia esplicitamente e
+  /// SENZA debounce dopo "Copia" dal menu contestuale (vedi
+  /// `_buildListSubtree`): lì l'intento dell'utente è inequivocabile, non
+  /// c'è motivo di attendere.
   void _revertToFormatted() {
+    _pendingRevertTimer?.cancel();
+    _pendingRevertTimer = null;
     if (!_isRawMode) return;
     _swapPreservingScrollAnchor(
       anchorBlockIndex: _topVisibleBlockIndex(),
@@ -611,29 +651,31 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++)
         KeyedSubtree(
           key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
-          child: wrapCentered(
-            Padding(
-              padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-              child: MarkdownBody(
-                data: blocks[blockIndex],
-                selectable: false, // Gestita dal SelectionArea del genitore
-                styleSheet: markdownStyleSheet,
-                builders: {
-                  'pre': _CodeBlockBuilder(fontSize: fontSize),
-                  'code': _InlineCodeBuilder(
-                    style: inlineCodeStyle,
-                    isDark: isDark,
-                    primaryColor: theme.colorScheme.primary,
-                  ),
-                },
-                onTapLink: (text, href, title) async {
-                  if (href != null) {
-                    final uri = Uri.tryParse(href);
-                    if (uri != null && await canLaunchUrl(uri)) {
-                      await launchUrl(uri);
+          child: _FadeInOnMount(
+            child: wrapCentered(
+              Padding(
+                padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
+                child: MarkdownBody(
+                  data: blocks[blockIndex],
+                  selectable: false, // Gestita dal SelectionArea del genitore
+                  styleSheet: markdownStyleSheet,
+                  builders: {
+                    'pre': _CodeBlockBuilder(fontSize: fontSize),
+                    'code': _InlineCodeBuilder(
+                      style: inlineCodeStyle,
+                      isDark: isDark,
+                      primaryColor: theme.colorScheme.primary,
+                    ),
+                  },
+                  onTapLink: (text, href, title) async {
+                    if (href != null) {
+                      final uri = Uri.tryParse(href);
+                      if (uri != null && await canLaunchUrl(uri)) {
+                        await launchUrl(uri);
+                      }
                     }
-                  }
-                },
+                  },
+                ),
               ),
             ),
           ),
@@ -667,10 +709,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         KeyedSubtree(
           key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
           child: RepaintBoundary(
-            child: wrapCentered(
-              Padding(
-                padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-                child: Text(blocks[blockIndex], style: rawTextStyle),
+            child: _FadeInOnMount(
+              child: wrapCentered(
+                Padding(
+                  padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
+                  child: Text(blocks[blockIndex], style: rawTextStyle),
+                ),
               ),
             ),
           ),
@@ -706,6 +750,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // I blocchi sono cambiati (nuova nota o nota modificata altrove): lo
     // stato "grezzo/formattato" precedente e le cache che indicizzano per
     // posizione non hanno più senso e vengono azzerati insieme.
+    _pendingRevertTimer?.cancel();
+    _pendingRevertTimer = null;
     _isRawMode = false;
     _renderedPlainTextCache.clear();
     _blockKeys.removeWhere((index, _) => index >= blocks.length);
@@ -857,6 +903,48 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         child: scrollableContent,
       ),
     );
+  }
+}
+
+/// Piccola dissolvenza in ingresso usata per ammorbidire la PERCEZIONE dello
+/// scambio tra Markdown formattato e testo grezzo (e viceversa).
+///
+/// Il blocco cambia letteralmente tipo di widget a ogni scambio
+/// (`MarkdownBody` ↔ `Text`): Flutter lo smonta e ne monta uno nuovo, non
+/// esiste un "morph" continuo tra i due. Questo widget sfrutta esattamente
+/// quel nuovo montaggio — parte da opacità zero in `initState` e sale a 1 in
+/// pochi millisecondi — così quello che altrimenti sarebbe un taglio netto
+/// diventa una dissolvenza breve e naturale. È SICURO farlo qui, a
+/// differenza di un `AnimatedSwitcher`/crossfade tradizionale: non tiene mai
+/// in vita contemporaneamente il widget vecchio E quello nuovo (il vecchio è
+/// già stato smontato, con il proprio `Selectable`, prima che questo venga
+/// creato), quindi non introduce mai due `Selectable` sovrapposti per lo
+/// stesso blocco — che avrebbe rotto la selezione seamless.
+class _FadeInOnMount extends StatefulWidget {
+  final Widget child;
+
+  const _FadeInOnMount({required this.child});
+
+  @override
+  State<_FadeInOnMount> createState() => _FadeInOnMountState();
+}
+
+class _FadeInOnMountState extends State<_FadeInOnMount>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 110),
+  )..forward();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(opacity: _controller, child: widget.child);
   }
 }
 
