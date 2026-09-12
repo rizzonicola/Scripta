@@ -408,40 +408,84 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// altezza passando in blocco da formattato a grezzo (o viceversa). Non è
   /// una stima "N px per riga": è una differenza tra due geometrie reali già
   /// disposte da Flutter, prima e dopo lo swap.
+  ///
+  /// C'è però un problema PRIMA ancora di poter misurare "dopo": lo swap tra
+  /// `ListView.builder` (formattato) e `SingleChildScrollView` (grezzo, vedi
+  /// `_buildListSubtree`) sostituisce l'intero widget scrollabile, non solo
+  /// il suo contenuto. Flutter crea quindi una `ScrollPosition`
+  /// COMPLETAMENTE NUOVA per il nuovo widget, che riparte da offset zero —
+  /// perde cioè il punto di scroll precedente, anche se `_scrollController`
+  /// è lo stesso oggetto Dart. Nel ramo FORMATTATO questo è particolarmente
+  /// dannoso perché è virtualizzato: a offset zero, `ListView.builder`
+  /// costruisce solo i blocchi vicini all'inizio della nota, quindi il
+  /// blocco-ancora (magari a metà nota) semplicemente NON ESISTE ancora nel
+  /// nuovo albero — la misurazione "dopo" fallisce silenziosamente, nessuna
+  /// correzione scatta, e si resta bloccati in cima alla nota.
+  ///
+  /// Per questo, prima di rifinire con la misurazione esatta, ripristiniamo
+  /// subito l'offset grezzo (lo stesso valore numerico di prima, applicato
+  /// al nuovo `ScrollPosition`): non è preciso al pixel — l'altezza totale
+  /// stimata da `ListView.builder` per i blocchi non ancora costruiti può
+  /// differire leggermente da quella reale — ma è sufficiente a far
+  /// costruire il blocco-ancora nella finestra di cache della lista
+  /// virtualizzata, rendendo possibile la rifinitura esatta subito dopo.
   void _swapPreservingScrollAnchor({
     required int? anchorBlockIndex,
     required VoidCallback applyChange,
   }) {
-    if (anchorBlockIndex == null) {
-      applyChange();
-      return;
-    }
-
     double? beforeTop;
-    final beforeBox =
-        _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
-    if (beforeBox is RenderBox && beforeBox.attached) {
-      beforeTop = beforeBox.localToGlobal(Offset.zero).dy;
+    if (anchorBlockIndex != null) {
+      final beforeBox =
+          _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
+      if (beforeBox is RenderBox && beforeBox.attached) {
+        beforeTop = beforeBox.localToGlobal(Offset.zero).dy;
+      }
     }
+    final previousOffset =
+        _scrollController.hasClients ? _scrollController.offset : null;
 
     applyChange();
 
-    if (beforeTop == null) return;
-    final anchor = beforeTop;
+    if (anchorBlockIndex == null) return;
+
+    // Frame 1: il nuovo widget scrollabile è stato costruito (a offset
+    // zero, per quanto appena spiegato). Ripristiniamo subito l'offset
+    // precedente, grezzo ma sufficiente a portare il blocco-ancora nella
+    // finestra di cache — così al frame successivo esisterà davvero da
+    // misurare.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
-      final afterBox =
-          _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
-      if (afterBox is! RenderBox || !afterBox.attached) return;
 
-      final afterTop = afterBox.localToGlobal(Offset.zero).dy;
-      final delta = afterTop - anchor;
-      if (delta.abs() < 0.5) return;
+      if (previousOffset != null && previousOffset > 0) {
+        final position = _scrollController.position;
+        final coarseTarget = previousOffset.clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+        _scrollController.jumpTo(coarseTarget);
+      }
 
-      final position = _scrollController.position;
-      final target = (_scrollController.offset + delta)
-          .clamp(position.minScrollExtent, position.maxScrollExtent);
-      _scrollController.jumpTo(target);
+      // Frame 2: con il blocco-ancora ora presumibilmente costruito (grazie
+      // al ripristino grezzo appena fatto), lo rimisuriamo e applichiamo la
+      // correzione ESATTA, pixel per pixel, rispetto alla posizione
+      // originale catturata prima dello swap.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scrollController.hasClients || beforeTop == null) {
+          return;
+        }
+        final afterBox =
+            _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
+        if (afterBox is! RenderBox || !afterBox.attached) return;
+
+        final afterTop = afterBox.localToGlobal(Offset.zero).dy;
+        final delta = afterTop - beforeTop!;
+        if (delta.abs() < 0.5) return;
+
+        final position = _scrollController.position;
+        final target = (_scrollController.offset + delta)
+            .clamp(position.minScrollExtent, position.maxScrollExtent);
+        _scrollController.jumpTo(target);
+      });
     });
   }
 
