@@ -153,7 +153,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   // alla versione precedente): ricalcolati SOLO quando cambia davvero
   // contenuto/titolo/font/tema, mai per un cambio di selezione. ---
   List<String>? _cachedBlocks;
-  List<bool>? _cachedBlockIsListItem;
   List<Widget>? _cachedFormattedItems;
   Widget? _cachedTitleWidget;
   bool _cachedHasTitle = false;
@@ -168,10 +167,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   // --- Stato di selezione "seamless" (vedi doc di classe sopra). ---
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _listViewKey = GlobalKey();
   final Map<int, GlobalKey> _blockKeys = {};
-  final Map<int, Widget> _cachedRawItems = {};
+  List<Widget>? _cachedRawItems;
   final Map<String, String> _renderedPlainTextCache = {};
-  Set<int> _rawBlockIndices = const {};
+
+  /// Unico interruttore di modalità: quando è `true` TUTTO il documento (ogni
+  /// blocco, non solo quello toccato) viene mostrato come markdown grezzo,
+  /// non formattato — visivamente simile a "modalità modifica", ma senza che
+  /// diventi mai editabile: resta un `Text` semplice dentro un
+  /// `SelectionArea` di sola lettura, mai un campo di input. Attivato/
+  /// disattivato in blocco da `_handleSelectionChanged`.
+  bool _isRawMode = false;
 
   @override
   void dispose() {
@@ -179,10 +186,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // sottoalbero renderizzato) non appena la vista viene smontata, così non
     // restano agganciati più a lungo del necessario in attesa della GC.
     _cachedFormattedItems = null;
+    _cachedRawItems = null;
     _cachedTitleWidget = null;
     _cachedContent = null;
     _blockKeys.clear();
-    _cachedRawItems.clear();
     _renderedPlainTextCache.clear();
     _scrollController.dispose();
     super.dispose();
@@ -190,8 +197,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   /// Testo "reso" approssimato di un blocco: il testo visibile dopo che il
   /// markdown è stato interpretato (es. `**bold**` → `bold`, `# Titolo` →
-  /// `Titolo`), usato SOLO per capire quale blocco corrisponde al testo che
-  /// `SelectionArea.onSelectionChanged` riporta come selezionato. Calcolato
+  /// `Titolo`), usato SOLO per individuare in quale blocco si trova il testo
+  /// che `SelectionArea.onSelectionChanged` riporta come selezionato — serve
+  /// a scegliere un buon "ancoraggio" per lo scroll (vedi
+  /// `_swapPreservingScrollAnchor`), non a decidere quali blocchi mostrare
+  /// grezzi: quello ora è un tutto-o-niente sull'intero documento. Calcolato
   /// una sola volta per blocco (cache tenuta in vita quanto il blocco
   /// stesso) e mai ricalcolato durante un drag di selezione, che può
   /// invocare questo confronto molte volte al secondo.
@@ -208,103 +218,130 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       } catch (_) {
         // Fallback prudente: se il parsing del singolo blocco fallisse per
         // un caso limite, usiamo il testo grezzo stesso come approssimazione
-        // — nel peggiore dei casi il matching sarà un po' meno preciso, ma
+        // — nel peggiore dei casi l'ancoraggio sarà un po' meno preciso, ma
         // non blocca mai la funzionalità né fa fallire la build.
         return block;
       }
     });
   }
 
-  /// Determina quali blocchi (indici in `_cachedBlocks`) sono coinvolti dal
-  /// testo attualmente selezionato, confrontandolo con il testo reso di
-  /// ciascun blocco. Una selezione può attraversare più blocchi: per questo
-  /// si confronta sia il testo intero sia riga per riga.
-  Set<int> _activeBlocksFor(String selectedPlainText) {
-    final normalizedSelected = selectedPlainText.trim();
+  /// Individua l'indice del blocco il cui testo reso contiene (o è
+  /// contenuto in) il testo attualmente selezionato: usato per ancorare lo
+  /// scroll esattamente sul punto che l'utente sta selezionando quando si
+  /// entra in modalità grezza. `null` se nessun blocco corrisponde (es. la
+  /// selezione attraversa un confine imprevisto) — in quel caso si ricade
+  /// sull'ancoraggio generico basato sul blocco più in alto visibile.
+  int? _blockIndexContainingSelection(String selectedPlainText) {
     final blocks = _cachedBlocks;
-    if (normalizedSelected.isEmpty || blocks == null) return const {};
+    final normalizedSelected = selectedPlainText.trim();
+    if (blocks == null || normalizedSelected.isEmpty) return null;
 
-    final segments = normalizedSelected
-        .split('\n')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList(growable: false);
-
-    final active = <int>{};
     for (var i = 0; i < blocks.length; i++) {
       final normalizedBlock = _renderedPlainTextFor(blocks[i]).trim();
       if (normalizedBlock.isEmpty) continue;
-      final wholeMatch = normalizedBlock.contains(normalizedSelected) ||
-          normalizedSelected.contains(normalizedBlock);
-      final segmentMatch =
-          !wholeMatch && segments.any(normalizedBlock.contains);
-      if (wholeMatch || segmentMatch) active.add(i);
+      if (normalizedBlock.contains(normalizedSelected) ||
+          normalizedSelected.contains(normalizedBlock)) {
+        return i;
+      }
     }
-    return active;
+    // Selezione su più blocchi: proviamo con la sola prima riga non vuota,
+    // che dovrebbe comunque appartenere al blocco in cui è partita.
+    final firstLine = normalizedSelected
+        .split('\n')
+        .map((l) => l.trim())
+        .firstWhere((l) => l.isNotEmpty, orElse: () => '');
+    if (firstLine.isEmpty) return null;
+    for (var i = 0; i < blocks.length; i++) {
+      if (_renderedPlainTextFor(blocks[i]).contains(firstLine)) return i;
+    }
+    return null;
   }
 
-  bool _sameIndexSet(Set<int> a, Set<int> b) {
-    if (a.length != b.length) return false;
-    for (final value in a) {
-      if (!b.contains(value)) return false;
-    }
-    return true;
+  /// Blocco attualmente più vicino al bordo superiore del `ListView`:
+  /// ancoraggio generico usato quando non è disponibile un testo di
+  /// selezione da cui risalire al blocco esatto (tipicamente: ritorno a
+  /// Markdown formattato dopo che la selezione è già stata azzerata).
+  /// Basato su geometria realmente disposta (RenderBox), non su una stima.
+  int? _topVisibleBlockIndex() {
+    final viewportBox = _listViewKey.currentContext?.findRenderObject();
+    if (viewportBox is! RenderBox || !viewportBox.attached) return null;
+    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+
+    int? bestIndex;
+    double bestDistance = double.infinity;
+    _blockKeys.forEach((index, key) {
+      final box = key.currentContext?.findRenderObject();
+      if (box is RenderBox && box.attached) {
+        final distance =
+            (box.localToGlobal(Offset.zero).dy - viewportTop).abs();
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      }
+    });
+    return bestIndex;
   }
 
   /// Callback di `SelectionArea.onSelectionChanged`: unico punto da cui la
-  /// "gesture di selezione" viene osservata (vedi doc di classe). Aggiorna
-  /// anche l'aptica tramite lo stesso canale già usato dall'editor
-  /// (`HapticsHelper.reportSelectionState`), così un tap-and-hold in
-  /// sola-lettura si comporta in modo coerente con quello nel campo di
-  /// modifica, invece di introdurre una logica aptica parallela.
+  /// "gesture di selezione" viene osservata (vedi doc di classe). Non appena
+  /// una selezione diventa non vuota, TUTTO il documento passa a markdown
+  /// grezzo; non appena torna vuota (tap altrove / selezione azzerata),
+  /// TUTTO torna formattato. Aggiorna anche l'aptica tramite lo stesso
+  /// canale già usato dall'editor (`HapticsHelper.reportSelectionState`),
+  /// così un tap-and-hold in sola-lettura si comporta in modo coerente con
+  /// quello nel campo di modifica, invece di introdurre una logica aptica
+  /// parallela.
   void _handleSelectionChanged(SelectedContent? content) {
     final hasSelection =
         content != null && content.plainText.trim().isNotEmpty;
     HapticsHelper.reportSelectionState(isCollapsed: !hasSelection);
 
-    if (!hasSelection) {
-      if (_rawBlockIndices.isNotEmpty) {
-        setState(() => _rawBlockIndices = const {});
-      }
-      return;
-    }
+    if (hasSelection == _isRawMode) return; // già nella modalità corretta
 
-    final nextActive = _activeBlocksFor(content.plainText);
-    if (nextActive.isEmpty || _sameIndexSet(_rawBlockIndices, nextActive)) {
-      return;
-    }
+    final anchorIndex = hasSelection
+        ? (_blockIndexContainingSelection(content.plainText) ??
+            _topVisibleBlockIndex())
+        : _topVisibleBlockIndex();
 
-    // Ancora lo scroll sul primo blocco coinvolto: è quello su cui il dito
-    // (o il cursore) si trova con maggiore probabilità in questo istante.
     _swapPreservingScrollAnchor(
-      anchorBlockIndex: nextActive.first,
-      applyChange: () => setState(() => _rawBlockIndices = nextActive),
+      anchorBlockIndex: anchorIndex,
+      applyChange: () => setState(() => _isRawMode = hasSelection),
     );
   }
 
-  /// Riporta tutti i blocchi a Markdown formattato. Usata sia quando la
+  /// Riporta l'intero documento a Markdown formattato. Usata sia quando la
   /// selezione si azzera (gestito già in `_handleSelectionChanged`), sia
   /// esplicitamente dopo "Copia" dal menu contestuale (vedi
-  /// `_buildContextMenu`), perché su alcune piattaforme la selezione visibile
+  /// `_buildListSubtree`), perché su alcune piattaforme la selezione visibile
   /// può restare attiva dopo la copia invece di azzerarsi da sola.
-  void _revertAllRawBlocks() {
-    if (_rawBlockIndices.isEmpty) return;
-    setState(() => _rawBlockIndices = const {});
+  void _revertToFormatted() {
+    if (!_isRawMode) return;
+    _swapPreservingScrollAnchor(
+      anchorBlockIndex: _topVisibleBlockIndex(),
+      applyChange: () => setState(() => _isRawMode = false),
+    );
   }
 
-  /// Misura la posizione verticale REALE (non stimata) del blocco indicato
+  /// Misura la posizione verticale REALE (non stimata) del blocco-ancora
   /// prima di applicare `applyChange`, e la rimisura a frame concluso,
   /// compensando lo `ScrollController` della differenza esatta così che il
-  /// punto guardato dall'utente non "salti" quando il blocco cambia altezza
-  /// passando da formattato a grezzo (o viceversa).
+  /// punto guardato dall'utente non "salti" quando ogni blocco cambia
+  /// altezza passando in blocco da formattato a grezzo (o viceversa). Non è
+  /// una stima "N px per riga": è una differenza tra due geometrie reali già
+  /// disposte da Flutter, prima e dopo lo swap.
   void _swapPreservingScrollAnchor({
-    required int anchorBlockIndex,
+    required int? anchorBlockIndex,
     required VoidCallback applyChange,
   }) {
+    if (anchorBlockIndex == null) {
+      applyChange();
+      return;
+    }
+
     double? beforeTop;
-    final beforeBox = _blockKeys[anchorBlockIndex]
-        ?.currentContext
-        ?.findRenderObject();
+    final beforeBox =
+        _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
     if (beforeBox is RenderBox && beforeBox.attached) {
       beforeTop = beforeBox.localToGlobal(Offset.zero).dy;
     }
@@ -315,9 +352,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     final anchor = beforeTop;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
-      final afterBox = _blockKeys[anchorBlockIndex]
-          ?.currentContext
-          ?.findRenderObject();
+      final afterBox =
+          _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
       if (afterBox is! RenderBox || !afterBox.attached) return;
 
       final afterTop = afterBox.localToGlobal(Offset.zero).dy;
@@ -597,6 +633,27 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         ),
     ];
 
+    // Versione grezza (markdown non interpretato) dello STESSO elenco di
+    // blocchi, con lo stesso wrapping/gap dei blocchi formattati in modo che
+    // il layout resti il più possibile comparabile. Costruita eagerly qui
+    // (non pigramente): a differenza di `MarkdownBody`, un `Text` semplice
+    // non fa alcun parsing, quindi costruire tutta la lista in anticipo è
+    // economico e permette lo swap istantaneo dell'intero documento al primo
+    // frame utile, senza un "flash" del primo blocco mentre gli altri
+    // vengono ancora costruiti pigramente al primo giro di `itemBuilder`.
+    final rawItems = <Widget>[
+      for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++)
+        KeyedSubtree(
+          key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
+          child: wrapCentered(
+            Padding(
+              padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
+              child: Text(blocks[blockIndex], style: rawTextStyle),
+            ),
+          ),
+        ),
+    ];
+
     final titleWidget = hasTitle
         ? wrapCentered(
             Column(
@@ -623,17 +680,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           )
         : const SizedBox.shrink();
 
-    // I blocchi sono cambiati: qualunque indice raw precedente non
-    // corrisponde più necessariamente allo stesso contenuto — così come le
-    // cache che indicizzano per posizione. Le puliamo tutte insieme.
-    _rawBlockIndices = const {};
-    _cachedRawItems.clear();
+    // I blocchi sono cambiati (nuova nota o nota modificata altrove): lo
+    // stato "grezzo/formattato" precedente e le cache che indicizzano per
+    // posizione non hanno più senso e vengono azzerati insieme.
+    _isRawMode = false;
     _renderedPlainTextCache.clear();
     _blockKeys.removeWhere((index, _) => index >= blocks.length);
 
     _cachedBlocks = blocks;
-    _cachedBlockIsListItem = blockIsListItem;
     _cachedFormattedItems = formattedItems;
+    _cachedRawItems = rawItems;
     _cachedTitleWidget = titleWidget;
     _cachedHasTitle = hasTitle;
     _cachedRawTextStyle = rawTextStyle;
@@ -646,65 +702,25 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     _cachedBrightness = theme.brightness;
   }
 
-  /// Versione "raw" (markdown grezzo, testo piatto) di un blocco, costruita
-  /// pigramente e tenuta in cache: passare avanti e indietro più volte tra
-  /// formattato e grezzo durante lo stesso drag di selezione non ricrea il
-  /// widget ogni volta.
-  Widget _rawItemFor(int blockIndex, {required Widget Function(Widget) wrapCentered}) {
-    return _cachedRawItems.putIfAbsent(blockIndex, () {
-      final gap = blockIndex >= (_cachedBlocks!.length - 1)
-          ? 0.0
-          : (_cachedBlockIsListItem![blockIndex] &&
-                  _cachedBlockIsListItem![blockIndex + 1]
-              ? 2.0
-              : 16.0);
-      return KeyedSubtree(
-        key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
-        child: wrapCentered(
-          Container(
-            width: double.infinity,
-            margin: EdgeInsets.only(bottom: gap),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            decoration: BoxDecoration(
-              color: _cachedColorScheme!.primary.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(_cachedBlocks![blockIndex], style: _cachedRawTextStyle),
-          ),
-        ),
-      );
-    });
-  }
-
   /// Assembla il sottoalbero finale a partire dagli "ingredienti" già in
-  /// cache (blocchi formattati, blocco titolo) e dallo stato di selezione
-  /// corrente. È l'unica parte ricostruita quando cambia SOLO
-  /// `_rawBlockIndices`: nessun reparse Markdown, nessuna ricostruzione
-  /// dello stylesheet, e i blocchi non coinvolti vengono restituiti come
-  /// istanze `identical` a quelle già disegnate (vedi doc di classe).
+  /// cache (blocchi formattati, blocchi grezzi, blocco titolo) e dalla
+  /// modalità corrente. È l'unica parte ricostruita quando cambia SOLO
+  /// `_isRawMode`: nessun reparse Markdown, nessuna ricostruzione dello
+  /// stylesheet — entrambe le liste di blocchi sono già pronte, si tratta
+  /// solo di scegliere quale item restituire per ciascun indice.
   Widget _buildListSubtree() {
     final blocks = _cachedBlocks!;
     final formattedItems = _cachedFormattedItems!;
+    final rawItems = _cachedRawItems!;
     final hasTitle = _cachedHasTitle;
     final itemCount = (hasTitle ? 1 : 0) + blocks.length;
-
-    Widget wrapCentered(Widget child) => Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: SizedBox(width: double.infinity, child: child),
-          ),
-        );
 
     Widget buildItem(BuildContext context, int index) {
       if (hasTitle && index == 0) {
         return _cachedTitleWidget!;
       }
       final blockIndex = hasTitle ? index - 1 : index;
-      if (_rawBlockIndices.contains(blockIndex)) {
-        return _rawItemFor(blockIndex, wrapCentered: wrapCentered);
-      }
-      return formattedItems[blockIndex];
+      return _isRawMode ? rawItems[blockIndex] : formattedItems[blockIndex];
     }
 
     // RepaintBoundary: isola il layer grafico della nota renderizzata da
@@ -727,10 +743,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
             return item.copyWith(
               onPressed: () {
                 // Esegue prima la copia originale (clipboard invariato),
-                // poi riporta i blocchi coinvolti a Markdown formattato:
+                // poi riporta l'intero documento a Markdown formattato:
                 // "fine della selezione" per copia esplicita, come da spec.
                 originalOnPressed?.call();
-                _revertAllRawBlocks();
+                _revertToFormatted();
               },
             );
           }).toList(growable: false);
@@ -740,6 +756,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           );
         },
         child: ListView.builder(
+          key: _listViewKey,
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
           itemCount: itemCount,
