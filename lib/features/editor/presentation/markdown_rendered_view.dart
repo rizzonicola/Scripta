@@ -648,14 +648,30 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // economico e permette lo swap istantaneo dell'intero documento al primo
     // frame utile, senza un "flash" del primo blocco mentre gli altri
     // vengono ancora costruiti pigramente al primo giro di `itemBuilder`.
+    // Ogni blocco grezzo nel proprio `RepaintBoundary`. Non è un dettaglio
+    // estetico: è la differenza tra le buone prestazioni della modalità
+    // formattata e il calo di FPS osservato in quella grezza.
+    // `ListView.builder` avvolge automaticamente ogni suo elemento in un
+    // `RepaintBoundary` (`addRepaintBoundaries: true` di default): ogni
+    // blocco diventa un layer di compositing indipendente, già rasterizzato,
+    // e scorrere significa solo ricomporre layer esistenti — mai ridisegnare
+    // i comandi di disegno del testo. `SingleChildScrollView` + `Column`
+    // (necessari qui per evitare la virtualizzazione, vedi doc di
+    // `_buildListSubtree`) NON lo fanno: senza questo confine esplicito,
+    // l'intera colonna condivide un solo layer, e ogni frame di scroll può
+    // dover ri-registrare da capo i comandi di disegno per l'INTERO
+    // documento invece che solo per il rettangolo visibile — da qui il
+    // calo di FPS peggiore persino della modalità modifica.
     final rawItems = <Widget>[
       for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++)
         KeyedSubtree(
           key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
-          child: wrapCentered(
-            Padding(
-              padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-              child: Text(blocks[blockIndex], style: rawTextStyle),
+          child: RepaintBoundary(
+            child: wrapCentered(
+              Padding(
+                padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
+                child: Text(blocks[blockIndex], style: rawTextStyle),
+              ),
             ),
           ),
         ),
