@@ -167,7 +167,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   // --- Stato di selezione "seamless" (vedi doc di classe sopra). ---
   final ScrollController _scrollController = ScrollController();
-  final GlobalKey _listViewKey = GlobalKey();
   final Map<int, GlobalKey> _blockKeys = {};
   List<Widget>? _cachedRawItems;
   final Map<String, String> _renderedPlainTextCache = {};
@@ -257,13 +256,21 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     return null;
   }
 
-  /// Blocco attualmente più vicino al bordo superiore del `ListView`:
+  /// Blocco attualmente più vicino al bordo superiore della vista:
   /// ancoraggio generico usato quando non è disponibile un testo di
   /// selezione da cui risalire al blocco esatto (tipicamente: ritorno a
   /// Markdown formattato dopo che la selezione è già stata azzerata).
   /// Basato su geometria realmente disposta (RenderBox), non su una stima.
+  ///
+  /// Usa `context` (quello di questo State, cioè della radice del
+  /// sottoalbero costruito da `build()`) come riferimento invece della
+  /// chiave del `ListView`: è l'unico riferimento stabile e presente in
+  /// ENTRAMBE le modalità di rendering (`ListView.builder` virtualizzato in
+  /// formattato, `SingleChildScrollView` non virtualizzato in grezzo — vedi
+  /// `_buildListSubtree`), quindi funziona correttamente sia quando si
+  /// entra sia quando si esce dalla modalità grezza.
   int? _topVisibleBlockIndex() {
-    final viewportBox = _listViewKey.currentContext?.findRenderObject();
+    final viewportBox = context.findRenderObject();
     if (viewportBox is! RenderBox || !viewportBox.attached) return null;
     final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
 
@@ -704,10 +711,35 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   /// Assembla il sottoalbero finale a partire dagli "ingredienti" già in
   /// cache (blocchi formattati, blocchi grezzi, blocco titolo) e dalla
-  /// modalità corrente. È l'unica parte ricostruita quando cambia SOLO
-  /// `_isRawMode`: nessun reparse Markdown, nessuna ricostruzione dello
-  /// stylesheet — entrambe le liste di blocchi sono già pronte, si tratta
-  /// solo di scegliere quale item restituire per ciascun indice.
+  /// modalità corrente. Nessun reparse Markdown né ricostruzione dello
+  /// stylesheet quando cambia SOLO `_isRawMode`: entrambe le liste di
+  /// blocchi sono già pronte in cache, qui si sceglie solo COME disporle.
+  ///
+  /// I due rami NON sono intercambiabili solo nell'aspetto, ma nella
+  /// strategia di rendering, ed è una scelta deliberata:
+  ///
+  ///  - **Formattato (a riposo)** → `ListView.builder` VIRTUALIZZATO: solo i
+  ///    blocchi vicini alla viewport vengono costruiti/disposti. Essenziale
+  ///    per note lunghe, dato che ogni blocco è un `MarkdownBody` (parsing
+  ///    Markdown non gratuito).
+  ///  - **Grezzo (durante una selezione)** → `SingleChildScrollView` +
+  ///    `Column` NON virtualizzato: TUTTI i blocchi vengono disposti subito.
+  ///
+  /// Il secondo punto è la correzione al problema del flash bianco: se la
+  /// modalità grezza restasse dentro un `ListView.builder` virtualizzato,
+  /// "Seleziona tutto" o un trascinamento veloce verso il basso
+  /// chiederebbero a `SelectionArea` di selezionare testo il cui
+  /// `RenderObject` non esiste ancora perché fuori dalla finestra
+  /// costruita. Flutter prova allora ad auto-scrollare per "raggiungere"
+  /// quel testo mancante; se la richiesta di selezione corre più veloce
+  /// della costruzione dei nuovi elementi, entra in un ciclo di tentativi
+  /// che blocca il thread di rendering — il flash bianco e il freeze
+  /// osservati. Eliminare la virtualizzazione SOLO nella finestra
+  /// temporale in cui è attiva una selezione toglie il problema alla
+  /// radice invece di attenuarlo: i blocchi grezzi sono `Text` piatti senza
+  /// parsing, quindi disporli tutti in una volta ha un costo contenuto ed è
+  /// comunque transitorio (dura quanto la selezione). Non appena la
+  /// selezione termina si torna al `ListView.builder` virtualizzato.
   Widget _buildListSubtree() {
     final blocks = _cachedBlocks!;
     final formattedItems = _cachedFormattedItems!;
@@ -715,12 +747,37 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     final hasTitle = _cachedHasTitle;
     final itemCount = (hasTitle ? 1 : 0) + blocks.length;
 
-    Widget buildItem(BuildContext context, int index) {
-      if (hasTitle && index == 0) {
-        return _cachedTitleWidget!;
-      }
-      final blockIndex = hasTitle ? index - 1 : index;
-      return _isRawMode ? rawItems[blockIndex] : formattedItems[blockIndex];
+    Widget scrollableContent;
+    if (_isRawMode) {
+      scrollableContent = SingleChildScrollView(
+        // Key di tipo diverso da quella del ramo formattato: forza Flutter
+        // a trattarlo esplicitamente come uno scambio di widget (mai un
+        // update "morbido" di un `ListView` con un `SingleChildScrollView`,
+        // cosa che comunque non sarebbe permessa avendo runtimeType
+        // diversi, ma la key esplicita rende l'intento leggibile).
+        key: const ValueKey('markdown-raw-scrollview'),
+        controller: _scrollController,
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (hasTitle) _cachedTitleWidget!,
+            ...rawItems,
+          ],
+        ),
+      );
+    } else {
+      scrollableContent = ListView.builder(
+        key: const ValueKey('markdown-formatted-listview'),
+        controller: _scrollController,
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+        itemCount: itemCount,
+        itemBuilder: (context, index) {
+          if (hasTitle && index == 0) return _cachedTitleWidget!;
+          final blockIndex = hasTitle ? index - 1 : index;
+          return formattedItems[blockIndex];
+        },
+      );
     }
 
     // RepaintBoundary: isola il layer grafico della nota renderizzata da
@@ -738,30 +795,50 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         contextMenuBuilder: (context, selectableRegionState) {
           final items = selectableRegionState.contextMenuButtonItems
               .map((item) {
-            if (item.type != ContextMenuButtonType.copy) return item;
-            final originalOnPressed = item.onPressed;
-            return item.copyWith(
-              onPressed: () {
-                // Esegue prima la copia originale (clipboard invariato),
-                // poi riporta l'intero documento a Markdown formattato:
-                // "fine della selezione" per copia esplicita, come da spec.
-                originalOnPressed?.call();
-                _revertToFormatted();
-              },
-            );
+            if (item.type == ContextMenuButtonType.copy) {
+              final originalOnPressed = item.onPressed;
+              return item.copyWith(
+                onPressed: () {
+                  // Esegue prima la copia originale (clipboard invariato),
+                  // poi riporta l'intero documento a Markdown formattato:
+                  // "fine della selezione" per copia esplicita, come da
+                  // spec.
+                  originalOnPressed?.call();
+                  _revertToFormatted();
+                },
+              );
+            }
+            if (item.type == ContextMenuButtonType.selectAll &&
+                !_isRawMode) {
+              // "Seleziona tutto" è il modo più diretto per innescare il
+              // problema descritto in cima al file: chiede di selezionare
+              // l'intero documento mentre è ancora virtualizzato. Passiamo
+              // a grezzo (non virtualizzato) PRIMA di eseguire l'azione
+              // originale, così quando "seleziona tutto" viene
+              // effettivamente eseguita ogni blocco esiste già come
+              // `RenderObject` reale — nessun testo mancante da inseguire.
+              final originalOnPressed = item.onPressed;
+              return item.copyWith(
+                onPressed: () {
+                  setState(() => _isRawMode = true);
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    // A questo punto il frame con il documento grezzo per
+                    // intero è già stato costruito E disposto (un
+                    // `addPostFrameCallback` scatta dopo layout e paint):
+                    // "seleziona tutto" ora opera su testo tutto reale.
+                    originalOnPressed?.call();
+                  });
+                },
+              );
+            }
+            return item;
           }).toList(growable: false);
           return AdaptiveTextSelectionToolbar.buttonItems(
             anchors: selectableRegionState.contextMenuAnchors,
             buttonItems: items,
           );
         },
-        child: ListView.builder(
-          key: _listViewKey,
-          controller: _scrollController,
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-          itemCount: itemCount,
-          itemBuilder: buildItem,
-        ),
+        child: scrollableContent,
       ),
     );
   }
