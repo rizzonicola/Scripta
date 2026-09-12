@@ -189,10 +189,25 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// motivo puramente interno (lo scambio di widget appena fatto), non
   /// perché l'utente abbia davvero deselezionato. Reagire a QUELL'istante
   /// tornando subito a formattato produce il doppio scatto/artefatto visivo
-  /// osservato. Attendere una brevissima finestra prima di agire assorbe
-  /// questo caso senza introdurre un ritardo percepibile per una
-  /// deselezione vera (tap altrove).
+  /// osservato (evidenziazione che resta "appesa" sul testo formattato). Un
+  /// semplice debounce da solo non basta ad assorbirlo del tutto (vedi
+  /// `_rawModeEnteredAt`): serve anche IGNORARE del tutto quel primo
+  /// azzeramento, non solo rimandarlo.
   Timer? _pendingRevertTimer;
+
+  /// Istante in cui siamo entrati in modalità grezza l'ultima volta. Per una
+  /// brevissima finestra dopo questo istante (vedi `_recentlyEnteredRawMode`
+  /// in `_handleSelectionChanged`), un azzeramento della selezione viene
+  /// considerato quasi certamente un artefatto del nostro stesso scambio di
+  /// widget (la distruzione del `Selectable` di cui sopra) e viene IGNORATO
+  /// del tutto — non solo rimandato con un debounce: anche un debounce
+  /// brevissimo, come si è visto, può comunque lasciare per un istante
+  /// un'evidenziazione "orfana" sopra al testo già tornato formattato.
+  /// Ignorare del tutto quel primo evento mantiene l'app nello stato
+  /// coerente — grezzo, con la selezione visibile — finché non arriva un
+  /// segnale di deselezione inequivocabile (un tap altrove dopo che questa
+  /// finestra è trascorsa).
+  DateTime? _rawModeEnteredAt;
 
   @override
   void dispose() {
@@ -310,8 +325,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// "gesture di selezione" viene osservata (vedi doc di classe). Non appena
   /// una selezione diventa non vuota, TUTTO il documento passa a markdown
   /// grezzo; non appena torna vuota (tap altrove / selezione azzerata),
-  /// TUTTO torna formattato — con un breve debounce, vedi `_pendingRevertTimer`.
-  /// Aggiorna anche l'aptica tramite lo stesso canale già usato dall'editor
+  /// TUTTO torna formattato — con le cautele descritte nella doc di
+  /// `_rawModeEnteredAt` e `_pendingRevertTimer`. Aggiorna anche l'aptica
+  /// tramite lo stesso canale già usato dall'editor
   /// (`HapticsHelper.reportSelectionState`), così un tap-and-hold in
   /// sola-lettura si comporta in modo coerente con quello nel campo di
   /// modifica, invece di introdurre una logica aptica parallela.
@@ -335,18 +351,32 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         anchorBlockIndex: anchorIndex,
         applyChange: () => setState(() => _isRawMode = true),
       );
+      _rawModeEnteredAt = DateTime.now();
       return;
     }
 
     if (!_isRawMode) return; // già formattato, nessuna azione
 
-    // Selezione vuota: NON torniamo a formattato nello stesso istante (vedi
-    // la doc di `_pendingRevertTimer` per il perché). Se entro questa
-    // brevissima finestra arriva una nuova selezione non vuota — un drag
-    // che continua, o la selezione che si "riattacca" da sola al nuovo
-    // testo grezzo — il ramo sopra annulla questo timer e non succede nulla
-    // di visibile: nessun doppio scatto, nessuna evidenziazione fuori
-    // posto.
+    // Vedi la doc di `_rawModeEnteredAt`: se siamo appena entrati in
+    // modalità grezza, il PRIMO azzeramento della selezione è quasi
+    // certamente un artefatto del nostro stesso scambio di widget (la
+    // distruzione del `Selectable` a cui la selezione era agganciata), non
+    // una vera deselezione da parte dell'utente — tipicamente un
+    // tap-and-hold seguito da un rilascio immediato, senza trascinamento.
+    // Lo ignoriamo del tutto (niente debounce, niente timer): l'app resta
+    // in modalità grezza, con la selezione ancora visibile e funzionante,
+    // esattamente come farebbe una qualunque selezione di testo nativa.
+    final enteredAt = _rawModeEnteredAt;
+    if (enteredAt != null &&
+        DateTime.now().difference(enteredAt) < const Duration(milliseconds: 400)) {
+      return;
+    }
+
+    // Passata la finestra di grazia, un azzeramento è un segnale
+    // sufficientemente affidabile (tap altrove, o la selezione che si è
+    // davvero conclusa) — ma applichiamo comunque un brevissimo debounce
+    // prima di agire, per assorbire eventuali ulteriori sfarfallii isolati
+    // senza introdurre un ritardo percepibile per una deselezione vera.
     _pendingRevertTimer?.cancel();
     _pendingRevertTimer = Timer(const Duration(milliseconds: 160), () {
       _pendingRevertTimer = null;
@@ -363,6 +393,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   void _revertToFormatted() {
     _pendingRevertTimer?.cancel();
     _pendingRevertTimer = null;
+    _rawModeEnteredAt = null;
     if (!_isRawMode) return;
     _swapPreservingScrollAnchor(
       anchorBlockIndex: _topVisibleBlockIndex(),
@@ -752,6 +783,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // posizione non hanno più senso e vengono azzerati insieme.
     _pendingRevertTimer?.cancel();
     _pendingRevertTimer = null;
+    _rawModeEnteredAt = null;
     _isRawMode = false;
     _renderedPlainTextCache.clear();
     _blockKeys.removeWhere((index, _) => index >= blocks.length);
@@ -875,20 +907,50 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
               // "Seleziona tutto" è il modo più diretto per innescare il
               // problema descritto in cima al file: chiede di selezionare
               // l'intero documento mentre è ancora virtualizzato. Passiamo
-              // a grezzo (non virtualizzato) PRIMA di eseguire l'azione
-              // originale, così quando "seleziona tutto" viene
-              // effettivamente eseguita ogni blocco esiste già come
-              // `RenderObject` reale — nessun testo mancante da inseguire.
-              final originalOnPressed = item.onPressed;
+              // a grezzo (non virtualizzato) PRIMA di eseguire l'azione,
+              // così quando "seleziona tutto" viene effettivamente
+              // eseguita ogni blocco esiste già come `RenderObject` reale
+              // — nessun testo mancante da inseguire.
+              //
+              // ATTENZIONE: qui NON si può semplicemente richiamare più
+              // tardi `item.onPressed` originale. Quella chiusura fa
+              // riferimento agli specifici `Selectable` (i `RenderParagraph`
+              // dei blocchi ancora FORMATTATI) presenti nell'istante in cui
+              // il menu è stato costruito. Il nostro `setState` appena sopra
+              // smonta e ricrea quei blocchi (formattato → grezzo):
+              // richiamare la chiusura originale dopo lo swap la fa operare
+              // su riferimenti ormai non validi, e la selezione risultante
+              // può "impazzire" calcolando un rettangolo di evidenziazione
+              // esteso a tutto lo schermo — l'overlay grigio bloccato
+              // osservato.
+              //
+              // La soluzione corretta è invece inviare l'Intent standard
+              // `SelectAllTextIntent`, che `SelectableRegion` intercetta
+              // internamente (è lo stesso meccanismo di Ctrl+A/Cmd+A da
+              // tastiera): non porta con sé alcun riferimento agli oggetti
+              // "vecchi", quindi opera correttamente su qualunque insieme
+              // di `Selectable` esista nell'istante in cui viene ricevuto.
+              // Usiamo il `context` fornito da `contextMenuBuilder` (non
+              // quello di questo State): è un discendente di
+              // `SelectionArea`, condizione necessaria perché
+              // `Actions.invoke` trovi il gestore giusto risalendo
+              // l'albero; resta valido dopo lo swap perché `SelectionArea`
+              // stesso non viene mai smontato — cambia solo il suo
+              // contenuto (`ListView.builder` ↔ `SingleChildScrollView`).
               return item.copyWith(
                 onPressed: () {
                   setState(() => _isRawMode = true);
+                  _rawModeEnteredAt = DateTime.now();
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     // A questo punto il frame con il documento grezzo per
                     // intero è già stato costruito E disposto (un
                     // `addPostFrameCallback` scatta dopo layout e paint):
                     // "seleziona tutto" ora opera su testo tutto reale.
-                    originalOnPressed?.call();
+                    if (!context.mounted) return;
+                    Actions.maybeInvoke<SelectAllTextIntent>(
+                      context,
+                      const SelectAllTextIntent(SelectionChangedCause.toolbar),
+                    );
                   });
                 },
               );
