@@ -116,14 +116,18 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 /// grezzi in competizione con i recognizer di `SelectionArea` (rischierebbe
 /// di rubargli l'arena e rompere la selezione nativa). Usiamo invece il
 /// canale che Flutter già espone per questo: `SelectionArea.onSelectionChanged`
-/// riporta il contenuto testuale non appena una parola viene selezionata
-/// (tap-and-hold o doppio tap, sia touch che desktop) — è il segnale stesso
-/// di "gesture di selezione iniziata" richiesto dalla spec, semplicemente
-/// osservato dal livello giusto invece che da un `Listener`/`GestureDetector`
-/// grezzo che dovrebbe poi reimplementare la logica di long-press/doppio tap
-/// già presente (e testata) dentro `SelectionArea`. Il testo selezionato
-/// viene confrontato (via cache) con il testo "reso" di ciascun blocco per
-/// capire quale blocco coinvolge, e SOLO quello passa a raw.
+/// riporta il contenuto testuale non appena una selezione diventa attiva
+/// (tap-and-hold o doppio tap, sia touch che desktop) — anche quando quel
+/// contenuto è composto SOLO da whitespace (uno spazio tra due parole, una
+/// riga vuota): vedi `_handleSelectionChanged` per il perché è
+/// deliberatamente `content.plainText.isNotEmpty`, non `.trim().isNotEmpty`.
+/// È il segnale stesso di "gesture di selezione iniziata" richiesto dalla
+/// spec, semplicemente osservato dal livello giusto invece che da un
+/// `Listener`/`GestureDetector` grezzo che dovrebbe poi reimplementare la
+/// logica di long-press/doppio tap già presente (e testata) dentro
+/// `SelectionArea`. Il testo selezionato viene confrontato (via cache) con
+/// il testo "reso" di ciascun blocco per capire quale blocco coinvolge, e
+/// SOLO quello passa a raw.
 ///
 /// USCITA dalla modalità raw: `onSelectionChanged(null)` (tap altrove /
 /// deselezione) oppure pressione di "Copia" nel menu contestuale (intercettata
@@ -261,30 +265,83 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// entra in modalità grezza. `null` se nessun blocco corrisponde (es. la
   /// selezione attraversa un confine imprevisto) — in quel caso si ricade
   /// sull'ancoraggio generico basato sul blocco più in alto visibile.
+  ///
+  /// DISAMBIGUAZIONE PER PROSSIMITÀ (fix del disallineamento verticale
+  /// osservato in rari casi): il confronto è puramente testuale, quindi
+  /// PIÙ blocchi possono corrispondere allo stesso testo selezionato — due
+  /// voci di lista che iniziano con la stessa parola, un titolo ripetuto,
+  /// una frase breve comune. La versione precedente restituiva semplicemente
+  /// il PRIMO blocco trovato scorrendo il documento dall'inizio: se quel
+  /// primo match "testualmente compatibile" era un blocco ADIACENTE a
+  /// quello realmente selezionato (tipicamente la riga subito sopra o
+  /// subito sotto, essendo il caso più probabile di testo duplicato), la
+  /// compensazione di scroll in `_swapPreservingScrollAnchor` veniva
+  /// calcolata sulla geometria del blocco SBAGLIATO — da qui lo scarto di
+  /// circa un'altezza di riga riportato. Il calcolo delle altezze/padding in
+  /// sé è corretto (misurato via `RenderBox` reali, non stimato): il difetto
+  /// era a monte, nella scelta di QUALE blocco misurare.
+  ///
+  /// La correzione: tra tutti i blocchi testualmente compatibili, si sceglie
+  /// quello più vicino (per indice) al blocco attualmente in cima alla
+  /// viewport (`_topVisibleBlockIndex`) — un riferimento geometrico reale,
+  /// già disponibile, che rappresenta dove l'utente sta effettivamente
+  /// guardando un istante prima dello swap. Un match esatto (l'intero
+  /// blocco coincide col testo selezionato) resta comunque prioritario e
+  /// univoco, senza bisogno di disambiguazione.
   int? _blockIndexContainingSelection(String selectedPlainText) {
     final blocks = _cachedBlocks;
     final normalizedSelected = selectedPlainText.trim();
     if (blocks == null || normalizedSelected.isEmpty) return null;
 
+    // Riferimento di prossimità: il blocco più vicino al bordo superiore
+    // della viewport nell'istante immediatamente precedente allo swap.
+    final proximityIndex = _topVisibleBlockIndex();
+
+    int? bestIndex;
+    int bestDistance = 1 << 30;
+    void consider(int index) {
+      final distance =
+          proximityIndex == null ? 0 : (index - proximityIndex).abs();
+      if (bestIndex == null || distance < bestDistance) {
+        bestIndex = index;
+        bestDistance = distance;
+      }
+    }
+
+    // 1) Match esatto: il blocco intero coincide col testo selezionato.
+    //    Inequivocabile per costruzione, nessuna disambiguazione necessaria.
+    for (var i = 0; i < blocks.length; i++) {
+      if (_renderedPlainTextFor(blocks[i]).trim() == normalizedSelected) {
+        return i;
+      }
+    }
+
+    // 2) Match per contenimento: si raccolgono TUTTI i blocchi compatibili
+    //    (non ci si ferma al primo) e si sceglie quello geometricamente più
+    //    vicino a dove l'utente si trovava.
     for (var i = 0; i < blocks.length; i++) {
       final normalizedBlock = _renderedPlainTextFor(blocks[i]).trim();
       if (normalizedBlock.isEmpty) continue;
       if (normalizedBlock.contains(normalizedSelected) ||
           normalizedSelected.contains(normalizedBlock)) {
-        return i;
+        consider(i);
       }
     }
-    // Selezione su più blocchi: proviamo con la sola prima riga non vuota,
-    // che dovrebbe comunque appartenere al blocco in cui è partita.
+    if (bestIndex != null) return bestIndex;
+
+    // 3) Fallback sulla sola prima riga non vuota (selezione su più
+    //    blocchi): stessa logica di disambiguazione per prossimità.
     final firstLine = normalizedSelected
         .split('\n')
         .map((l) => l.trim())
         .firstWhere((l) => l.isNotEmpty, orElse: () => '');
     if (firstLine.isEmpty) return null;
     for (var i = 0; i < blocks.length; i++) {
-      if (_renderedPlainTextFor(blocks[i]).contains(firstLine)) return i;
+      if (_renderedPlainTextFor(blocks[i]).contains(firstLine)) {
+        consider(i);
+      }
     }
-    return null;
+    return bestIndex;
   }
 
   /// Blocco attualmente più vicino al bordo superiore della vista:
@@ -331,9 +388,23 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// (`HapticsHelper.reportSelectionState`), così un tap-and-hold in
   /// sola-lettura si comporta in modo coerente con quello nel campo di
   /// modifica, invece di introdurre una logica aptica parallela.
+  ///
+  /// IMPORTANTE: `hasSelection` NON usa `.trim()` sul testo selezionato.
+  /// Un `SelectedContent` che contiene SOLO spazi/ritorni a capo (es. un
+  /// doppio-tap che atterra esattamente su uno spazio tra due parole, o un
+  /// drag che parte da un margine/riga vuota) è comunque una selezione
+  /// attiva agli occhi di `SelectionArea`: se la trattassimo come "nessuna
+  /// selezione" (con `.trim().isNotEmpty`, come nella versione precedente),
+  /// quel primo tratto di gesture continuerebbe a operare sul substrato
+  /// FORMATTATO — quello con un `Selectable` indipendente per elemento,
+  /// vedi doc di classe — invece di passare subito al `Text` piatto per
+  /// blocco. È esattamente la causa della selezione che "non si aggancia"
+  /// quando tap/drag intercetta whitespace: non è che lo swap arrivi
+  /// tardi, è che la condizione per farlo scattare non veniva mai
+  /// soddisfatta finché la selezione non copriva anche un carattere non di
+  /// spaziatura.
   void _handleSelectionChanged(SelectedContent? content) {
-    final hasSelection =
-        content != null && content.plainText.trim().isNotEmpty;
+    final hasSelection = content != null && content.plainText.isNotEmpty;
     HapticsHelper.reportSelectionState(isCollapsed: !hasSelection);
 
     if (hasSelection) {
@@ -1018,14 +1089,42 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 /// Il blocco cambia letteralmente tipo di widget a ogni scambio
 /// (`MarkdownBody` ↔ `Text`): Flutter lo smonta e ne monta uno nuovo, non
 /// esiste un "morph" continuo tra i due. Questo widget sfrutta esattamente
-/// quel nuovo montaggio — parte da opacità zero in `initState` e sale a 1 in
-/// pochi millisecondi — così quello che altrimenti sarebbe un taglio netto
-/// diventa una dissolvenza breve e naturale. È SICURO farlo qui, a
-/// differenza di un `AnimatedSwitcher`/crossfade tradizionale: non tiene mai
-/// in vita contemporaneamente il widget vecchio E quello nuovo (il vecchio è
-/// già stato smontato, con il proprio `Selectable`, prima che questo venga
-/// creato), quindi non introduce mai due `Selectable` sovrapposti per lo
-/// stesso blocco — che avrebbe rotto la selezione seamless.
+/// quel nuovo montaggio — parte da opacità alta (non zero, vedi sotto) e
+/// sale a 1 in pochi millisecondi — così quello che altrimenti sarebbe un
+/// taglio netto diventa una dissolvenza breve e naturale. È SICURO farlo
+/// qui, a differenza di un `AnimatedSwitcher`/crossfade tradizionale: non
+/// tiene mai in vita contemporaneamente il widget vecchio E quello nuovo (il
+/// vecchio è già stato smontato, con il proprio `Selectable`, prima che
+/// questo venga creato), quindi non introduce mai due `Selectable`
+/// sovrapposti per lo stesso blocco — che avrebbe rotto la selezione
+/// seamless.
+///
+/// PERCHÉ NON SI PARTE DA OPACITÀ ZERO (fix del flash da un frame): un
+/// `AnimationController` con `.forward()` chiamato nel costruttore/
+/// inizializzatore del `late final` NON avanza sincronamente — il suo primo
+/// tick reale arriva dal `Ticker` solo al FRAME SUCCESSIVO, schedulato dallo
+/// scheduler. Il primissimo `build()` di questo `State` (quello eseguito
+/// nello stesso frame in cui il blocco viene montato, insieme allo smontaggio
+/// del blocco precedente) vede quindi ancora `_controller.value == 0.0`. Se
+/// quel valore venisse usato direttamente come opacità (`FadeTransition(
+/// opacity: _controller, ...)`, come nella versione precedente), quel primo
+/// frame dipingerebbe il blocco a opacità ESATTAMENTE zero — completamente
+/// trasparente — lasciando intravedere per un singolo frame lo sfondo
+/// sottostante (Scaffold/superficie): esattamente il "flash" riportato,
+/// percepibile solo nei rari casi in cui lo swap capita ad allinearsi in
+/// modo sfavorevole con il refresh dello schermo.
+///
+/// La correzione non è "aspettare" il primo tick (il problema è proprio che
+/// il primissimo frame dipinto usa il valore pre-tick, qualunque sia il
+/// momento in cui `.forward()` viene invocato): è rimappare il range
+/// dell'`AnimationController` — che PARTE sempre da 0.0, per definizione —
+/// su un intervallo di opacità che non tocca mai lo zero. Un
+/// `Tween(begin: 0.55, end: 1.0)` fa sì che il valore "pre-tick" (0.0)
+/// produca un'opacità reale dello 0.55, non 0: percettivamente un blocco già
+/// quasi completamente visibile fin dal primissimo frame, che poi rifinisce
+/// la dissolvenza fino a piena opacità nei successivi ~110ms — nessun frame
+/// realmente trasparente, quindi nessun fotogramma di sfondo "nudo" da
+/// intravedere.
 class _FadeInOnMount extends StatefulWidget {
   final Widget child;
 
@@ -1042,6 +1141,15 @@ class _FadeInOnMountState extends State<_FadeInOnMount>
     duration: const Duration(milliseconds: 110),
   )..forward();
 
+  // Vedi doc di classe: il Tween rimappa il valore "pre-tick" del
+  // controller (sempre 0.0 sul primissimo frame dipinto) su un'opacità
+  // reale di 0.55 invece che 0.0, eliminando il singolo frame
+  // completamente trasparente che causava il flash.
+  late final Animation<double> _opacity = Tween<double>(
+    begin: 0.55,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+
   @override
   void dispose() {
     _controller.dispose();
@@ -1050,7 +1158,7 @@ class _FadeInOnMountState extends State<_FadeInOnMount>
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(opacity: _controller, child: widget.child);
+    return FadeTransition(opacity: _opacity, child: widget.child);
   }
 }
 

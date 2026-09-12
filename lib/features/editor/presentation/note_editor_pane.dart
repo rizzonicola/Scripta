@@ -240,8 +240,21 @@ class _ReadOnlyNoteView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final activeNote = ref.watch(activeNoteProvider);
-    if (activeNote == null) return const SizedBox.shrink();
+    // `.select` su (titolo, contenuto) invece dell'intero `NoteModel`:
+    // `activeNoteProvider` restituisce una nuova istanza di `NoteModel` ad
+    // OGNI aggiornamento della nota attiva (`NoteModel` non ha `==` per
+    // valore, vedi note_model.dart), incluse modifiche a campi che questo
+    // widget non usa affatto per il rendering (pin, cartella, ordine...).
+    // Un record `(String, String)` ha invece uguaglianza strutturale nativa
+    // in Dart: questa vista si ricostruisce quindi solo quando titolo o
+    // contenuto della nota attiva cambiano davvero, non per ogni tocco del
+    // modello — a valle, `MarkdownRenderedView`/`NoteSearchHighlightedView`
+    // restano comunque gli unici responsabili di riparsing/caching pesanti.
+    final activeNoteTitleContent = ref.watch(
+      activeNoteProvider.select((n) => n == null ? null : (n.title, n.content)),
+    );
+    if (activeNoteTitleContent == null) return const SizedBox.shrink();
+    final (title, content) = activeNoteTitleContent;
 
     // Mentre la ricerca interna è attiva con un termine non vuoto, si mostra
     // la vista dedicata con le occorrenze evidenziate (vedi doc di classe di
@@ -254,14 +267,14 @@ class _ReadOnlyNoteView extends ConsumerWidget {
     );
     if (isSearching) {
       return NoteSearchHighlightedView(
-        title: activeNote.title,
-        content: activeNote.content,
+        title: title,
+        content: content,
       );
     }
 
     return MarkdownRenderedView(
-      title: activeNote.title,
-      content: activeNote.content,
+      title: title,
+      content: content,
     );
   }
 }

@@ -262,20 +262,28 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
-    final settings = ref.watch(settingsProvider);
+    // `.select` sui soli campi che influenzano davvero questo widget
+    // (font/size/line-height): coerente con lo stesso pattern già usato in
+    // `MarkdownRenderedView` per la vista di sola lettura. Un cambio di
+    // tema, lingua, accento o intensità haptic nelle Impostazioni non
+    // invalida più questo campo di editing (con relativo `TextField`,
+    // scroll controller, ecc.) mentre l'utente sta scrivendo altrove.
+    final (fontFamily, fontSize, lineHeight) = ref.watch(
+      settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
+    );
 
     final titleStyle = AppTheme.getTextStyleForFont(
-      settings.fontFamily,
-      fontSize: settings.fontSize * 2.0,
+      fontFamily,
+      fontSize: fontSize * 2.0,
       fontWeight: FontWeight.w800,
       color: theme.colorScheme.onSurface,
       height: 1.25,
     );
 
     final contentStyle = AppTheme.getTextStyleForFont(
-      settings.fontFamily,
-      fontSize: settings.fontSize,
-      height: settings.lineHeight,
+      fontFamily,
+      fontSize: fontSize,
+      height: lineHeight,
       color: theme.colorScheme.onSurface,
     );
 
