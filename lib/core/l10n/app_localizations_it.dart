@@ -11,8 +11,6 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get appName => 'Scripta';
 
-  @override
-  String get appTagline => 'Note Minimali, Markdown-First';
 
   @override
   String get allNotes => 'Tutte le Note';
@@ -75,11 +73,10 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get edit => 'Modifica';
 
-  @override
-  String get modeReadOnly => 'Modalità Sola Lettura';
+
 
   @override
-  String get modeEdit => 'Modalità Modifica';
+  String get modeReadOnly => 'Modalità Sola Lettura';
 
   @override
   String get focusMode => 'Modalità Focus';
@@ -123,8 +120,6 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get codeBlock => 'Blocco di Codice';
 
-  @override
-  String get copyCode => 'Copia codice';
 
   @override
   String get codeCopied => 'Copiato!';
@@ -150,29 +145,13 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get themePalette => 'Palette Colori';
 
-  @override
-  String get themeDarkTeal => 'Scripta Dark (Verde Acqua)';
 
-  @override
-  String get themeOled => 'OLED Black (Nero Assoluto)';
 
-  @override
-  String get themeNord => 'Nord Frost';
 
-  @override
-  String get themeMidnightPurple => 'Midnight Iris';
 
-  @override
-  String get themeForest => 'Pine & Sage';
 
-  @override
-  String get themeCoffee => 'Warm Espresso';
 
-  @override
-  String get themeCleanLight => 'Scripta Light';
 
-  @override
-  String get themeSolarizedLight => 'Warm Paper';
 
   @override
   String get sortBy => 'Ordina per';

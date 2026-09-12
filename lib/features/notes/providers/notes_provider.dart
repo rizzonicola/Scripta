@@ -281,11 +281,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
   NoteModel? get activeNote {
     if (state.activeNoteId == null) return null;
-    try {
-      return state.notes.firstWhere((n) => n.id == state.activeNoteId);
-    } catch (_) {
-      return state.notes.isNotEmpty ? state.notes.first : null;
+    for (final note in state.notes) {
+      if (note.id == state.activeNoteId) return note;
     }
+    return state.notes.isNotEmpty ? state.notes.first : null;
   }
 
   void selectNote(String? id) {
@@ -504,11 +503,10 @@ final activeNoteProvider = Provider<NoteModel?>((ref) {
   final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
   if (activeNoteId == null) return null;
   final notes = ref.watch(notesProvider.select((s) => s.notes));
-  try {
-    return notes.firstWhere((n) => n.id == activeNoteId);
-  } catch (_) {
-    return notes.isNotEmpty ? notes.first : null;
+  for (final note in notes) {
+    if (note.id == activeNoteId) return note;
   }
+  return notes.isNotEmpty ? notes.first : null;
 });
 
 /// Provider for filtered notes based on folder and search query.

@@ -106,11 +106,6 @@ abstract class AppLocalizations {
   /// **'Scripta'**
   String get appName;
 
-  /// No description provided for @appTagline.
-  ///
-  /// In en, this message translates to:
-  /// **'Minimal, Markdown-First Notes'**
-  String get appTagline;
 
   /// No description provided for @allNotes.
   ///
@@ -232,17 +227,13 @@ abstract class AppLocalizations {
   /// **'Edit'**
   String get edit;
 
+
+
   /// No description provided for @modeReadOnly.
   ///
   /// In en, this message translates to:
   /// **'Read-Only Mode'**
   String get modeReadOnly;
-
-  /// No description provided for @modeEdit.
-  ///
-  /// In en, this message translates to:
-  /// **'Edit Mode'**
-  String get modeEdit;
 
   /// No description provided for @focusMode.
   ///
@@ -328,11 +319,6 @@ abstract class AppLocalizations {
   /// **'Code Block'**
   String get codeBlock;
 
-  /// No description provided for @copyCode.
-  ///
-  /// In en, this message translates to:
-  /// **'Copy code'**
-  String get copyCode;
 
   /// No description provided for @codeCopied.
   ///
@@ -382,53 +368,13 @@ abstract class AppLocalizations {
   /// **'Color Theme'**
   String get themePalette;
 
-  /// No description provided for @themeDarkTeal.
-  ///
-  /// In en, this message translates to:
-  /// **'Scripta Dark (Teal)'**
-  String get themeDarkTeal;
 
-  /// No description provided for @themeOled.
-  ///
-  /// In en, this message translates to:
-  /// **'OLED Black'**
-  String get themeOled;
 
-  /// No description provided for @themeNord.
-  ///
-  /// In en, this message translates to:
-  /// **'Nord Frost'**
-  String get themeNord;
 
-  /// No description provided for @themeMidnightPurple.
-  ///
-  /// In en, this message translates to:
-  /// **'Midnight Iris'**
-  String get themeMidnightPurple;
 
-  /// No description provided for @themeForest.
-  ///
-  /// In en, this message translates to:
-  /// **'Pine & Sage'**
-  String get themeForest;
 
-  /// No description provided for @themeCoffee.
-  ///
-  /// In en, this message translates to:
-  /// **'Warm Espresso'**
-  String get themeCoffee;
 
-  /// No description provided for @themeCleanLight.
-  ///
-  /// In en, this message translates to:
-  /// **'Scripta Light'**
-  String get themeCleanLight;
 
-  /// No description provided for @themeSolarizedLight.
-  ///
-  /// In en, this message translates to:
-  /// **'Warm Paper'**
-  String get themeSolarizedLight;
 
   /// No description provided for @sortBy.
   ///
