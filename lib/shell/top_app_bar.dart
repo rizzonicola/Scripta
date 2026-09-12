@@ -6,6 +6,8 @@ import '../core/theme/color_schemes.dart';
 import '../core/utils/responsive_breakpoints.dart';
 import '../features/editor/models/editor_state_model.dart';
 import '../features/editor/providers/editor_provider.dart';
+import '../features/editor/providers/note_search_provider.dart';
+import '../features/notes/providers/notes_provider.dart';
 import '../features/settings/presentation/settings_view.dart';
 import '../features/sync/providers/sync_provider.dart';
 
@@ -32,9 +34,21 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
     // l'intera TopAppBar per cambi di editorProvider che non riguardano
     // questo widget (es. canUndo/canRedo, isFocusMode).
     final editorMode = ref.watch(editorProvider.select((s) => s.mode));
-    final isDesktop = ResponsiveBreakpoints.isDesktop(context);
+    final screenType = ResponsiveBreakpoints.getScreenType(context);
+    final isDesktop = screenType == DeviceScreenType.desktop;
     final screenWidth = MediaQuery.sizeOf(context).width;
     final compactMode = screenWidth < 520;
+
+    // Icona di ricerca INTERNA alla nota (distinta dal campo di ricerca
+    // globale/per-cartella già presente in `NotesListView`): ha senso solo
+    // quando il pannello editor è realmente a schermo, cioè sempre su
+    // desktop/tablet (dove è mostrato fianco a fianco alla lista note) e
+    // solo nella vista editor su mobile (`showBackButton` è vero
+    // esattamente in quel caso, vedi `AdaptiveAppShell`).
+    final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
+    final isNoteSearchActive = ref.watch(noteSearchProvider.select((s) => s.isActive));
+    final showNoteSearchButton =
+        activeNoteId != null && (screenType != DeviceScreenType.mobile || showBackButton);
 
     return Container(
       decoration: BoxDecoration(
@@ -123,6 +137,27 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     ],
                   ),
                 ),
+
+                // In-Note Search Toggle (find/highlight occurrences within the open note)
+                if (showNoteSearchButton) ...[
+                  const SizedBox(width: 2),
+                  IconButton(
+                    icon: Icon(
+                      isNoteSearchActive ? Icons.search_off_rounded : Icons.search_rounded,
+                      size: 20,
+                    ),
+                    tooltip: l10n.searchInNote,
+                    visualDensity: VisualDensity.compact,
+                    color: isNoteSearchActive ? theme.colorScheme.primary : null,
+                    onPressed: () {
+                      if (isNoteSearchActive) {
+                        ref.read(noteSearchProvider.notifier).close();
+                      } else {
+                        ref.read(noteSearchProvider.notifier).open();
+                      }
+                    },
+                  ),
+                ],
 
                 // Focus Mode Toggle (distraction-free, accessible on both desktop and Android)
                 const SizedBox(width: 4),

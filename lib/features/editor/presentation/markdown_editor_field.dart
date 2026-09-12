@@ -12,6 +12,16 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
   final ValueChanged<String>? onTitleChanged;
   final ValueChanged<String>? onContentChanged;
 
+  /// Occorrenza attiva della ricerca interna alla nota (vedi
+  /// `note_search_provider.dart`), o `null` se la ricerca non è attiva /
+  /// non ha risultati. Non viene usata per disegnare l'evidenziazione (di
+  /// quella si occupa già `widget.contentController`, quando è un
+  /// `SearchHighlightingTextEditingController` — vedi `note_editor_pane.dart`):
+  /// serve SOLO a sapere QUANDO e VERSO DOVE scrollare automaticamente il
+  /// campo di modifica, cosicché il punto trovato sia sempre visibile senza
+  /// che l'utente debba scorrere manualmente (vedi [_scrollToActiveMatch]).
+  final TextRange? activeSearchMatch;
+
   const MarkdownEditorField({
     super.key,
     required this.titleController,
@@ -19,6 +29,7 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
     this.undoController,
     this.onTitleChanged,
     this.onContentChanged,
+    this.activeSearchMatch,
   });
 
   @override
@@ -116,6 +127,16 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   late _SelectionHapticBinder _titleHaptics;
   late _SelectionHapticBinder _contentHaptics;
 
+  // Riferimenti propri (non condivisi col chiamante) usati SOLO per portare
+  // a schermo automaticamente l'occorrenza attiva della ricerca interna
+  // (vedi [_scrollToActiveMatch]): uno `ScrollController` esplicito sullo
+  // `SingleChildScrollView` che avvolge titolo + contenuto, e una chiave sul
+  // campo di contenuto per poterne misurare la posizione reale al suo
+  // interno.
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _scrollViewKey = GlobalKey();
+  final GlobalKey _contentFieldKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -127,6 +148,10 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
       widget.contentController,
       () => ref.read(settingsProvider).hapticIntensity,
     );
+
+    if (widget.activeSearchMatch != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToActiveMatch());
+    }
   }
 
   @override
@@ -150,13 +175,87 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
         () => ref.read(settingsProvider).hapticIntensity,
       );
     }
+
+    // Nuova occorrenza attiva (ricerca appena aperta, avanzamento
+    // Avanti/Indietro, o nuova nota aperta già con un termine impostato):
+    // portala a schermo. `TextRange` ha uguaglianza per valore, quindi
+    // questo confronto individua correttamente sia un cambio di posizione
+    // sia una transizione da "nessuna occorrenza attiva" a "una c'è".
+    if (widget.activeSearchMatch != null &&
+        widget.activeSearchMatch != oldWidget.activeSearchMatch) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToActiveMatch());
+    }
   }
 
   @override
   void dispose() {
     _titleHaptics.dispose();
     _contentHaptics.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Calcola la posizione verticale REALE (non stimata) dell'inizio
+  /// dell'occorrenza attiva all'interno del campo di contenuto e scrolla
+  /// [_scrollController] fino a portarla in vista.
+  ///
+  /// Deliberatamente NON usa `widget.contentController.selection` +
+  /// focus per sfruttare l'auto-scroll nativo di `EditableText` verso il
+  /// cursore: farlo assegnerebbe una selezione "vera" al controller, che
+  /// verrebbe intercettata da `_SelectionHapticBinder` (vedi sopra) come se
+  /// l'utente avesse selezionato del testo, producendo un feedback aptico
+  /// spurio ad ogni avanzamento tra le occorrenze — oltre a poter aprire la
+  /// tastiera software su mobile solo per "guardare" un risultato di
+  /// ricerca. Il calcolo qui sotto è invece basato su geometria realmente
+  /// disposta da Flutter (dimensioni effettive del campo, `TextPainter` con
+  /// lo stesso identico stile del testo reso), non su un'euristica a pixel
+  /// fissi per riga.
+  void _scrollToActiveMatch() {
+    final match = widget.activeSearchMatch;
+    if (match == null || !mounted) return;
+    if (!_scrollController.hasClients) return;
+
+    final viewportBox = _scrollViewKey.currentContext?.findRenderObject();
+    final fieldBox = _contentFieldKey.currentContext?.findRenderObject();
+    if (viewportBox is! RenderBox || !viewportBox.attached) return;
+    if (fieldBox is! RenderBox || !fieldBox.attached) return;
+
+    final fieldTopInViewport = fieldBox.localToGlobal(Offset.zero, ancestor: viewportBox).dy;
+    final fieldTopAbsolute = _scrollController.offset + fieldTopInViewport;
+
+    final settings = ref.read(settingsProvider);
+    final contentStyle = AppTheme.getTextStyleForFont(
+      settings.fontFamily,
+      fontSize: settings.fontSize,
+      height: settings.lineHeight,
+    );
+
+    final fullText = widget.contentController.text;
+    final matchStart = match.start.clamp(0, fullText.length);
+    final textBeforeMatch = fullText.substring(0, matchStart);
+
+    final painter = TextPainter(
+      text: TextSpan(text: textBeforeMatch, style: contentStyle),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: fieldBox.size.width);
+
+    // Punto verticale (relativo all'inizio del campo) in cui inizia
+    // l'occorrenza: l'altezza del testo che la precede, con lo stesso
+    // wrapping/stile del testo reale nel campo.
+    final matchOffsetWithinField = painter.height;
+    painter.dispose();
+
+    // Centra l'occorrenza leggermente sopra al centro della viewport
+    // (30% dall'alto), invece che esattamente al bordo superiore: lascia
+    // un po' di contesto visibile sopra al risultato trovato.
+    final target = (fieldTopAbsolute + matchOffsetWithinField - viewportBox.size.height * 0.3)
+        .clamp(0.0, _scrollController.position.maxScrollExtent);
+
+    _scrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeInOut,
+    );
   }
 
   @override
@@ -181,6 +280,8 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
     );
 
     return SingleChildScrollView(
+      key: _scrollViewKey,
+      controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(28, 20, 28, 96),
       child: Center(
         child: ConstrainedBox(
@@ -214,20 +315,23 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
               const SizedBox(height: 16),
 
               // Markdown Body Field
-              TextField(
-                controller: widget.contentController,
-                undoController: widget.undoController,
-                onChanged: widget.onContentChanged,
-                style: contentStyle,
-                maxLines: null,
-                keyboardType: TextInputType.multiline,
-                decoration: InputDecoration(
-                  hintText: l10n.writeMarkdownHere,
-                  hintStyle: contentStyle.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
+              Container(
+                key: _contentFieldKey,
+                child: TextField(
+                  controller: widget.contentController,
+                  undoController: widget.undoController,
+                  onChanged: widget.onContentChanged,
+                  style: contentStyle,
+                  maxLines: null,
+                  keyboardType: TextInputType.multiline,
+                  decoration: InputDecoration(
+                    hintText: l10n.writeMarkdownHere,
+                    hintStyle: contentStyle.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
                   ),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
                 ),
               ),
             ],

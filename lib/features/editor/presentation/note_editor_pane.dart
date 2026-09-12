@@ -5,11 +5,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../notes/providers/notes_provider.dart';
 import '../models/editor_state_model.dart';
+import '../models/search_highlighting_text_controller.dart';
 import '../providers/editor_provider.dart';
+import '../providers/note_search_provider.dart';
 import 'focus_mode_exit_button.dart';
 import 'markdown_editor_field.dart';
 import 'markdown_rendered_view.dart';
 import 'markdown_toolbar.dart';
+import 'note_search_bar.dart';
+import 'note_search_highlighted_view.dart';
 import '../../sync/providers/sync_provider.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
@@ -21,7 +25,14 @@ class NoteEditorPane extends ConsumerStatefulWidget {
 
 class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   late final TextEditingController _titleController;
-  late final TextEditingController _contentController;
+
+  // Tipizzato sul sottotipo (non sulla classe base `TextEditingController`)
+  // così da poter chiamare `.setMatches(...)` qui sotto senza cast: resta
+  // comunque un `TextEditingController` a tutti gli effetti per
+  // `MarkdownToolbar`/`MarkdownEditorField`/`UndoHistoryController`, che
+  // continuano a riceverlo tipizzato sulla classe base (vedi doc di
+  // [SearchHighlightingTextEditingController] per il razionale completo).
+  late final SearchHighlightingTextEditingController _contentController;
   late final UndoHistoryController _undoController;
 
   String? _currentNoteId;
@@ -30,7 +41,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   void initState() {
     super.initState();
     _titleController = TextEditingController();
-    _contentController = TextEditingController();
+    _contentController = SearchHighlightingTextEditingController();
     _undoController = UndoHistoryController();
 
     // Initial note load
@@ -40,6 +51,18 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _titleController.text = activeNote.title;
       _contentController.text = activeNote.content;
     }
+
+    // Seed iniziale dell'evidenziazione: `ref.listen` in `build()` (vedi
+    // sotto) propaga solo i CAMBIAMENTI successivi alla sua registrazione,
+    // non lo stato già presente al momento del mount. Se questo pannello
+    // viene montato per la prima volta con una ricerca già attiva (es.
+    // navigazione da un risultato della ricerca globale, che imposta
+    // `noteSearchProvider` PRIMA che questo widget venga inserito
+    // nell'albero — vedi `notes_list_view.dart`), senza questo seed
+    // esplicito l'evidenziazione comparirebbe solo al successivo cambio di
+    // occorrenza attiva, non subito all'apertura.
+    final initialHighlight = ref.read(noteSearchHighlightDataProvider);
+    _contentController.setMatches(initialHighlight.$1, initialHighlight.$2);
   }
 
   @override
@@ -84,9 +107,24 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _onActiveNoteIdChanged,
     );
 
+    // Propaga occorrenze + indice attivo della ricerca interna al
+    // controller custom del campo di contenuto (vedi
+    // `SearchHighlightingTextEditingController`), che se ne occupa per
+    // disegnare l'evidenziazione. Fatto tramite `ref.listen` (non
+    // `ref.watch` + chiamata diretta durante `build`): `setMatches`
+    // notifica i propri listener (il `TextField` sottostante), e farlo
+    // sincronamente DURANTE il build di questo widget rischierebbe un
+    // "setState durante il build" in quel campo — `ref.listen` esegue
+    // invece il callback subito DOPO che il build corrente è completato.
+    ref.listen<NoteSearchHighlightData>(noteSearchHighlightDataProvider, (previous, next) {
+      _contentController.setMatches(next.$1, next.$2);
+    });
+
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
     final editorMode = ref.watch(editorProvider.select((s) => s.mode));
     final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
+    final isNoteSearchActive = ref.watch(noteSearchProvider.select((s) => s.isActive));
+    final activeSearchMatch = ref.watch(activeNoteSearchMatchProvider);
 
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
@@ -138,6 +176,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Barra di ricerca interna alla nota (vedi note_search_bar.dart):
+            // funziona identicamente sopra a entrambe le modalità sotto,
+            // quindi vive qui, fuori dall'AnimatedSwitcher Modifica/Lettura.
+            if (isNoteSearchActive) const NoteSearchBar(),
+
             // Toolbar (visible only in Edit Mode when NOT in Focus Mode)
             if (editorMode == EditorMode.edit && !isFocusMode) ...[
               MarkdownToolbar(
@@ -162,6 +205,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                           titleController: _titleController,
                           contentController: _contentController,
                           undoController: _undoController,
+                          activeSearchMatch: activeSearchMatch,
                           onTitleChanged: (val) {
                             ref.read(notesProvider.notifier).updateNote(
                                   activeNoteId,
@@ -198,6 +242,23 @@ class _ReadOnlyNoteView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeNote = ref.watch(activeNoteProvider);
     if (activeNote == null) return const SizedBox.shrink();
+
+    // Mentre la ricerca interna è attiva con un termine non vuoto, si mostra
+    // la vista dedicata con le occorrenze evidenziate (vedi doc di classe di
+    // `NoteSearchHighlightedView` per il perché non viene invece iniettata
+    // l'evidenziazione dentro `MarkdownRenderedView`). Non appena il
+    // pannello si chiude, o il termine viene svuotato, si torna
+    // trasparentemente al rendering Markdown formattato di sempre.
+    final isSearching = ref.watch(
+      noteSearchProvider.select((s) => s.isActive && s.query.trim().isNotEmpty),
+    );
+    if (isSearching) {
+      return NoteSearchHighlightedView(
+        title: activeNote.title,
+        content: activeNote.content,
+      );
+    }
+
     return MarkdownRenderedView(
       title: activeNote.title,
       content: activeNote.content,

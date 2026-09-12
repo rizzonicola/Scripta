@@ -17,6 +17,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/database/notes_dao.dart';
+import '../../folders/models/folder_node.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../models/note_model.dart';
 
@@ -524,7 +525,15 @@ final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
   var filtered = notes;
 
   if (selectedFolderId != null) {
-    filtered = filtered.where((n) => n.folderId == selectedFolderId).toList();
+    // La ricerca "per cartella" include l'intero sottoalbero (la cartella
+    // selezionata più TUTTE le sue sottocartelle, ricorsivamente), non solo
+    // le note con `folderId` esattamente uguale a quello selezionato: vedi
+    // FolderNode.collectSubtreeIds. Coerente con FolderTreeView, che mostra
+    // già le sottocartelle annidate visivamente sotto il genitore, non come
+    // sezioni indipendenti.
+    final rootFolders = ref.watch(folderProvider.select((s) => s.rootFolders));
+    final scopeIds = FolderNode.collectSubtreeIds(rootFolders, selectedFolderId);
+    filtered = filtered.where((n) => n.folderId != null && scopeIds.contains(n.folderId)).toList();
   }
 
   if (searchQuery.trim().isNotEmpty) {

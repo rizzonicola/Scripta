@@ -873,6 +873,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'GitHub Repository'**
   String get githubRepo;
+
+  /// No description provided for @searchInNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Search in note...'**
+  String get searchInNote;
+
+  /// No description provided for @previousMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous match'**
+  String get previousMatch;
+
+  /// No description provided for @nextMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Next match'**
+  String get nextMatch;
+
+  /// No description provided for @closeSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Close search'**
+  String get closeSearch;
+
+  /// No description provided for @noMatchesFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No matches'**
+  String get noMatchesFound;
 }
 
 class _AppLocalizationsDelegate

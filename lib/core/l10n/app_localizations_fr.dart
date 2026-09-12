@@ -414,4 +414,19 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get githubRepo => 'Dépôt GitHub';
+
+  @override
+  String get searchInNote => 'Rechercher dans la note...';
+
+  @override
+  String get previousMatch => 'Correspondance précédente';
+
+  @override
+  String get nextMatch => 'Correspondance suivante';
+
+  @override
+  String get closeSearch => 'Fermer la recherche';
+
+  @override
+  String get noMatchesFound => 'Aucun résultat';
 }

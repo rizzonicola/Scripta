@@ -411,4 +411,19 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get githubRepo => 'Repository GitHub';
+
+  @override
+  String get searchInNote => 'Cerca nella nota...';
+
+  @override
+  String get previousMatch => 'Corrispondenza precedente';
+
+  @override
+  String get nextMatch => 'Corrispondenza successiva';
+
+  @override
+  String get closeSearch => 'Chiudi ricerca';
+
+  @override
+  String get noMatchesFound => 'Nessun risultato';
 }

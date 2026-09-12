@@ -128,5 +128,10 @@
   "creditFonts": "Typographie JetBrains Mono & Inter",
   "creditSyncArchive": "Synchronisation API REST & compression ZIP",
   "replayTutorial": "Revoir le Tutoriel Initial",
-  "githubRepo": "Dépôt GitHub"
+  "githubRepo": "Dépôt GitHub",
+  "searchInNote": "Rechercher dans la note...",
+  "previousMatch": "Correspondance précédente",
+  "nextMatch": "Correspondance suivante",
+  "closeSearch": "Fermer la recherche",
+  "noMatchesFound": "Aucun résultat"
 }

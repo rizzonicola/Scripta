@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/color_schemes.dart';
+import '../../editor/providers/note_search_provider.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
@@ -50,6 +51,27 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
       if (!mounted) return;
       ref.read(notesProvider.notifier).setSearchQuery(value);
     });
+  }
+
+  /// Apre [note], propagando l'eventuale termine di ricerca globale/per
+  /// cartella attualmente digitato (vedi `NotesState.searchQuery`) alla
+  /// ricerca interna alla nota: le occorrenze risultano così già
+  /// evidenziate non appena l'editor si apre, invece di richiedere
+  /// all'utente di riscrivere lo stesso termine una seconda volta.
+  ///
+  /// Se non c'è alcuna ricerca globale in corso, si limita a selezionare la
+  /// nota: un eventuale pannello di ricerca interna già aperto in
+  /// precedenza (su un'altra nota) resta semplicemente invariato — si
+  /// comporta come un "Trova" persistente, vedi `NoteSearchNotifier.open`.
+  void _openNote(NoteModel note) {
+    ref.read(notesProvider.notifier).selectNote(note.id);
+
+    final globalQuery = ref.read(notesProvider).searchQuery.trim();
+    if (globalQuery.isNotEmpty) {
+      ref.read(noteSearchProvider.notifier).open(initialQuery: globalQuery);
+    }
+
+    widget.onNoteSelected?.call(note);
   }
 
   Widget _buildSortMenu(BuildContext context, AppLocalizations l10n, ThemeData theme, NoteSortOrder activeSort) {
@@ -303,12 +325,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                             isSelected: isSelected,
                             showDragHandle: true,
                             dragIndex: index,
-                            onTap: () {
-                              ref
-                                  .read(notesProvider.notifier)
-                                  .selectNote(note.id);
-                              widget.onNoteSelected?.call(note);
-                            },
+                            onTap: () => _openNote(note),
                           );
                         },
                       )
@@ -324,10 +341,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                             note: note,
                             isSelected: isSelected,
                             showDragHandle: false,
-                            onTap: () {
-                              ref.read(notesProvider.notifier).selectNote(note.id);
-                              widget.onNoteSelected?.call(note);
-                            },
+                            onTap: () => _openNote(note),
                           );
                         },
                       ),
