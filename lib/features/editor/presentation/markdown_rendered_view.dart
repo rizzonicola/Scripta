@@ -31,24 +31,11 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final ScrollController _scrollController = ScrollController();
 
-  // VERSIONE A — auto-selezione: `SelectableText` non espone alcun modo per
-  // impostare una selezione dall'esterno una volta costruito. Un
-  // `TextEditingController` sì (`controller.selection = ...`), quindi la
-  // vista grezza usa un `EditableText` in sola lettura invece di
-  // `SelectableText`. Non `TextField`: `TextField` incapsula il proprio
-  // `EditableText` internamente senza esporne la `GlobalKey`, e senza quella
-  // chiave non è possibile chiamare `showToolbar()`/`bringIntoView()` per
-  // mostrare la barra di selezione (copia, seleziona tutto...) e scrollare
-  // la parola auto-selezionata in vista — i due problemi segnalati. Usando
-  // `EditableText` direttamente, la chiave è nostra fin dall'inizio.
   final TextEditingController _rawTextController = TextEditingController();
   final FocusNode _rawFocusNode = FocusNode();
   final GlobalKey<EditableTextState> _rawEditableTextKey =
       GlobalKey<EditableTextState>();
   TextSelection? _pendingRawSelection;
-  // Coordinata Y globale dell'ultimo tocco iniziato in formattato — usata
-  // per allineare la parola auto-selezionata esattamente lì dove il dito
-  // si trovava, non genericamente "in una posizione visibile qualunque".
   double? _lastPointerGlobalY;
 
   bool _isRawMode = false;
@@ -70,18 +57,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     super.dispose();
   }
 
-  /// Cerca, nel testo grezzo completo, la stessa parola selezionata in
-  /// formattato, così da farla apparire già selezionata al cambio di
-  /// modalità — il comportamento "normale" di un tap-and-hold, che seleziona
-  /// subito la parola sotto il dito invece di limitarsi a cambiare vista.
-  ///
-  /// La parola può comparire più volte nel documento: tra le occorrenze si
-  /// sceglie quella più vicina, in proporzione, alla posizione da cui
-  /// l'utente stava guardando — stimata dal rapporto tra scroll attuale e
-  /// scroll massimo nella vista formattata. È un'approssimazione (non una
-  /// mappatura pixel-per-pixel come quella usata per l'ancoraggio dello
-  /// scroll), ma sufficiente a risolvere la stragrande maggioranza dei casi
-  /// pratici di parole ripetute in punti lontani del documento.
   TextSelection? _estimateRawSelection(String fullText, String? selectedText) {
     final word = selectedText?.trim();
     if (word == null || word.isEmpty) return null;
@@ -141,13 +116,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       final pending = _pendingRawSelection;
       if (pending == null) return;
 
-      // Il focus viene richiesto QUI, un frame prima di assegnare la
-      // selezione (non nello stesso callback): dargli un frame pieno per
-      // stabilirsi prima che la selezione cambi è un margine di sicurezza
-      // in più per far sì che il sistema di selezione/toolbar consideri il
-      // campo pienamente "attivo" nel momento in cui la selezione appare,
-      // invece di trattarla come un cambiamento su un campo non ancora a
-      // fuoco.
       _rawFocusNode.requestFocus();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -155,12 +123,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         _rawTextController.selection = pending;
         _pendingRawSelection = null;
 
-        // Un frame in più ancora: `RenderEditable` deve prima ricalcolare
-        // la propria geometria con la nuova selezione appena assegnata
-        // prima che le sue coordinate (usate sotto per l'allineamento) e
-        // `showToolbar` possano essere affidabili — lo stesso schema che il
-        // framework usa internamente dopo un'operazione che cambia la
-        // selezione (es. `copySelection`).
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           final editableState = _rawEditableTextKey.currentState;
@@ -169,14 +131,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           if (renderEditable != null &&
               fingerY != null &&
               _scrollController.hasClients) {
-            // Allineamento preciso: non "porta in vista da qualche parte",
-            // ma calcola la coordinata Y REALE a cui il carattere
-            // selezionato finirebbe con lo scroll attuale, e corregge lo
-            // scroll della differenza esatta rispetto a dove si trovava il
-            // dito quando il tocco è iniziato. Risolve lo scarto verticale
-            // fra dove appariva la parola in formattato e dove appare in
-            // grezzo, che `bringIntoView` da solo non garantiva (porta
-            // solo "in vista", non alla stessa coordinata del tocco).
             final caretRect = renderEditable.getLocalRectForCaret(
               TextPosition(offset: pending.baseOffset),
             );
@@ -190,18 +144,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
               _scrollController.jumpTo(target);
             }
           } else {
-            // Fallback quando non abbiamo una posizione del dito valida
-            // (es. attivazione da "seleziona tutto", non da un tocco):
-            // almeno garantisce che la parola sia visibile da qualche
-            // parte, invece di lasciarla fuori schermo.
             editableState?.bringIntoView(TextPosition(offset: pending.baseOffset));
           }
 
-          // Mostra esplicitamente barra di selezione (copia, seleziona
-          // tutto...) e maniglie: `EditableText` le mostra automaticamente
-          // solo per un cambio di selezione originato da un vero gesto
-          // dell'utente (tap, long-press...), non per un'assegnazione
-          // programmatica come questa.
           editableState?.showToolbar();
           _lastPointerGlobalY = null;
         });
@@ -238,31 +183,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       final effectiveContent =
           widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
       _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
-      // Tenuto pronto PRIMA che serva: se non lo si aggiornasse qui, al
-      // primo swap verso grezzo l'`EditableText` mostrerebbe per un frame il
-      // testo vecchio (o vuoto) prima di recuperare quello nuovo.
       _rawTextController.text = _fullText;
     }
 
     return PopScope(
-      // SEMPRE `false`, non `!_isRawMode`: con un valore che cambia da un
-      // frame all'altro, un gesto di back continuo (swipe/predictive back)
-      // può essere rivalutato da Android col valore NUOVO di `canPop` —
-      // diventato `true` un istante dopo il nostro `setState` — lasciandolo
-      // passare subito, in coda allo stesso identico gesto che avevamo già
-      // intercettato per tornare a formattato. Da qui il "doppio back" in
-      // un colpo solo. Tenendolo sempre `false` eliminiamo l'ambiguità:
-      // il pop non viene mai lasciato al sistema, decidiamo sempre e solo
-      // noi, esplicitamente, dentro il callback.
+      // canPop fisso a false per gestire in autonomia il comportamento del back ed evitare
+      // che il gesto di indietro rimanga in sospeso chiudendo l'intera pagina in una volta sola.
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (_isRawMode) {
           _revertToFormatted();
         } else {
-          // Contropartita del `canPop: false` fisso: quando siamo già in
-          // formattato e il pop andrebbe davvero lasciato passare (uscire
-          // dalla nota), tocca farlo scattare esplicitamente a noi.
           Navigator.of(context).pop(result);
         }
       },
@@ -272,12 +204,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
-  /// VISTA RAW: un `EditableText` in sola lettura avvolto in un
-  /// `SingleChildScrollView`. Non `TextField`/`SelectableText`: qui serve
-  /// sia poter impostare la selezione dall'esterno (auto-selezione, vedi
-  /// `_switchToRawMode`), sia una `GlobalKey<EditableTextState>` per poter
-  /// chiamare `showToolbar()`/`bringIntoView()` — nessuno dei due widget di
-  /// più alto livello la espone.
   Widget _buildRawView(ThemeData theme, double fontSize, double lineHeight) {
     final monoStyle = GoogleFonts.jetBrainsMono(
       fontSize: fontSize * 0.95,
@@ -303,9 +229,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
                 readOnly: true,
                 enableInteractiveSelection: true,
                 showCursor: false,
-                // `TextField`/`SelectableText` le attivano da sole in base
-                // alla piattaforma; `EditableText` nudo no, va dichiarato
-                // esplicitamente — altrimenti niente maniglie di selezione.
                 showSelectionHandles: true,
                 maxLines: null,
                 style: monoStyle,
@@ -313,10 +236,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
                 backgroundCursorColor: theme.colorScheme.primary,
                 selectionColor:
                     theme.colorScheme.primary.withValues(alpha: 0.35),
-                // La variante "Handle" (non `materialTextSelectionControls`,
-                // deprecata per questo scopo) è quella che effettivamente
-                // coopera con `contextMenuBuilder`: con l'altra,
-                // `contextMenuBuilder` verrebbe silenziosamente ignorato.
                 selectionControls: materialTextSelectionHandleControls,
                 contextMenuBuilder: (context, editableTextState) {
                   return AdaptiveTextSelectionToolbar.editableText(
@@ -345,7 +264,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
-  /// VISTA FORMATTATA: ListView.builder virtualizzata per prestazioni di lettura eccellenti.
   Widget _buildFormattedView(
       ThemeData theme, String fontFamily, double fontSize, double lineHeight) {
     final blocks = _cachedBlocks!;
@@ -353,11 +271,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     final itemCount = (hasTitle ? 1 : 0) + blocks.length;
 
     return Listener(
-      // Cattura la coordinata Y globale nell'istante esatto in cui il dito
-      // tocca lo schermo — prima ancora che `SelectionArea` interpreti il
-      // gesto come tap-and-hold. Non interferisce con la selezione: un
-      // `Listener` non consuma l'evento, lo osserva soltanto, che continua
-      // a raggiungere `SelectionArea` come se non ci fosse.
       onPointerDown: (event) => _lastPointerGlobalY = event.position.dy,
       child: SelectionArea(
         onSelectionChanged: (content) {
@@ -530,15 +443,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
-        // `SizedBox(width: double.infinity)`: senza questo, `MarkdownBody`
-        // si dimensiona sul contenuto della singola riga (essendo ogni
-        // elemento di lista un blocco a sé, vedi `_splitMarkdownIntoBlocks`)
-        // e `Align(topCenter)` lo centra in quello spazio stretto — righe
-        // corte appaiono spostate a destra, righe lunghe restano a filo
-        // sinistro: l'effetto "a scalini" nell'indentazione delle liste.
-        // Forzando la larghezza a riempire il vincolo massimo (840),
-        // ciascun blocco resta sempre allineato a sinistra sullo stesso
-        // margine, indipendentemente da quanto è corto il suo contenuto.
         child: SizedBox(
           width: double.infinity,
           child: Padding(
@@ -941,5 +845,3 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
     );
   }
 }
-
-
