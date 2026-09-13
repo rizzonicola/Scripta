@@ -170,7 +170,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   Brightness? _cachedBrightness;
 
   // --- Stato di selezione "seamless" (vedi doc di classe sopra). ---
-  final ScrollController _scrollController = ScrollController();
+  // NON `final`: viene sostituito con una nuova istanza a ogni swap
+  // formattato/grezzo, vedi `_swapPreservingScrollAnchor` per il perché.
+  ScrollController _scrollController = ScrollController();
   final Map<int, GlobalKey> _blockKeys = {};
   List<Widget>? _cachedRawItems;
   final Map<String, String> _renderedPlainTextCache = {};
@@ -480,26 +482,42 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// una stima "N px per riga": è una differenza tra due geometrie reali già
   /// disposte da Flutter, prima e dopo lo swap.
   ///
-  /// C'è però un problema PRIMA ancora di poter misurare "dopo": lo swap tra
-  /// `ListView.builder` (formattato) e `SingleChildScrollView` (grezzo, vedi
-  /// `_buildListSubtree`) sostituisce l'intero widget scrollabile, non solo
-  /// il suo contenuto. Flutter crea quindi una `ScrollPosition`
-  /// COMPLETAMENTE NUOVA per il nuovo widget, che riparte da offset zero —
-  /// perde cioè il punto di scroll precedente, anche se `_scrollController`
-  /// è lo stesso oggetto Dart. Nel ramo FORMATTATO questo è particolarmente
-  /// dannoso perché è virtualizzato: a offset zero, `ListView.builder`
-  /// costruisce solo i blocchi vicini all'inizio della nota, quindi il
-  /// blocco-ancora (magari a metà nota) semplicemente NON ESISTE ancora nel
-  /// nuovo albero — la misurazione "dopo" fallisce silenziosamente, nessuna
-  /// correzione scatta, e si resta bloccati in cima alla nota.
+  /// C'è però un problema PRIMA ancora di poter misurare "dopo" — ed è la
+  /// causa RADICE del flash bianco (confermato da una registrazione dello
+  /// schermo: un fotogramma con il contenuto sbagliato — un salto a tutt'altra
+  /// sezione della nota — seguito da 1-2 fotogrammi con un velo
+  /// bianco/grigio sull'intero schermo, prima di assestarsi nella posizione
+  /// corretta): lo swap tra `ListView.builder` (formattato) e
+  /// `SingleChildScrollView` (grezzo, vedi `_buildListSubtree`) sostituisce
+  /// l'INTERO widget scrollabile, non solo il suo contenuto. Flutter crea
+  /// quindi una `ScrollPosition` COMPLETAMENTE NUOVA per il nuovo widget —
+  /// che, se non diciamo diversamente, riparte da offset ZERO, cioè dalla
+  /// cima del documento, anche se `_scrollController` resta lo stesso
+  /// oggetto Dart. Da lì nascono, in sequenza, entrambi gli artefatti visti
+  /// nel video:
+  ///  1. Il primo frame del nuovo scrollabile mostra letteralmente la cima
+  ///     del documento — una sezione anche molto distante da quella che
+  ///     l'utente stava guardando — non un "quasi giusto", proprio sbagliato.
+  ///  2. Per rimediare, occorre poi un balzo di scroll grosso (dalla cima
+  ///     fino al punto originale) in un colpo solo: `ListView.builder` deve
+  ///     costruire/disporre di colpo tutti i blocchi attraversati dal balzo,
+  ///     un lavoro pesante concentrato in un singolo frame — è quel lavoro a
+  ///     manifestarsi visivamente come il velo bianco/grigio, non
+  ///     un'animazione di opacità (che infatti è già stata eliminata,
+  ///     vedi la doc su `_buildListSubtree`/blocchi, senza risolvere nulla:
+  ///     non era la causa).
   ///
-  /// Per questo, prima di rifinire con la misurazione esatta, ripristiniamo
-  /// subito l'offset grezzo (lo stesso valore numerico di prima, applicato
-  /// al nuovo `ScrollPosition`): non è preciso al pixel — l'altezza totale
-  /// stimata da `ListView.builder` per i blocchi non ancora costruiti può
-  /// differire leggermente da quella reale — ma è sufficiente a far
-  /// costruire il blocco-ancora nella finestra di cache della lista
-  /// virtualizzata, rendendo possibile la rifinitura esatta subito dopo.
+  /// La correzione strutturale è quindi impedire che la nuova
+  /// `ScrollPosition` nasca mai a zero: sostituiamo `_scrollController` con
+  /// un'istanza NUOVA il cui `initialScrollOffset` è già il valore (grezzo,
+  /// non ancora corretto al pixel) di prima dello swap. Il nuovo scrollabile
+  /// nasce quindi già vicino al punto giusto fin dal suo primissimo frame —
+  /// nessun balzo dalla cima, nessuna costruzione di massa concentrata in un
+  /// frame, nessun velo. La rifinitura ESATTA, pixel per pixel, resta
+  /// comunque necessaria (l'altezza totale differisce leggermente tra
+  /// formattato e grezzo) ma ora è un aggiustamento minimo — non più un
+  /// balzo vistoso — perché parte già da una base pressoché corretta anziché
+  /// da zero.
   void _swapPreservingScrollAnchor({
     required int? anchorBlockIndex,
     required VoidCallback applyChange,
@@ -515,48 +533,48 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     final previousOffset =
         _scrollController.hasClients ? _scrollController.offset : null;
 
+    // Il vecchio controller resta pienamente valido e in uso dal vecchio
+    // scrollabile finché `applyChange()` non ha innescato la ricostruzione:
+    // non lo tocchiamo qui, lo smaltiamo solo più sotto, a swap avvenuto.
+    final oldController = _scrollController;
+    _scrollController = previousOffset == null
+        ? ScrollController()
+        : ScrollController(initialScrollOffset: previousOffset);
+
     applyChange();
 
-    if (anchorBlockIndex == null) return;
+    // Il vecchio controller viene smaltito SOLO a frame concluso (build +
+    // layout + paint già avvenuti): a quel punto Flutter ha già smontato —
+    // e quindi già scollegato dal vecchio controller — il vecchio
+    // `Scrollable`, rendendo sicuro chiamare `dispose()` su di esso senza
+    // incappare in un "used after dispose" nel ciclo di vita di Flutter
+    // stesso. Nessun controllo `mounted`: `oldController` è un oggetto
+    // autonomo, il suo smaltimento non dipende dal fatto che questo State
+    // sia ancora montato.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      oldController.dispose();
+    });
 
-    // Frame 1: il nuovo widget scrollabile è stato costruito (a offset
-    // zero, per quanto appena spiegato). Ripristiniamo subito l'offset
-    // precedente, grezzo ma sufficiente a portare il blocco-ancora nella
-    // finestra di cache — così al frame successivo esisterà davvero da
-    // misurare.
+    if (anchorBlockIndex == null || beforeTop == null) return;
+
+    // Con la nuova `ScrollPosition` già nata vicino al punto giusto, il
+    // blocco-ancora è quasi certamente già dentro la finestra costruita fin
+    // dal primo frame: basta una sola rimisurazione, a frame concluso, per
+    // la rifinitura esatta pixel-per-pixel.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
+      final afterBox =
+          _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
+      if (afterBox is! RenderBox || !afterBox.attached) return;
 
-      if (previousOffset != null && previousOffset > 0) {
-        final position = _scrollController.position;
-        final coarseTarget = previousOffset.clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        );
-        _scrollController.jumpTo(coarseTarget);
-      }
+      final afterTop = afterBox.localToGlobal(Offset.zero).dy;
+      final delta = afterTop - beforeTop!;
+      if (delta.abs() < 0.5) return;
 
-      // Frame 2: con il blocco-ancora ora presumibilmente costruito (grazie
-      // al ripristino grezzo appena fatto), lo rimisuriamo e applichiamo la
-      // correzione ESATTA, pixel per pixel, rispetto alla posizione
-      // originale catturata prima dello swap.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_scrollController.hasClients || beforeTop == null) {
-          return;
-        }
-        final afterBox =
-            _blockKeys[anchorBlockIndex]?.currentContext?.findRenderObject();
-        if (afterBox is! RenderBox || !afterBox.attached) return;
-
-        final afterTop = afterBox.localToGlobal(Offset.zero).dy;
-        final delta = afterTop - beforeTop!;
-        if (delta.abs() < 0.5) return;
-
-        final position = _scrollController.position;
-        final target = (_scrollController.offset + delta)
-            .clamp(position.minScrollExtent, position.maxScrollExtent);
-        _scrollController.jumpTo(target);
-      });
+      final position = _scrollController.position;
+      final target = (_scrollController.offset + delta)
+          .clamp(position.minScrollExtent, position.maxScrollExtent);
+      _scrollController.jumpTo(target);
     });
   }
 
@@ -1050,7 +1068,20 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
               // contenuto (`ListView.builder` ↔ `SingleChildScrollView`).
               return item.copyWith(
                 onPressed: () {
-                  setState(() => _isRawMode = true);
+                  // Passa dallo stesso `_swapPreservingScrollAnchor` usato
+                  // per la selezione normale, non da un `setState` diretto:
+                  // anche questo swap ListView.builder → SingleChildScrollView
+                  // soffrirebbe altrimenti dello stesso azzeramento di
+                  // `ScrollPosition` che causava il flash bianco (vedi doc di
+                  // `_swapPreservingScrollAnchor`). L'ancora è il blocco più
+                  // in alto visibile: "seleziona tutto" seleziona l'intero
+                  // documento, ma non c'è motivo per cui debba anche far
+                  // saltare la vista lontano da dove l'utente stava
+                  // guardando.
+                  _swapPreservingScrollAnchor(
+                    anchorBlockIndex: _topVisibleBlockIndex(),
+                    applyChange: () => setState(() => _isRawMode = true),
+                  );
                   _rawModeEnteredAt = DateTime.now();
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     // A questo punto il frame con il documento grezzo per
@@ -1073,9 +1104,39 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
             buttonItems: items,
           );
         },
-        child: scrollableContent,
+        child: ScrollConfiguration(
+          // Rete di sicurezza, non la correzione principale (quella è in
+          // `_swapPreservingScrollAnchor`, che elimina la causa radice):
+          // qualunque scroll fuori dai bordi residuo — anche un trascinamento
+          // reale dell'utente vicino a inizio/fine nota, non solo uno swap —
+          // disegnerebbe di default il `GlowingOverscrollIndicator` di
+          // Android, un bagliore chiaro che su un tema scuro come questo si
+          // legge come un flash bianco. Disattivarlo qui rende la vista
+          // immune per costruzione a QUALSIASI overscroll visivo, presente o
+          // futuro, invece di dipendere dal fatto che ogni singola causa
+          // venga sempre eliminata a monte.
+          behavior: _NoGlowScrollBehavior(),
+          child: scrollableContent,
+        ),
       ),
     );
+  }
+}
+
+/// Nessun bagliore/`overscroll glow` di default per questa vista — vedi il
+/// commento dove viene usata in `_buildListSubtree`. `ScrollBehavior` è
+/// leggero e senza stato: crearne una nuova istanza a ogni build (come fa
+/// `ScrollConfiguration(behavior: _NoGlowScrollBehavior(), ...)`) non ha
+/// alcun costo misurabile, a differenza di ricreare l'intero sottoalbero
+/// scrollabile.
+class _NoGlowScrollBehavior extends ScrollBehavior {
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    return child;
   }
 }
 

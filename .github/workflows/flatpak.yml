@@ -80,9 +80,28 @@ jobs:
           cache-key: flatpak-builder-${{ hashFiles('linux/packaging/**') }}
           verbose: true
 
-      - name: Upload Flatpak Artifact to Release
+      - name: Upload Flatpak Artifact to Release (tentativo 1)
+        id: release_attempt_1
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
+        # Non fermare il job qui in caso di errore: vogliamo poter ritentare
+        # subito sotto invece di far fallire l'intero workflow al primo
+        # errore 5xx transitorio lato GitHub (vedi run #71: "HttpError:
+        # Server Error", non un errore riconducibile al nostro codice o al
+        # nostro build).
+        continue-on-error: true
+        with:
+          files: Scripta.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attendi prima di ritentare la pubblicazione
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        run: sleep 15
+
+      - name: Upload Flatpak Artifact to Release (tentativo 2)
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        uses: softprops/action-gh-release@v2
         with:
           files: Scripta.flatpak
         env:
