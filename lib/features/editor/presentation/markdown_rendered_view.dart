@@ -156,6 +156,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   void _revertToFormatted() {
     if (!_isRawMode) return;
+    _revertTimer?.cancel();
     final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
     _rawEditableTextKey.currentState?.hideToolbar();
     _rawFocusNode.unfocus();
@@ -187,15 +188,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     }
 
     return PopScope(
-      // canPop fisso a false per gestire in autonomia il comportamento del back ed evitare
-      // che il gesto di indietro rimanga in sospeso chiudendo l'intera pagina in una volta sola.
-      canPop: false,
+      // Se siamo in Raw Mode, canPop è false (intercetta il gesto/tasto indietro per tornare in Formatted).
+      // Se siamo già in Formatted View, canPop è true e Flutter esegue la chiusura nativa della pagina.
+      canPop: !_isRawMode,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (_isRawMode) {
           _revertToFormatted();
-        } else {
-          Navigator.of(context).pop(result);
         }
       },
       child: _isRawMode
@@ -845,3 +844,4 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
     );
   }
 }
+
