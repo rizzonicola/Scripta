@@ -52,9 +52,43 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       : widget.content;
 
   @override
+  void initState() {
+    super.initState();
+    // `TextField` non espone un `onSelectionChanged` (a differenza di
+    // `SelectableText`, usato nella Versione B): l'unico modo per osservare
+    // i cambi di selezione su un `TextEditingController` è ascoltarlo
+    // direttamente, dato che estende `ValueNotifier<TextEditingValue>` e
+    // notifica anche quando cambia solo la selezione, non solo il testo.
+    _rawTextController.addListener(_handleRawSelectionChange);
+  }
+
+  void _handleRawSelectionChange() {
+    // Il controller notifica anche per le scritture "di servizio" (sync del
+    // testo quando cambia il contenuto della nota, impostazione della
+    // selezione automatica): non hanno nulla a che fare con una vera
+    // interazione dell'utente e non devono far scattare qui la logica di
+    // auto-ripristino a formattato.
+    if (!_isRawMode) return;
+
+    final selection = _rawTextController.selection;
+    HapticsHelper.reportSelectionState(isCollapsed: selection.isCollapsed);
+    if (selection.isCollapsed) {
+      _revertTimer?.cancel();
+      _revertTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted && _isRawMode) {
+          _revertToFormatted();
+        }
+      });
+    } else {
+      _revertTimer?.cancel();
+    }
+  }
+
+  @override
   void dispose() {
     _revertTimer?.cancel();
     _scrollController.dispose();
+    _rawTextController.removeListener(_handleRawSelectionChange);
     _rawTextController.dispose();
     _rawFocusNode.dispose();
     super.dispose();
@@ -211,20 +245,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
                   isDense: true,
                   contentPadding: EdgeInsets.zero,
                 ),
-                onSelectionChanged: (selection, cause) {
-                  HapticsHelper.reportSelectionState(
-                      isCollapsed: selection.isCollapsed);
-                  if (selection.isCollapsed) {
-                    _revertTimer?.cancel();
-                    _revertTimer = Timer(const Duration(seconds: 3), () {
-                      if (mounted && _isRawMode) {
-                        _revertToFormatted();
-                      }
-                    });
-                  } else {
-                    _revertTimer?.cancel();
-                  }
-                },
               ),
             ),
           ),
