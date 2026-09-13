@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package0/google_fonts/google_fonts.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/l10n/app_localizations.dart';
@@ -11,9 +11,8 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/syntax_highlighter.dart';
 import '../../settings/providers/settings_provider.dart';
-import 'package:flutter/rendering.dart' show SelectedContent;
 
-/// Vista di sola lettura di una nota Markdown con supporto a selezione fluida.
+/// Vista di sola lettura di una nota Markdown con supporto a selezione fluida nativa.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -30,123 +29,194 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 }
 
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
-  // Cache per ottimizzazione rendering
-  List<String>? _cachedBlocks;
-  List<Widget>? _cachedFormattedItems;
-  List<Widget>? _cachedRawItems;
-  Widget? _cachedTitleWidget;
-  bool _cachedHasTitle = false;
-
-  String? _cachedTitle;
-  String? _cachedContent;
-  String? _cachedFontFamily;
-  double? _cachedFontSize;
-  double? _cachedLineHeight;
-  ColorScheme? _cachedColorScheme;
-  Brightness? _cachedBrightness;
-
-  // Stato e scroll stabili
   final ScrollController _scrollController = ScrollController();
-  final Map<int, GlobalKey> _blockKeys = {};
   
   bool _isRawMode = false;
-  Timer? _pendingRevertTimer;
-  DateTime? _rawModeEnteredAt;
+  Timer? _revertTimer;
+
+  List<String>? _cachedBlocks;
+  String? _cachedContent;
 
   @override
   void dispose() {
-    _pendingRevertTimer?.cancel();
-    _cachedFormattedItems = null;
-    _cachedRawItems = null;
-    _cachedTitleWidget = null;
-    _cachedContent = null;
-    _blockKeys.clear();
+    _revertTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
 
-  void _handleSelectionChanged(SelectedContent? content) {
-    final hasSelection = content != null && content.plainText.isNotEmpty;
-    HapticsHelper.reportSelectionState(isCollapsed: !hasSelection);
+  void _switchToRawMode() {
+    if (_isRawMode) return;
+    final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
 
-    if (hasSelection) {
-      _pendingRevertTimer?.cancel();
-      _pendingRevertTimer = null;
+    setState(() {
+      _isRawMode = true;
+    });
 
-      if (_isRawMode) return;
-
-      setState(() {
-        _isRawMode = true;
-      });
-      _rawModeEnteredAt = DateTime.now();
-      return;
-    }
-
-    if (!_isRawMode) return;
-
-    final enteredAt = _rawModeEnteredAt;
-    if (enteredAt != null &&
-        DateTime.now().difference(enteredAt) < const Duration(milliseconds: 350)) {
-      return;
-    }
-
-    _pendingRevertTimer?.cancel();
-    _pendingRevertTimer = Timer(const Duration(milliseconds: 150), () {
-      _pendingRevertTimer = null;
-      if (!mounted) return;
-      _revertToFormatted();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(offset);
+      }
     });
   }
 
   void _revertToFormatted() {
-    _pendingRevertTimer?.cancel();
-    _pendingRevertTimer = null;
-    _rawModeEnteredAt = null;
     if (!_isRawMode) return;
+    final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
+
     setState(() {
       _isRawMode = false;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(offset);
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
     final (fontFamily, fontSize, lineHeight) = ref.watch(
       settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
     );
 
-    final ingredientsStale = _cachedFormattedItems == null ||
-        _cachedTitle != widget.title ||
-        _cachedContent != widget.content ||
-        _cachedFontFamily != fontFamily ||
-        _cachedFontSize != fontSize ||
-        _cachedLineHeight != lineHeight ||
-        _cachedColorScheme != theme.colorScheme ||
-        _cachedBrightness != theme.brightness;
-
-    if (ingredientsStale) {
-      _rebuildIngredients(
-        context: context,
-        theme: theme,
-        fontFamily: fontFamily,
-        fontSize: fontSize,
-        lineHeight: lineHeight,
-      );
+    if (_cachedContent != widget.content) {
+      _cachedContent = widget.content;
+      final effectiveContent =
+          widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
+      _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
     }
 
-    return _buildListSubtree();
+    return _isRawMode
+        ? _buildRawView(theme, fontSize, lineHeight)
+        : _buildFormattedView(theme, fontFamily, fontSize, lineHeight);
   }
 
-  void _rebuildIngredients({
-    required BuildContext context,
-    required ThemeData theme,
-    required String fontFamily,
-    required double fontSize,
-    required double lineHeight,
-  }) {
-    final title = widget.title;
-    final content = widget.content;
+  /// VISTA RAW: Un UNICO SelectableText nativo avvolto in un SingleChildScrollView.
+  /// Zero distruzione di nodi fuori schermo -> Zero flash bianchi e "Seleziona Tutto" 100% nativo.
+  Widget _buildRawView(ThemeData theme, double fontSize, double lineHeight) {
+    final fullText = widget.title.trim().isNotEmpty
+        ? "${widget.title}\n\n${widget.content}"
+        : widget.content;
+
+    final monoStyle = GoogleFonts.jetBrainsMono(
+      fontSize: fontSize * 0.95,
+      height: lineHeight,
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.9),
+    );
+
+    return ScrollConfiguration(
+      behavior: _NoGlowScrollBehavior(),
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 840),
+            child: SelectableText(
+              fullText,
+              style: monoStyle,
+              onSelectionChanged: (selection, cause) {
+                HapticsHelper.reportSelectionState(
+                    isCollapsed: selection.isCollapsed);
+                if (selection.isCollapsed) {
+                  _revertTimer?.cancel();
+                  _revertTimer = Timer(const Duration(seconds: 3), () {
+                    if (mounted && _isRawMode) {
+                      _revertToFormatted();
+                    }
+                  });
+                } else {
+                  _revertTimer?.cancel();
+                }
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// VISTA FORMATTATA: ListView.builder virtualizzata per prestazioni di lettura eccellenti.
+  Widget _buildFormattedView(
+      ThemeData theme, String fontFamily, double fontSize, double lineHeight) {
+    final blocks = _cachedBlocks!;
+    final hasTitle = widget.title.trim().isNotEmpty;
+    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
+
+    return SelectionArea(
+      onSelectionChanged: (content) {
+        if (content != null && content.plainText.isNotEmpty) {
+          _switchToRawMode();
+        }
+      },
+      child: ScrollConfiguration(
+        behavior: _NoGlowScrollBehavior(),
+        child: ListView.builder(
+          key: const ValueKey('markdown-formatted-listview'),
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+          itemCount: itemCount,
+          itemBuilder: (context, index) {
+            if (hasTitle && index == 0) {
+              return _buildTitleWidget(theme, fontFamily, fontSize);
+            }
+            final blockIndex = hasTitle ? index - 1 : index;
+            return _buildMarkdownBlock(
+              context,
+              blocks[blockIndex],
+              theme,
+              fontFamily,
+              fontSize,
+              lineHeight,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTitleWidget(
+      ThemeData theme, String fontFamily, double fontSize) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 840),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.title,
+              style: AppTheme.getTextStyleForFont(
+                fontFamily,
+                fontSize: fontSize * 2.2,
+                fontWeight: FontWeight.w800,
+                color: theme.colorScheme.onSurface,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Divider(
+              color: theme.colorScheme.outline.withValues(alpha: 0.3),
+              thickness: 1,
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarkdownBlock(
+    BuildContext context,
+    String blockText,
+    ThemeData theme,
+    String fontFamily,
+    double fontSize,
+    double lineHeight,
+  ) {
     final isDark = theme.brightness == Brightness.dark;
 
     final baseTextStyle = AppTheme.getTextStyleForFont(
@@ -242,191 +312,31 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       ),
     );
 
-    final effectiveContent = content.isEmpty ? '*Nessun contenuto*' : content;
-    List<String> blocks;
-    try {
-      blocks = _splitMarkdownIntoBlocks(effectiveContent);
-    } catch (_) {
-      blocks = [effectiveContent];
-    }
-    
-    final blockIsListItem =
-        blocks.map(_isTopLevelListMarkerBlock).toList(growable: false);
-    final hasTitle = title.trim().isNotEmpty;
-
-    double gapAfterBlock(int blockIndex) {
-      if (blockIndex >= blocks.length - 1) return 0;
-      if (blockIsListItem[blockIndex] && blockIsListItem[blockIndex + 1]) {
-        return 2.0;
-      }
-      return markdownStyleSheet.blockSpacing ?? 16.0;
-    }
-
-    Widget wrapCentered(Widget child) => Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: SizedBox(width: double.infinity, child: child),
-          ),
-        );
-
-    final rawTextStyle = GoogleFonts.jetBrainsMono(
-      fontSize: fontSize * 0.95,
-      height: lineHeight,
-      color: theme.colorScheme.onSurface.withValues(alpha: 0.87),
-    );
-
-    final formattedItems = <Widget>[
-      for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++)
-        KeyedSubtree(
-          key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
-          child: wrapCentered(
-            Padding(
-              padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-              child: MarkdownBody(
-                data: blocks[blockIndex],
-                selectable: false,
-                styleSheet: markdownStyleSheet,
-                builders: {
-                  'pre': _CodeBlockBuilder(fontSize: fontSize),
-                  'code': _InlineCodeBuilder(
-                    style: inlineCodeStyle,
-                    isDark: isDark,
-                    primaryColor: theme.colorScheme.primary,
-                  ),
-                },
-                onTapLink: (text, href, title) async {
-                  if (href != null) {
-                    final uri = Uri.tryParse(href);
-                    if (uri != null && await canLaunchUrl(uri)) {
-                      await launchUrl(uri);
-                    }
-                  }
-                },
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 840),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: MarkdownBody(
+            data: blockText,
+            selectable: false,
+            styleSheet: markdownStyleSheet,
+            builders: {
+              'pre': _CodeBlockBuilder(fontSize: fontSize),
+              'code': _InlineCodeBuilder(
+                style: inlineCodeStyle,
+                isDark: isDark,
+                primaryColor: theme.colorScheme.primary,
               ),
-            ),
-          ),
-        ),
-    ];
-
-    final rawItems = <Widget>[
-      for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++)
-        KeyedSubtree(
-          key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
-          child: RepaintBoundary(
-            child: wrapCentered(
-              Padding(
-                padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-                child: Text(blocks[blockIndex], style: rawTextStyle),
-              ),
-            ),
-          ),
-        ),
-    ];
-
-    final titleWidget = hasTitle
-        ? wrapCentered(
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  title,
-                  style: AppTheme.getTextStyleForFont(
-                    fontFamily,
-                    fontSize: fontSize * 2.2,
-                    fontWeight: FontWeight.w800,
-                    color: theme.colorScheme.onSurface,
-                    height: 1.25,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Divider(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.3),
-                  thickness: 1,
-                ),
-                const SizedBox(height: 20),
-              ],
-            ),
-          )
-        : const SizedBox.shrink();
-
-    _pendingRevertTimer?.cancel();
-    _pendingRevertTimer = null;
-    _rawModeEnteredAt = null;
-    _isRawMode = false;
-    _blockKeys.removeWhere((index, _) => index >= blocks.length);
-
-    _cachedBlocks = blocks;
-    _cachedFormattedItems = formattedItems;
-    _cachedRawItems = rawItems;
-    _cachedTitleWidget = titleWidget;
-    _cachedHasTitle = hasTitle;
-    _cachedTitle = title;
-    _cachedContent = content;
-    _cachedFontFamily = fontFamily;
-    _cachedFontSize = fontSize;
-    _cachedLineHeight = lineHeight;
-    _cachedColorScheme = theme.colorScheme;
-    _cachedBrightness = theme.brightness;
-  }
-
-  Widget _buildListSubtree() {
-    final blocks = _cachedBlocks!;
-    final formattedItems = _cachedFormattedItems!;
-    final rawItems = _cachedRawItems!;
-    final hasTitle = _cachedHasTitle;
-    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
-
-    return RepaintBoundary(
-      child: SelectionArea(
-        onSelectionChanged: _handleSelectionChanged,
-        contextMenuBuilder: (context, selectableRegionState) {
-          final items = selectableRegionState.contextMenuButtonItems
-              .map((item) {
-            if (item.type == ContextMenuButtonType.copy) {
-              final originalOnPressed = item.onPressed;
-              return item.copyWith(
-                onPressed: () {
-                  originalOnPressed?.call();
-                  _revertToFormatted();
-                },
-              );
-            }
-            if (item.type == ContextMenuButtonType.selectAll && !_isRawMode) {
-              return item.copyWith(
-                onPressed: () {
-                  setState(() => _isRawMode = true);
-                  _rawModeEnteredAt = DateTime.now();
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (!context.mounted) return;
-                    Actions.maybeInvoke<SelectAllTextIntent>(
-                      context,
-                      const SelectAllTextIntent(SelectionChangedCause.toolbar),
-                    );
-                  });
-                },
-              );
-            }
-            return item;
-          }).toList(growable: false);
-          return AdaptiveTextSelectionToolbar.buttonItems(
-            anchors: selectableRegionState.contextMenuAnchors,
-            buttonItems: items,
-          );
-        },
-        child: ScrollConfiguration(
-          behavior: _NoGlowScrollBehavior(),
-          child: ListView.builder(
-            key: const ValueKey('markdown-unified-listview'),
-            controller: _scrollController,
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-              if (hasTitle && index == 0) return _cachedTitleWidget!;
-              final blockIndex = hasTitle ? index - 1 : index;
-              return _isRawMode
-                  ? rawItems[blockIndex]
-                  : formattedItems[blockIndex];
+            },
+            onTapLink: (text, href, title) async {
+              if (href != null) {
+                final uri = Uri.tryParse(href);
+                if (uri != null && await canLaunchUrl(uri)) {
+                  await launchUrl(uri);
+                }
+              }
             },
           ),
         ),
@@ -451,11 +361,6 @@ final RegExp _fenceOpenRe = RegExp(r'^\s{0,3}(`{3,}|~{3,})');
 
 bool _isTopLevelListMarkerLine(String line) =>
     _topLevelListMarkerRe.hasMatch(line);
-
-bool _isTopLevelListMarkerBlock(String block) {
-  final firstLine = block.split('\n').first;
-  return _isTopLevelListMarkerLine(firstLine);
-}
 
 List<String> _splitMarkdownIntoBlocks(String content) {
   final lines = content.split('\n');
@@ -742,9 +647,10 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
                       width: 0.8,
                     ),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisSize: MinAxisSize.min,
                     children: [
                       if (displayLang != null) ...[
                         Text(
@@ -752,14 +658,16 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 10,
                             fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.55),
                           ),
                         ),
                         const SizedBox(width: 5),
                         Container(
                           width: 1,
                           height: 10,
-                          color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                          color: theme.colorScheme.outline
+                              .withValues(alpha: 0.3),
                         ),
                         const SizedBox(width: 5),
                       ],
@@ -778,7 +686,8 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
                                 size: 12,
                                 color: _copied
                                     ? theme.colorScheme.primary
-                                    : theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                    : theme.colorScheme.onSurface
+                                        .withValues(alpha: 0.6),
                               ),
                               if (_copied) ...[
                                 const SizedBox(width: 4),
