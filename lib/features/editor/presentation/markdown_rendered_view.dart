@@ -33,12 +33,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   // VERSIONE A — auto-selezione: `SelectableText` non espone alcun modo per
   // impostare una selezione dall'esterno una volta costruito. Un
-  // `TextEditingController` sì (`controller.selection = ...`): per questo la
-  // vista grezza qui sotto usa un `TextField` in sola lettura invece di
-  // `SelectableText`, unico modo per far apparire la parola già selezionata
-  // al cambio di modalità invece di lasciare la selezione vuota.
+  // `TextEditingController` sì (`controller.selection = ...`), quindi la
+  // vista grezza usa un `EditableText` in sola lettura invece di
+  // `SelectableText`. Non `TextField`: `TextField` incapsula il proprio
+  // `EditableText` internamente senza esporne la `GlobalKey`, e senza quella
+  // chiave non è possibile chiamare `showToolbar()`/`bringIntoView()` per
+  // mostrare la barra di selezione (copia, seleziona tutto...) e scrollare
+  // la parola auto-selezionata in vista — i due problemi segnalati. Usando
+  // `EditableText` direttamente, la chiave è nostra fin dall'inizio.
   final TextEditingController _rawTextController = TextEditingController();
   final FocusNode _rawFocusNode = FocusNode();
+  final GlobalKey<EditableTextState> _rawEditableTextKey =
+      GlobalKey<EditableTextState>();
   TextSelection? _pendingRawSelection;
 
   bool _isRawMode = false;
@@ -52,43 +58,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       : widget.content;
 
   @override
-  void initState() {
-    super.initState();
-    // `TextField` non espone un `onSelectionChanged` (a differenza di
-    // `SelectableText`, usato nella Versione B): l'unico modo per osservare
-    // i cambi di selezione su un `TextEditingController` è ascoltarlo
-    // direttamente, dato che estende `ValueNotifier<TextEditingValue>` e
-    // notifica anche quando cambia solo la selezione, non solo il testo.
-    _rawTextController.addListener(_handleRawSelectionChange);
-  }
-
-  void _handleRawSelectionChange() {
-    // Il controller notifica anche per le scritture "di servizio" (sync del
-    // testo quando cambia il contenuto della nota, impostazione della
-    // selezione automatica): non hanno nulla a che fare con una vera
-    // interazione dell'utente e non devono far scattare qui la logica di
-    // auto-ripristino a formattato.
-    if (!_isRawMode) return;
-
-    final selection = _rawTextController.selection;
-    HapticsHelper.reportSelectionState(isCollapsed: selection.isCollapsed);
-    if (selection.isCollapsed) {
-      _revertTimer?.cancel();
-      _revertTimer = Timer(const Duration(seconds: 3), () {
-        if (mounted && _isRawMode) {
-          _revertToFormatted();
-        }
-      });
-    } else {
-      _revertTimer?.cancel();
-    }
-  }
-
-  @override
   void dispose() {
     _revertTimer?.cancel();
     _scrollController.dispose();
-    _rawTextController.removeListener(_handleRawSelectionChange);
     _rawTextController.dispose();
     _rawFocusNode.dispose();
     super.dispose();
@@ -161,17 +133,43 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         _scrollController.jumpTo(offset);
       }
       final pending = _pendingRawSelection;
-      if (pending != null) {
-        _rawTextController.selection = pending;
-        _rawFocusNode.requestFocus();
-        _pendingRawSelection = null;
-      }
+      if (pending == null) return;
+
+      _rawTextController.selection = pending;
+      _rawFocusNode.requestFocus();
+      _pendingRawSelection = null;
+
+      // Un frame in più: `RenderEditable` deve prima ricalcolare la propria
+      // geometria con la nuova selezione appena assegnata (e con l'eventuale
+      // correzione di scroll appena applicata sopra) prima che
+      // `bringIntoView`/`showToolbar` possano usarla — è lo stesso schema
+      // che il framework stesso usa internamente dopo un'operazione che
+      // cambia la selezione (es. `copySelection`).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final editableState = _rawEditableTextKey.currentState;
+        // Porta la parola auto-selezionata dentro l'area visibile: risolve
+        // sia il caso in cui l'occorrenza scelta sia fuori dallo schermo,
+        // sia — come effetto collaterale utile — l'imprecisione residua
+        // della posizione verticale rispetto a dove si trovava in
+        // formattato, dato che scrolla esattamente sul rettangolo reale
+        // della selezione anziché su un offset numerico preservato "alla
+        // buona".
+        editableState?.bringIntoView(TextPosition(offset: pending.baseOffset));
+        // Mostra esplicitamente barra di selezione (copia, seleziona
+        // tutto...) e maniglie: `EditableText` le mostra automaticamente
+        // solo per un cambio di selezione originato da un vero gesto
+        // dell'utente (tap, long-press...), non per un'assegnazione
+        // programmatica come questa.
+        editableState?.showToolbar();
+      });
     });
   }
 
   void _revertToFormatted() {
     if (!_isRawMode) return;
     final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
+    _rawEditableTextKey.currentState?.hideToolbar();
     _rawFocusNode.unfocus();
 
     setState(() {
@@ -198,21 +196,37 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
       _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
       // Tenuto pronto PRIMA che serva: se non lo si aggiornasse qui, al
-      // primo swap verso grezzo il `TextField` mostrerebbe per un frame il
+      // primo swap verso grezzo l'`EditableText` mostrerebbe per un frame il
       // testo vecchio (o vuoto) prima di recuperare quello nuovo.
       _rawTextController.text = _fullText;
     }
 
-    return _isRawMode
-        ? _buildRawView(theme, fontSize, lineHeight)
-        : _buildFormattedView(theme, fontFamily, fontSize, lineHeight);
+    return PopScope(
+      // Se sono in modalità grezza, il back di sistema (freccia Android,
+      // swipe, freccetta della finestra, pulsante indietro del mouse...)
+      // non deve far uscire dalla nota: deve prima tornare al testo
+      // renderizzato, esattamente come già succede quando si finisce di
+      // selezionare. Solo un secondo back, già in formattato, esce
+      // davvero — comportamento comune nelle app di note.
+      canPop: !_isRawMode,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_isRawMode) {
+          _revertToFormatted();
+        }
+      },
+      child: _isRawMode
+          ? _buildRawView(theme, fontSize, lineHeight)
+          : _buildFormattedView(theme, fontFamily, fontSize, lineHeight),
+    );
   }
 
-  /// VISTA RAW: un `TextField` in sola lettura avvolto in un
-  /// `SingleChildScrollView`. Non `SelectableText`: qui serve poter
-  /// impostare la selezione dall'esterno (per l'auto-selezione della parola,
-  /// vedi `_switchToRawMode`/`_estimateRawSelection`), cosa che
-  /// `SelectableText` non permette.
+  /// VISTA RAW: un `EditableText` in sola lettura avvolto in un
+  /// `SingleChildScrollView`. Non `TextField`/`SelectableText`: qui serve
+  /// sia poter impostare la selezione dall'esterno (auto-selezione, vedi
+  /// `_switchToRawMode`), sia una `GlobalKey<EditableTextState>` per poter
+  /// chiamare `showToolbar()`/`bringIntoView()` — nessuno dei due widget di
+  /// più alto livello la espone.
   Widget _buildRawView(ThemeData theme, double fontSize, double lineHeight) {
     final monoStyle = GoogleFonts.jetBrainsMono(
       fontSize: fontSize * 0.95,
@@ -231,20 +245,47 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
             constraints: const BoxConstraints(maxWidth: 840),
             child: SizedBox(
               width: double.infinity,
-              child: TextField(
+              child: EditableText(
+                key: _rawEditableTextKey,
                 controller: _rawTextController,
                 focusNode: _rawFocusNode,
                 readOnly: true,
                 enableInteractiveSelection: true,
                 showCursor: false,
+                // `TextField`/`SelectableText` le attivano da sole in base
+                // alla piattaforma; `EditableText` nudo no, va dichiarato
+                // esplicitamente — altrimenti niente maniglie di selezione.
+                showSelectionHandles: true,
                 maxLines: null,
                 style: monoStyle,
                 cursorColor: theme.colorScheme.primary,
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                ),
+                backgroundCursorColor: theme.colorScheme.primary,
+                selectionColor:
+                    theme.colorScheme.primary.withValues(alpha: 0.35),
+                // La variante "Handle" (non `materialTextSelectionControls`,
+                // deprecata per questo scopo) è quella che effettivamente
+                // coopera con `contextMenuBuilder`: con l'altra,
+                // `contextMenuBuilder` verrebbe silenziosamente ignorato.
+                selectionControls: materialTextSelectionHandleControls,
+                contextMenuBuilder: (context, editableTextState) {
+                  return AdaptiveTextSelectionToolbar.editableText(
+                    editableTextState: editableTextState,
+                  );
+                },
+                onSelectionChanged: (selection, cause) {
+                  HapticsHelper.reportSelectionState(
+                      isCollapsed: selection.isCollapsed);
+                  if (selection.isCollapsed) {
+                    _revertTimer?.cancel();
+                    _revertTimer = Timer(const Duration(seconds: 3), () {
+                      if (mounted && _isRawMode) {
+                        _revertToFormatted();
+                      }
+                    });
+                  } else {
+                    _revertTimer?.cancel();
+                  }
+                },
               ),
             ),
           ),
