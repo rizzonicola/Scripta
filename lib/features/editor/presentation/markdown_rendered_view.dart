@@ -30,31 +30,107 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final ScrollController _scrollController = ScrollController();
-  
+
+  // VERSIONE A — auto-selezione: `SelectableText` non espone alcun modo per
+  // impostare una selezione dall'esterno una volta costruito. Un
+  // `TextEditingController` sì (`controller.selection = ...`): per questo la
+  // vista grezza qui sotto usa un `TextField` in sola lettura invece di
+  // `SelectableText`, unico modo per far apparire la parola già selezionata
+  // al cambio di modalità invece di lasciare la selezione vuota.
+  final TextEditingController _rawTextController = TextEditingController();
+  final FocusNode _rawFocusNode = FocusNode();
+  TextSelection? _pendingRawSelection;
+
   bool _isRawMode = false;
   Timer? _revertTimer;
 
   List<String>? _cachedBlocks;
   String? _cachedContent;
 
+  String get _fullText => widget.title.trim().isNotEmpty
+      ? "${widget.title}\n\n${widget.content}"
+      : widget.content;
+
   @override
   void dispose() {
     _revertTimer?.cancel();
     _scrollController.dispose();
+    _rawTextController.dispose();
+    _rawFocusNode.dispose();
     super.dispose();
   }
 
-  void _switchToRawMode() {
+  /// Cerca, nel testo grezzo completo, la stessa parola selezionata in
+  /// formattato, così da farla apparire già selezionata al cambio di
+  /// modalità — il comportamento "normale" di un tap-and-hold, che seleziona
+  /// subito la parola sotto il dito invece di limitarsi a cambiare vista.
+  ///
+  /// La parola può comparire più volte nel documento: tra le occorrenze si
+  /// sceglie quella più vicina, in proporzione, alla posizione da cui
+  /// l'utente stava guardando — stimata dal rapporto tra scroll attuale e
+  /// scroll massimo nella vista formattata. È un'approssimazione (non una
+  /// mappatura pixel-per-pixel come quella usata per l'ancoraggio dello
+  /// scroll), ma sufficiente a risolvere la stragrande maggioranza dei casi
+  /// pratici di parole ripetute in punti lontani del documento.
+  TextSelection? _estimateRawSelection(String fullText, String? selectedText) {
+    final word = selectedText?.trim();
+    if (word == null || word.isEmpty) return null;
+
+    final matches = <int>[];
+    var searchStart = 0;
+    while (true) {
+      final idx = fullText.indexOf(word, searchStart);
+      if (idx == -1) break;
+      matches.add(idx);
+      searchStart = idx + word.length;
+    }
+    if (matches.isEmpty) return null;
+
+    var bestIndex = matches.first;
+    if (matches.length > 1) {
+      final hasExtent = _scrollController.hasClients &&
+          _scrollController.position.maxScrollExtent > 0;
+      final ratio = hasExtent
+          ? (_scrollController.offset /
+                  _scrollController.position.maxScrollExtent)
+              .clamp(0.0, 1.0)
+          : 0.0;
+      final target = (fullText.length * ratio).round();
+      bestIndex = matches.reduce(
+        (a, b) => (a - target).abs() <= (b - target).abs() ? a : b,
+      );
+    }
+
+    return TextSelection(
+      baseOffset: bestIndex,
+      extentOffset: bestIndex + word.length,
+    );
+  }
+
+  void _switchToRawMode({String? selectedText}) {
     if (_isRawMode) return;
     final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
+    final fullText = _fullText;
+
+    if (_rawTextController.text != fullText) {
+      _rawTextController.text = fullText;
+    }
+    _pendingRawSelection = _estimateRawSelection(fullText, selectedText);
 
     setState(() {
       _isRawMode = true;
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(offset);
+      }
+      final pending = _pendingRawSelection;
+      if (pending != null) {
+        _rawTextController.selection = pending;
+        _rawFocusNode.requestFocus();
+        _pendingRawSelection = null;
       }
     });
   }
@@ -62,6 +138,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   void _revertToFormatted() {
     if (!_isRawMode) return;
     final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
+    _rawFocusNode.unfocus();
 
     setState(() {
       _isRawMode = false;
@@ -86,6 +163,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       final effectiveContent =
           widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
       _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
+      // Tenuto pronto PRIMA che serva: se non lo si aggiornasse qui, al
+      // primo swap verso grezzo il `TextField` mostrerebbe per un frame il
+      // testo vecchio (o vuoto) prima di recuperare quello nuovo.
+      _rawTextController.text = _fullText;
     }
 
     return _isRawMode
@@ -93,13 +174,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         : _buildFormattedView(theme, fontFamily, fontSize, lineHeight);
   }
 
-  /// VISTA RAW: Un UNICO SelectableText nativo avvolto in un SingleChildScrollView.
-  /// Zero distruzione di nodi fuori schermo -> Zero flash bianchi e "Seleziona Tutto" 100% nativo.
+  /// VISTA RAW: un `TextField` in sola lettura avvolto in un
+  /// `SingleChildScrollView`. Non `SelectableText`: qui serve poter
+  /// impostare la selezione dall'esterno (per l'auto-selezione della parola,
+  /// vedi `_switchToRawMode`/`_estimateRawSelection`), cosa che
+  /// `SelectableText` non permette.
   Widget _buildRawView(ThemeData theme, double fontSize, double lineHeight) {
-    final fullText = widget.title.trim().isNotEmpty
-        ? "${widget.title}\n\n${widget.content}"
-        : widget.content;
-
     final monoStyle = GoogleFonts.jetBrainsMono(
       fontSize: fontSize * 0.95,
       height: lineHeight,
@@ -115,23 +195,37 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 840),
-            child: SelectableText(
-              fullText,
-              style: monoStyle,
-              onSelectionChanged: (selection, cause) {
-                HapticsHelper.reportSelectionState(
-                    isCollapsed: selection.isCollapsed);
-                if (selection.isCollapsed) {
-                  _revertTimer?.cancel();
-                  _revertTimer = Timer(const Duration(seconds: 3), () {
-                    if (mounted && _isRawMode) {
-                      _revertToFormatted();
-                    }
-                  });
-                } else {
-                  _revertTimer?.cancel();
-                }
-              },
+            child: SizedBox(
+              width: double.infinity,
+              child: TextField(
+                controller: _rawTextController,
+                focusNode: _rawFocusNode,
+                readOnly: true,
+                enableInteractiveSelection: true,
+                showCursor: false,
+                maxLines: null,
+                style: monoStyle,
+                cursorColor: theme.colorScheme.primary,
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onSelectionChanged: (selection, cause) {
+                  HapticsHelper.reportSelectionState(
+                      isCollapsed: selection.isCollapsed);
+                  if (selection.isCollapsed) {
+                    _revertTimer?.cancel();
+                    _revertTimer = Timer(const Duration(seconds: 3), () {
+                      if (mounted && _isRawMode) {
+                        _revertToFormatted();
+                      }
+                    });
+                  } else {
+                    _revertTimer?.cancel();
+                  }
+                },
+              ),
             ),
           ),
         ),
@@ -149,7 +243,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     return SelectionArea(
       onSelectionChanged: (content) {
         if (content != null && content.plainText.isNotEmpty) {
-          _switchToRawMode();
+          _switchToRawMode(selectedText: content.plainText);
         }
       },
       child: ScrollConfiguration(
@@ -316,28 +410,40 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: MarkdownBody(
-            data: blockText,
-            selectable: false,
-            styleSheet: markdownStyleSheet,
-            builders: {
-              'pre': _CodeBlockBuilder(fontSize: fontSize),
-              'code': _InlineCodeBuilder(
-                style: inlineCodeStyle,
-                isDark: isDark,
-                primaryColor: theme.colorScheme.primary,
-              ),
-            },
-            onTapLink: (text, href, title) async {
-              if (href != null) {
-                final uri = Uri.tryParse(href);
-                if (uri != null && await canLaunchUrl(uri)) {
-                  await launchUrl(uri);
+        // `SizedBox(width: double.infinity)`: senza questo, `MarkdownBody`
+        // si dimensiona sul contenuto della singola riga (essendo ogni
+        // elemento di lista un blocco a sé, vedi `_splitMarkdownIntoBlocks`)
+        // e `Align(topCenter)` lo centra in quello spazio stretto — righe
+        // corte appaiono spostate a destra, righe lunghe restano a filo
+        // sinistro: l'effetto "a scalini" nell'indentazione delle liste.
+        // Forzando la larghezza a riempire il vincolo massimo (840),
+        // ciascun blocco resta sempre allineato a sinistra sullo stesso
+        // margine, indipendentemente da quanto è corto il suo contenuto.
+        child: SizedBox(
+          width: double.infinity,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: MarkdownBody(
+              data: blockText,
+              selectable: false,
+              styleSheet: markdownStyleSheet,
+              builders: {
+                'pre': _CodeBlockBuilder(fontSize: fontSize),
+                'code': _InlineCodeBuilder(
+                  style: inlineCodeStyle,
+                  isDark: isDark,
+                  primaryColor: theme.colorScheme.primary,
+                ),
+              },
+              onTapLink: (text, href, title) async {
+                if (href != null) {
+                  final uri = Uri.tryParse(href);
+                  if (uri != null && await canLaunchUrl(uri)) {
+                    await launchUrl(uri);
+                  }
                 }
-              }
-            },
+              },
+            ),
           ),
         ),
       ),
