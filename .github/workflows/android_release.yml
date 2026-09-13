@@ -10,21 +10,17 @@ permissions:
   contents: write
 
 concurrency:
-  # Gruppo CONDIVISO con flatpak.yml (stesso nome, non "android-release-*"):
-  # entrambi i workflow scattano sullo stesso trigger (push di tag v*.*.*) e
-  # nell'ultimo step scrivono sulla STESSA GitHub Release per allegare i
-  # rispettivi artefatti. Con gruppi separati, GitHub li lascia girare in
-  # parallelo tra loro (la concurrency serializza solo le run DELLO STESSO
-  # gruppo) e i due job finiscono per leggere/aggiornare la release nello
-  # stesso istante — una scrittura concorrente sulla stessa risorsa, causa
-  # dell'errore "Unexpected error fetching GitHub release ... HttpError"
-  # osservato in entrambi i workflow sullo stesso tag. Un gruppo comune mette
-  # in coda l'uno rispetto all'altro invece di farli collidere.
-  group: scripta-release-${{ github.ref }}
-  # `false`, non `true`: qui vogliamo che il secondo workflow ATTENDA che il
-  # primo finisca, non che lo annulli — altrimenti si perderebbero gli
-  # artefatti (APK o Flatpak) del job cancellato per lo stesso tag.
-  cancel-in-progress: false
+  # Gruppo SEPARATO da flatpak.yml (non più condiviso): i due workflow
+  # tornano a girare in parallelo invece di mettersi in coda l'uno dietro
+  # l'altro. La serializzazione tra i due era un tentativo di correggere un
+  # errore intermittente nello step di pubblicazione della release, ma si è
+  # rivelata non necessaria: l'errore era un 5xx transitorio lato GitHub, non
+  # una vera collisione tra i due job — la protezione effettiva resta il
+  # doppio tentativo sullo step di pubblicazione più sotto. Qui la
+  # concurrency serve solo al suo scopo originale: evitare che DUE run di
+  # QUESTO STESSO workflow sullo stesso ref si sovrappongano.
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-android:
