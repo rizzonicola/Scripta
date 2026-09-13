@@ -46,6 +46,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final GlobalKey<EditableTextState> _rawEditableTextKey =
       GlobalKey<EditableTextState>();
   TextSelection? _pendingRawSelection;
+  // Coordinata Y globale dell'ultimo tocco iniziato in formattato — usata
+  // per allineare la parola auto-selezionata esattamente lì dove il dito
+  // si trovava, non genericamente "in una posizione visibile qualunque".
+  double? _lastPointerGlobalY;
 
   bool _isRawMode = false;
   Timer? _revertTimer;
@@ -117,6 +121,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     if (_isRawMode) return;
     final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
     final fullText = _fullText;
+    final fingerY = _lastPointerGlobalY;
 
     if (_rawTextController.text != fullText) {
       _rawTextController.text = fullText;
@@ -132,36 +137,74 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(offset);
       }
+
       final pending = _pendingRawSelection;
       if (pending == null) return;
 
-      _rawTextController.selection = pending;
+      // Il focus viene richiesto QUI, un frame prima di assegnare la
+      // selezione (non nello stesso callback): dargli un frame pieno per
+      // stabilirsi prima che la selezione cambi è un margine di sicurezza
+      // in più per far sì che il sistema di selezione/toolbar consideri il
+      // campo pienamente "attivo" nel momento in cui la selezione appare,
+      // invece di trattarla come un cambiamento su un campo non ancora a
+      // fuoco.
       _rawFocusNode.requestFocus();
-      _pendingRawSelection = null;
 
-      // Un frame in più: `RenderEditable` deve prima ricalcolare la propria
-      // geometria con la nuova selezione appena assegnata (e con l'eventuale
-      // correzione di scroll appena applicata sopra) prima che
-      // `bringIntoView`/`showToolbar` possano usarla — è lo stesso schema
-      // che il framework stesso usa internamente dopo un'operazione che
-      // cambia la selezione (es. `copySelection`).
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        final editableState = _rawEditableTextKey.currentState;
-        // Porta la parola auto-selezionata dentro l'area visibile: risolve
-        // sia il caso in cui l'occorrenza scelta sia fuori dallo schermo,
-        // sia — come effetto collaterale utile — l'imprecisione residua
-        // della posizione verticale rispetto a dove si trovava in
-        // formattato, dato che scrolla esattamente sul rettangolo reale
-        // della selezione anziché su un offset numerico preservato "alla
-        // buona".
-        editableState?.bringIntoView(TextPosition(offset: pending.baseOffset));
-        // Mostra esplicitamente barra di selezione (copia, seleziona
-        // tutto...) e maniglie: `EditableText` le mostra automaticamente
-        // solo per un cambio di selezione originato da un vero gesto
-        // dell'utente (tap, long-press...), non per un'assegnazione
-        // programmatica come questa.
-        editableState?.showToolbar();
+        _rawTextController.selection = pending;
+        _pendingRawSelection = null;
+
+        // Un frame in più ancora: `RenderEditable` deve prima ricalcolare
+        // la propria geometria con la nuova selezione appena assegnata
+        // prima che le sue coordinate (usate sotto per l'allineamento) e
+        // `showToolbar` possano essere affidabili — lo stesso schema che il
+        // framework usa internamente dopo un'operazione che cambia la
+        // selezione (es. `copySelection`).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final editableState = _rawEditableTextKey.currentState;
+          final renderEditable = editableState?.renderEditable;
+
+          if (renderEditable != null &&
+              fingerY != null &&
+              _scrollController.hasClients) {
+            // Allineamento preciso: non "porta in vista da qualche parte",
+            // ma calcola la coordinata Y REALE a cui il carattere
+            // selezionato finirebbe con lo scroll attuale, e corregge lo
+            // scroll della differenza esatta rispetto a dove si trovava il
+            // dito quando il tocco è iniziato. Risolve lo scarto verticale
+            // fra dove appariva la parola in formattato e dove appare in
+            // grezzo, che `bringIntoView` da solo non garantiva (porta
+            // solo "in vista", non alla stessa coordinata del tocco).
+            final caretRect = renderEditable.getLocalRectForCaret(
+              TextPosition(offset: pending.baseOffset),
+            );
+            final currentGlobalTop =
+                renderEditable.localToGlobal(caretRect.topLeft).dy;
+            final delta = currentGlobalTop - fingerY;
+            if (delta.abs() > 0.5) {
+              final position = _scrollController.position;
+              final target = (_scrollController.offset + delta)
+                  .clamp(position.minScrollExtent, position.maxScrollExtent);
+              _scrollController.jumpTo(target);
+            }
+          } else {
+            // Fallback quando non abbiamo una posizione del dito valida
+            // (es. attivazione da "seleziona tutto", non da un tocco):
+            // almeno garantisce che la parola sia visibile da qualche
+            // parte, invece di lasciarla fuori schermo.
+            editableState?.bringIntoView(TextPosition(offset: pending.baseOffset));
+          }
+
+          // Mostra esplicitamente barra di selezione (copia, seleziona
+          // tutto...) e maniglie: `EditableText` le mostra automaticamente
+          // solo per un cambio di selezione originato da un vero gesto
+          // dell'utente (tap, long-press...), non per un'assegnazione
+          // programmatica come questa.
+          editableState?.showToolbar();
+          _lastPointerGlobalY = null;
+        });
       });
     });
   }
@@ -202,17 +245,25 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     }
 
     return PopScope(
-      // Se sono in modalità grezza, il back di sistema (freccia Android,
-      // swipe, freccetta della finestra, pulsante indietro del mouse...)
-      // non deve far uscire dalla nota: deve prima tornare al testo
-      // renderizzato, esattamente come già succede quando si finisce di
-      // selezionare. Solo un secondo back, già in formattato, esce
-      // davvero — comportamento comune nelle app di note.
-      canPop: !_isRawMode,
+      // SEMPRE `false`, non `!_isRawMode`: con un valore che cambia da un
+      // frame all'altro, un gesto di back continuo (swipe/predictive back)
+      // può essere rivalutato da Android col valore NUOVO di `canPop` —
+      // diventato `true` un istante dopo il nostro `setState` — lasciandolo
+      // passare subito, in coda allo stesso identico gesto che avevamo già
+      // intercettato per tornare a formattato. Da qui il "doppio back" in
+      // un colpo solo. Tenendolo sempre `false` eliminiamo l'ambiguità:
+      // il pop non viene mai lasciato al sistema, decidiamo sempre e solo
+      // noi, esplicitamente, dentro il callback.
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (_isRawMode) {
           _revertToFormatted();
+        } else {
+          // Contropartita del `canPop: false` fisso: quando siamo già in
+          // formattato e il pop andrebbe davvero lasciato passare (uscire
+          // dalla nota), tocca farlo scattare esplicitamente a noi.
+          Navigator.of(context).pop(result);
         }
       },
       child: _isRawMode
@@ -301,33 +352,41 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     final hasTitle = widget.title.trim().isNotEmpty;
     final itemCount = (hasTitle ? 1 : 0) + blocks.length;
 
-    return SelectionArea(
-      onSelectionChanged: (content) {
-        if (content != null && content.plainText.isNotEmpty) {
-          _switchToRawMode(selectedText: content.plainText);
-        }
-      },
-      child: ScrollConfiguration(
-        behavior: _NoGlowScrollBehavior(),
-        child: ListView.builder(
-          key: const ValueKey('markdown-formatted-listview'),
-          controller: _scrollController,
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-          itemCount: itemCount,
-          itemBuilder: (context, index) {
-            if (hasTitle && index == 0) {
-              return _buildTitleWidget(theme, fontFamily, fontSize);
-            }
-            final blockIndex = hasTitle ? index - 1 : index;
-            return _buildMarkdownBlock(
-              context,
-              blocks[blockIndex],
-              theme,
-              fontFamily,
-              fontSize,
-              lineHeight,
-            );
-          },
+    return Listener(
+      // Cattura la coordinata Y globale nell'istante esatto in cui il dito
+      // tocca lo schermo — prima ancora che `SelectionArea` interpreti il
+      // gesto come tap-and-hold. Non interferisce con la selezione: un
+      // `Listener` non consuma l'evento, lo osserva soltanto, che continua
+      // a raggiungere `SelectionArea` come se non ci fosse.
+      onPointerDown: (event) => _lastPointerGlobalY = event.position.dy,
+      child: SelectionArea(
+        onSelectionChanged: (content) {
+          if (content != null && content.plainText.isNotEmpty) {
+            _switchToRawMode(selectedText: content.plainText);
+          }
+        },
+        child: ScrollConfiguration(
+          behavior: _NoGlowScrollBehavior(),
+          child: ListView.builder(
+            key: const ValueKey('markdown-formatted-listview'),
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+            itemCount: itemCount,
+            itemBuilder: (context, index) {
+              if (hasTitle && index == 0) {
+                return _buildTitleWidget(theme, fontFamily, fontSize);
+              }
+              final blockIndex = hasTitle ? index - 1 : index;
+              return _buildMarkdownBlock(
+                context,
+                blocks[blockIndex],
+                theme,
+                fontFamily,
+                fontSize,
+                lineHeight,
+              );
+            },
+          ),
         ),
       ),
     );
@@ -882,4 +941,5 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
     );
   }
 }
+
 
