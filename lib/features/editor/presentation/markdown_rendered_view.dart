@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package0/google_fonts/google_fonts.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/l10n/app_localizations.dart';
@@ -650,7 +650,7 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                   child: Row(
-                    mainAxisSize: MinAxisSize.min,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       if (displayLang != null) ...[
                         Text(
@@ -715,3 +715,4 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
     );
   }
 }
+
