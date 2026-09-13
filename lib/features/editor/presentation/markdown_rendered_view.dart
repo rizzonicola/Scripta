@@ -797,31 +797,29 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       for (var blockIndex = 0; blockIndex < blocks.length; blockIndex++)
         KeyedSubtree(
           key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
-          child: _FadeInOnMount(
-            child: wrapCentered(
-              Padding(
-                padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-                child: MarkdownBody(
-                  data: blocks[blockIndex],
-                  selectable: false, // Gestita dal SelectionArea del genitore
-                  styleSheet: markdownStyleSheet,
-                  builders: {
-                    'pre': _CodeBlockBuilder(fontSize: fontSize),
-                    'code': _InlineCodeBuilder(
-                      style: inlineCodeStyle,
-                      isDark: isDark,
-                      primaryColor: theme.colorScheme.primary,
-                    ),
-                  },
-                  onTapLink: (text, href, title) async {
-                    if (href != null) {
-                      final uri = Uri.tryParse(href);
-                      if (uri != null && await canLaunchUrl(uri)) {
-                        await launchUrl(uri);
-                      }
+          child: wrapCentered(
+            Padding(
+              padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
+              child: MarkdownBody(
+                data: blocks[blockIndex],
+                selectable: false, // Gestita dal SelectionArea del genitore
+                styleSheet: markdownStyleSheet,
+                builders: {
+                  'pre': _CodeBlockBuilder(fontSize: fontSize),
+                  'code': _InlineCodeBuilder(
+                    style: inlineCodeStyle,
+                    isDark: isDark,
+                    primaryColor: theme.colorScheme.primary,
+                  ),
+                },
+                onTapLink: (text, href, title) async {
+                  if (href != null) {
+                    final uri = Uri.tryParse(href);
+                    if (uri != null && await canLaunchUrl(uri)) {
+                      await launchUrl(uri);
                     }
-                  },
-                ),
+                  }
+                },
               ),
             ),
           ),
@@ -855,12 +853,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         KeyedSubtree(
           key: _blockKeys.putIfAbsent(blockIndex, () => GlobalKey()),
           child: RepaintBoundary(
-            child: _FadeInOnMount(
-              child: wrapCentered(
-                Padding(
-                  padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
-                  child: Text(blocks[blockIndex], style: rawTextStyle),
-                ),
+            child: wrapCentered(
+              Padding(
+                padding: EdgeInsets.only(bottom: gapAfterBlock(blockIndex)),
+                child: Text(blocks[blockIndex], style: rawTextStyle),
               ),
             ),
           ),
@@ -1083,84 +1079,51 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   }
 }
 
-/// Piccola dissolvenza in ingresso usata per ammorbidire la PERCEZIONE dello
-/// scambio tra Markdown formattato e testo grezzo (e viceversa).
+/// SCAMBIO ISTANTANEO, SENZA ALCUNA ANIMAZIONE DI OPACITÀ (formattato ↔
+/// grezzo, e viceversa) — SCELTA DEFINITIVA.
 ///
-/// Il blocco cambia letteralmente tipo di widget a ogni scambio
-/// (`MarkdownBody` ↔ `Text`): Flutter lo smonta e ne monta uno nuovo, non
-/// esiste un "morph" continuo tra i due. Questo widget sfrutta esattamente
-/// quel nuovo montaggio — parte da opacità alta (non zero, vedi sotto) e
-/// sale a 1 in pochi millisecondi — così quello che altrimenti sarebbe un
-/// taglio netto diventa una dissolvenza breve e naturale. È SICURO farlo
-/// qui, a differenza di un `AnimatedSwitcher`/crossfade tradizionale: non
-/// tiene mai in vita contemporaneamente il widget vecchio E quello nuovo (il
-/// vecchio è già stato smontato, con il proprio `Selectable`, prima che
-/// questo venga creato), quindi non introduce mai due `Selectable`
-/// sovrapposti per lo stesso blocco — che avrebbe rotto la selezione
-/// seamless.
+/// Una versione precedente avvolgeva ogni blocco in un `FadeTransition` per
+/// "ammorbidire" percettivamente lo scambio, che qui cambia letteralmente
+/// tipo di widget (`MarkdownBody` ↔ `Text`: Flutter smonta il vecchio e ne
+/// monta uno nuovo, non esiste un "morph" continuo tra i due). Si è rivelata
+/// un errore, in due iterazioni successive:
 ///
-/// PERCHÉ NON SI PARTE DA OPACITÀ ZERO (fix del flash da un frame): un
-/// `AnimationController` con `.forward()` chiamato nel costruttore/
-/// inizializzatore del `late final` NON avanza sincronamente — il suo primo
-/// tick reale arriva dal `Ticker` solo al FRAME SUCCESSIVO, schedulato dallo
-/// scheduler. Il primissimo `build()` di questo `State` (quello eseguito
-/// nello stesso frame in cui il blocco viene montato, insieme allo smontaggio
-/// del blocco precedente) vede quindi ancora `_controller.value == 0.0`. Se
-/// quel valore venisse usato direttamente come opacità (`FadeTransition(
-/// opacity: _controller, ...)`, come nella versione precedente), quel primo
-/// frame dipingerebbe il blocco a opacità ESATTAMENTE zero — completamente
-/// trasparente — lasciando intravedere per un singolo frame lo sfondo
-/// sottostante (Scaffold/superficie): esattamente il "flash" riportato,
-/// percepibile solo nei rari casi in cui lo swap capita ad allinearsi in
-/// modo sfavorevole con il refresh dello schermo.
+///  1. Animando l'opacità direttamente da un `AnimationController` appena
+///     avviato (`..forward()`), il primissimo frame dipinto — quello dello
+///     STESSO frame in cui il blocco viene montato — usa il valore
+///     "pre-tick" del controller, che è sempre `0.0` (il `Ticker` fa
+///     avanzare il valore solo a partire dal frame SUCCESSIVO). Quel primo
+///     frame risultava quindi a opacità ESATTAMENTE zero: un fotogramma
+///     realmente trasparente che lasciava intravedere lo sfondo sottostante
+///     — il "flash" originariamente osservato.
+///  2. Rimappare il range tramite un `Tween(begin: 0.55, end: 1.0)` evitava
+///     sì lo zero assoluto, ma introduceva un calo di opacità VISIBILE E
+///     GARANTITO a OGNI singolo swap (non più solo nei rari casi limite):
+///     il blocco appariva sistematicamente "lavato"/semitrasparente per
+///     l'intera durata dell'animazione prima di stabilizzarsi — uno
+///     sfarfallio costante, peggiore del difetto originale.
 ///
-/// La correzione non è "aspettare" il primo tick (il problema è proprio che
-/// il primissimo frame dipinto usa il valore pre-tick, qualunque sia il
-/// momento in cui `.forward()` viene invocato): è rimappare il range
-/// dell'`AnimationController` — che PARTE sempre da 0.0, per definizione —
-/// su un intervallo di opacità che non tocca mai lo zero. Un
-/// `Tween(begin: 0.55, end: 1.0)` fa sì che il valore "pre-tick" (0.0)
-/// produca un'opacità reale dello 0.55, non 0: percettivamente un blocco già
-/// quasi completamente visibile fin dal primissimo frame, che poi rifinisce
-/// la dissolvenza fino a piena opacità nei successivi ~110ms — nessun frame
-/// realmente trasparente, quindi nessun fotogramma di sfondo "nudo" da
-/// intravedere.
-class _FadeInOnMount extends StatefulWidget {
-  final Widget child;
-
-  const _FadeInOnMount({required this.child});
-
-  @override
-  State<_FadeInOnMount> createState() => _FadeInOnMountState();
-}
-
-class _FadeInOnMountState extends State<_FadeInOnMount>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 110),
-  )..forward();
-
-  // Vedi doc di classe: il Tween rimappa il valore "pre-tick" del
-  // controller (sempre 0.0 sul primissimo frame dipinto) su un'opacità
-  // reale di 0.55 invece che 0.0, eliminando il singolo frame
-  // completamente trasparente che causava il flash.
-  late final Animation<double> _opacity = Tween<double>(
-    begin: 0.55,
-    end: 1.0,
-  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(opacity: _opacity, child: widget.child);
-  }
-}
+/// La radice comune di entrambi i tentativi è la stessa: qualunque
+/// animazione sul canale alfa, per quanto breve o quasi impercettibile in
+/// teoria, introduce ALMENO un frame in cui il testo non è alla sua opacità
+/// finale — ed è proprio quella deviazione, per quanto minima, a leggersi
+/// come un lampo/sfarfallio contro lo sfondo, specialmente su un cambio che
+/// avviene sotto il dito dell'utente durante una selezione attiva.
+///
+/// La correzione strutturale è quindi eliminare l'animazione, non
+/// affinarla: ogni blocco (formattato o grezzo) viene disegnato SEMPRE a
+/// opacità piena (1.0), fin dal primissimo frame in cui esiste. Lo scambio
+/// formattato/grezzo resta comunque uno smontaggio+rimontaggio del
+/// sottoalbero (necessario: sono due `RenderObject` di natura diversa, non
+/// interpolabili), ma avviene interamente all'interno di un'unica build
+/// (quella innescata dal `setState` in `_handleSelectionChanged`): Flutter
+/// sostituisce il vecchio figlio col nuovo nello stesso identico frame —
+/// mai un frame intermedio "vuoto" o parzialmente trasparente, perché non
+/// c'è più alcun canale alfa che parta da un valore diverso da 1. Il
+/// risultato percepito è esattamente quello richiesto: la sintassi Markdown
+/// (pallini, grassetto...) si "svela" in testo grezzo nello stesso istante
+/// del tocco, senza sfumature, cali di luminosità o passaggi intermedi —
+/// perché non ci sono passaggi intermedi da vedere.
 
 /// Suddivide una stringa Markdown in blocchi indipendenti da usare come
 /// elementi di `ListView.builder`, preservando i casi che una divisione

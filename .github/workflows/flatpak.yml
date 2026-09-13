@@ -10,8 +10,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: flatpak-${{ github.ref }}
-  cancel-in-progress: true
+  # Vedi il commento gemello in android_release.yml: stesso gruppo
+  # CONDIVISO tra i due workflow per evitare che entrambi scrivano sulla
+  # stessa GitHub Release nello stesso istante quando un tag v*.*.* viene
+  # pushato (causa dell'HttpError intermittente nello step di upload).
+  group: scripta-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-flutter:
