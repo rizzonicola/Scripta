@@ -1,10 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/cupertino.dart'
-    show cupertinoTextSelectionControls, cupertinoDesktopTextSelectionControls;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -14,43 +12,178 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../settings/providers/settings_provider.dart';
 
-/// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
-/// formattato: non esiste più una modalità "testo grezzo" separata.
-///
-/// ARCHITETTURA DELLA SELEZIONE — STATO LOGICO, NON VISIVO
-/// ---------------------------------------------------------------------
-/// La nota è renderizzata a blocchi in una `ListView.builder` virtualizzata
-/// (necessaria per note lunghe: costruire centinaia di blocchi Markdown
-/// fuori schermo sarebbe puro spreco). Il framework di selezione nativo di
-/// Flutter (`SelectableRegion`) però "vede" solo i widget effettivamente
-/// montati: una riga scrollata fuori dall'area visibile smette di
-/// partecipare alla selezione.
-///
-/// Per non dipendere da quanti blocchi risultano montati in un dato
-/// istante, questa vista mantiene un piccolo stato LOGICO, indipendente
-/// dall'albero dei widget:
-///  - [_LogicalDocument]: il testo "in chiaro" dell'intera nota (titolo +
-///    contenuto reso senza i marcatori Markdown), calcolato una sola volta
-///    per cambio di nota, sempre disponibile per intero in memoria — a
-///    prescindere da cosa sia realmente disegnato a schermo in quel
-///    momento (vedi doc di classe più sotto).
-///  - `_isFullDocumentSelected` / `_lastSelectedPlainText`: due semplici
-///    campi di stato (non legati a nessun `RenderObject`) che registrano
-///    COSA risulta selezionato, aggiornati ad ogni notifica di
-///    `onSelectionChanged`. Essendo campi di `State`, sopravvivono
-///    naturalmente a ogni scroll: una riga che esce e rientra
-///    nell'area visibile non li tocca in alcun modo.
-///
-/// "Seleziona tutto" non simula più un trascinamento né forza la
-/// costruzione sincrona dell'intera lista (il vecchio meccanismo, rimosso,
-/// portava `cacheExtent` a valori enormi solo per materializzare
-/// abbastanza widget da poter chiamare `selectAll()`): imposta invece
-/// direttamente lo stato logico, fa scorrere la nota fino all'inizio per
-/// mostrare la selezione e apre lo stesso menu contestuale nativo di
-/// sempre. Copia (da menu contestuale o da scorciatoia) legge il testo da
-/// copiare dallo stato logico — mai dal sottoinsieme di widget realmente
-/// montati — quindi è corretta carattere per carattere indipendentemente
-/// da quanto della nota sia stato materialmente disegnato.
+// ---------------------------------------------------------------------------
+// Modello Dati Logico del Documento
+// ---------------------------------------------------------------------------
+
+/// Rappresenta un singolo blocco logico del documento Markdown con i relativi
+/// offset globali [startOffset] ed [endOffset] nel testo complessivo serializzato.
+@immutable
+class DocumentBlock {
+  final int index;
+  final String text;
+  final int startOffset;
+  final int endOffset;
+  final bool isTitle;
+
+  const DocumentBlock({
+    required this.index,
+    required this.text,
+    required this.startOffset,
+    required this.endOffset,
+    this.isTitle = false,
+  });
+
+  int get length => endOffset - startOffset;
+
+  /// Calcola con precisione al singolo carattere/spazio quale porzione di testo
+  /// di questo blocco è inclusa nell'intervallo di selezione globale [globalStart, globalEnd].
+  /// Ritorna una tupla (localStart, localEnd) relativa a questo blocco, oppure null.
+  (int, int)? getLocalSelection(int globalStart, int globalEnd) {
+    if (globalStart >= globalEnd) return null;
+    final s = math.max(startOffset, globalStart);
+    final e = math.min(endOffset, globalEnd);
+    if (s < e) {
+      return (s - startOffset, e - startOffset);
+    }
+    return null;
+  }
+
+  /// Indica se il blocco è completamente selezionato.
+  bool isFullySelected(int globalStart, int globalEnd) {
+    return globalStart <= startOffset && globalEnd >= endOffset;
+  }
+}
+
+/// Rappresentazione completa del documento logico con testo serializzato per gli appunti.
+@immutable
+class LogicalDocument {
+  final String fullText;
+  final List<DocumentBlock> blocks;
+
+  const LogicalDocument({
+    required this.fullText,
+    required this.blocks,
+  });
+
+  factory LogicalDocument.parse({
+    required String title,
+    required String content,
+  }) {
+    final cleanTitle = title.trim();
+    final hasTitle = cleanTitle.isNotEmpty;
+    final effectiveContent = content.isEmpty ? '*Nessun contenuto*' : content;
+
+    final blocks = <DocumentBlock>[];
+    final buffer = StringBuffer();
+    var currentOffset = 0;
+    var blockIndex = 0;
+
+    // Blocco 0: Titolo (se presente)
+    if (hasTitle) {
+      blocks.add(DocumentBlock(
+        index: blockIndex++,
+        text: cleanTitle,
+        startOffset: currentOffset,
+        endOffset: currentOffset + cleanTitle.length,
+        isTitle: true,
+      ));
+      buffer.write(cleanTitle);
+      buffer.write('\n\n');
+      currentOffset += cleanTitle.length + 2;
+    }
+
+    // Blocchi Markdown del contenuto
+    final rawBlocks = _splitMarkdownIntoBlocks(effectiveContent);
+    for (int i = 0; i < rawBlocks.length; i++) {
+      final blockText = rawBlocks[i];
+      final start = currentOffset;
+      final end = start + blockText.length;
+
+      blocks.add(DocumentBlock(
+        index: blockIndex++,
+        text: blockText,
+        startOffset: start,
+        endOffset: end,
+        isTitle: false,
+      ));
+      buffer.write(blockText);
+      currentOffset = end;
+
+      if (i < rawBlocks.length - 1) {
+        buffer.write('\n\n');
+        currentOffset += 2;
+      }
+    }
+
+    return LogicalDocument(
+      fullText: buffer.toString(),
+      blocks: blocks,
+    );
+  }
+
+  static List<String> _splitMarkdownIntoBlocks(String content) {
+    final lines = content.split('\n');
+    final blocks = <String>[];
+    final currentBlock = <String>[];
+    bool inCodeBlock = false;
+
+    for (final line in lines) {
+      if (line.trimLeft().startsWith('```')) {
+        inCodeBlock = !inCodeBlock;
+        currentBlock.add(line);
+        if (!inCodeBlock) {
+          blocks.add(currentBlock.join('\n'));
+          currentBlock.clear();
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        currentBlock.add(line);
+        continue;
+      }
+
+      if (line.trim().isEmpty) {
+        if (currentBlock.isNotEmpty) {
+          blocks.add(currentBlock.join('\n'));
+          currentBlock.clear();
+        }
+      } else {
+        currentBlock.add(line);
+      }
+    }
+
+    if (currentBlock.isNotEmpty) {
+      blocks.add(currentBlock.join('\n'));
+    }
+
+    return blocks.isEmpty ? [''] : blocks;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Intent Tastiera
+// ---------------------------------------------------------------------------
+
+class _SelectAllIntent extends Intent {
+  const _SelectAllIntent();
+}
+
+class _CopyIntent extends Intent {
+  const _CopyIntent();
+}
+
+class _ClearSelectionIntent extends Intent {
+  const _ClearSelectionIntent();
+}
+
+// ---------------------------------------------------------------------------
+// Vista Principale
+// ---------------------------------------------------------------------------
+
+/// Vista di sola lettura di una nota renderizzata in Markdown, dotata di
+/// gestione logica della selezione su base offset indipendente dalla virtualizzazione.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -68,205 +201,164 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode(debugLabel: 'markdown-rendered-view');
+  final ContextMenuController _contextMenuController = ContextMenuController();
 
-  final GlobalKey<SelectableRegionState> _selectableRegionKey =
-      GlobalKey<SelectableRegionState>();
-  final FocusNode _selectionFocusNode = FocusNode(debugLabel: 'markdown-selection');
+  // Dimensione di cache fissa per garantire 60/120 fps costanti nello scroll
+  static const double _kStableCacheExtent = 600.0;
 
-  /// Extent di cache "a riposo": basta a garantire uno scroll fluido senza
-  /// materializzare blocchi lontani dall'area visibile.
-  static const double _kIdleCacheExtent = 800.0;
+  late LogicalDocument _document;
+  TextSelection? _selection;
 
-  /// Extent più ampio, applicato solo mentre è attiva una selezione
-  /// parziale: mantiene montati (e quindi selezionabili/trascinabili) un
-  /// numero maggiore di blocchi appena fuori schermo, per un trascinamento
-  /// meno "a scatti" vicino ai bordi della viewport. Non ha nulla a che
-  /// fare con "Seleziona tutto", che non dipende più dal numero di widget
-  /// montati (vedi [_performLogicalSelectAll]).
-  static const double _kActiveSelectionCacheExtent = 4000.0;
-
-  /// true quando ESISTE una selezione (parziale o totale) attualmente
-  /// nota al widget — pilota solo l'extent di cache sopra, non la
-  /// correttezza del testo copiato.
-  bool _hasActiveSelection = false;
-
-  /// Stato logico: l'intero documento risulta selezionato. Impostato da
-  /// [_performLogicalSelectAll] e riconfermato/azzerato in
-  /// [_handleSelectionChanged]; guidato da [_selectAllInFlight] per non
-  /// essere azzerato dall'eco della stessa chiamata a `selectAll()` nativa
-  /// (che il framework può riportare come selezione "solo" dei blocchi
-  /// attualmente montati, non dell'intero documento).
-  bool _isFullDocumentSelected = false;
-
-  /// true nel breve intervallo fra l'inizio di [_performLogicalSelectAll]
-  /// e il primo `onSelectionChanged` che ne consegue: serve a distinguere
-  /// "questa notifica è l'eco della nostra selectAll()" da "l'utente ha
-  /// iniziato un nuovo trascinamento manuale altrove".
-  bool _selectAllInFlight = false;
-
-  /// Ultimo testo effettivamente selezionato riportato dal framework
-  /// (`SelectedContent.plainText`), per una selezione parziale. È già
-  /// preciso al singolo carattere — Flutter calcola il testo selezionato a
-  /// livello di `TextPainter`, non per riga — la parte "logica" che
-  /// questa vista aggiunge è conservarlo come campo di stato indipendente
-  /// dal widget invece di ricalcolarlo dall'albero ad ogni utilizzo (per
-  /// esempio per Copia), così resta corretto anche se nel frattempo un
-  /// blocco coinvolto è uscito dall'area visibile ed è stato smontato.
-  String _lastSelectedPlainText = '';
-
-  double get _effectiveCacheExtent =>
-      _hasActiveSelection ? _kActiveSelectionCacheExtent : _kIdleCacheExtent;
-
-  TextSelectionControls get _platformSelectionControls {
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.iOS:
-        return cupertinoTextSelectionControls;
-      case TargetPlatform.macOS:
-        return cupertinoDesktopTextSelectionControls;
-      case TargetPlatform.android:
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.linux:
-      case TargetPlatform.windows:
-        return materialTextSelectionControls;
-    }
-  }
-
-  List<String>? _cachedBlocks;
-  String? _cachedContent;
-  String? _cachedTitle;
-  _LogicalDocument? _logicalDocument;
-
+  // Stili e Theme caching
   (ThemeData, String, double, double)? _cachedStyleKey;
   late MarkdownStyleSheet _markdownStyleSheet;
   late TextStyle _inlineCodeStyle;
   late TextStyle _titleTextStyle;
   late bool _isDark;
   late Color _primaryColor;
+  late Color _selectionColor;
   late double _fontSize;
+
+  bool get _hasSelection =>
+      _selection != null && !_selection!.isCollapsed && _selection!.isValid;
+
+  int get _selectionStart => _selection?.start ?? 0;
+  int get _selectionEnd => _selection?.end ?? 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _document = LogicalDocument.parse(
+      title: widget.title,
+      content: widget.content,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant MarkdownRenderedView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.title != widget.title || oldWidget.content != widget.content) {
+      setState(() {
+        _document = LogicalDocument.parse(
+          title: widget.title,
+          content: widget.content,
+        );
+        _selection = null;
+      });
+      _hideContextMenu();
+    }
+  }
 
   @override
   void dispose() {
+    _hideContextMenu();
     _scrollController.dispose();
-    _selectionFocusNode.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
-  /// Azzera lo stato logico di selezione: chiamato quando la nota
-  /// visualizzata cambia (nuovo titolo/contenuto), perché una selezione
-  /// calcolata sul documento precedente non ha più alcun significato sul
-  /// nuovo.
-  void _resetSelectionState() {
-    _hasActiveSelection = false;
-    _isFullDocumentSelected = false;
-    _selectAllInFlight = false;
-    _lastSelectedPlainText = '';
-  }
+  // -------------------------------------------------------------------------
+  // Logica di Selezione Logica (Offset-Based)
+  // -------------------------------------------------------------------------
 
-  /// Implementa "Seleziona tutto" sul piano dello stato logico: nessun
-  /// trascinamento simulato, nessuna costruzione forzata dell'intera
-  /// lista. Si limita a (1) dichiarare selezionato l'intero documento nel
-  /// nostro stato — operazione O(1), già disponibile in [_logicalDocument]
-  /// — (2) scorrere la nota fino all'inizio, così l'utente vede da dove
-  /// parte la selezione, e (3) invocare la `selectAll()` nativa per
-  /// ottenere comunque l'evidenziazione visiva e il menu contestuale già
-  /// esistenti sul sottoinsieme di blocchi che risultano montati in quel
-  /// momento. Cosa venga poi effettivamente copiato non dipende da quel
-  /// sottoinsieme: vedi l'override del pulsante "Copia" più sotto.
-  Future<void> _performLogicalSelectAll() async {
-    final doc = _logicalDocument;
-    if (doc == null || doc.plainText.isEmpty) return;
+  void _selectAll() {
+    if (_document.fullText.isEmpty) return;
 
     setState(() {
-      _isFullDocumentSelected = true;
-      _hasActiveSelection = true;
-      _selectAllInFlight = true;
+      _selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _document.fullText.length,
+      );
     });
+
     HapticsHelper.reportSelectionState(isCollapsed: false);
 
-    if (_scrollController.hasClients) {
-      await _scrollController.animateTo(
+    // Auto-scroll verso l'inizio per mostrare la testa della selezione se l'utente è scrollato in basso
+    if (_scrollController.hasClients && _scrollController.offset > 0) {
+      _scrollController.animateTo(
         0,
-        duration: const Duration(milliseconds: 220),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
       );
     }
-    if (!mounted) return;
 
-    // Un frame in più per essere certi che i blocchi in cima alla lista
-    // (target dello scroll appena completato) siano stati costruiti prima
-    // di chiedere al framework di selezionarli.
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
+    _showContextMenu(const Offset(200, 100));
+  }
 
-    _selectableRegionKey.currentState
-        ?.selectAll(SelectionChangedCause.keyboard);
-
-    // Rilascia la "guardia" al frame successivo: a quel punto l'eventuale
-    // notifica di `onSelectionChanged` innescata dalla chiamata qui sopra
-    // è già stata processata, quindi le notifiche successive possono di
-    // nuovo aggiornare liberamente lo stato logico.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _selectAllInFlight = false;
+  void _clearSelection() {
+    if (!_hasSelection) return;
+    setState(() {
+      _selection = null;
     });
+    HapticsHelper.reportSelectionState(isCollapsed: true);
+    _hideContextMenu();
   }
 
-  void _handleSelectionChanged(SelectedContent? content) {
-    final selectedText = content?.plainText ?? '';
-    final isEmpty = selectedText.isEmpty;
+  Future<void> _copySelection() async {
+    if (!_hasSelection) return;
+    final s = _selectionStart.clamp(0, _document.fullText.length);
+    final e = _selectionEnd.clamp(0, _document.fullText.length);
+    if (s >= e) return;
 
-    HapticsHelper.reportSelectionState(isCollapsed: isEmpty);
+    final textToCopy = _document.fullText.substring(s, e);
+    await Clipboard.setData(ClipboardData(text: textToCopy));
+    HapticsHelper.reportSelectionState(isCollapsed: true);
 
-    // Mentre siamo nella breve finestra aperta da
-    // `_performLogicalSelectAll`, questa notifica è solo l'eco della
-    // nostra stessa chiamata a `selectAll()`: il testo che riporta copre
-    // solo i blocchi montati in quell'istante, non l'intero documento, e
-    // non deve quindi "declassare" lo stato logico che abbiamo appena
-    // impostato.
-    if (_selectAllInFlight) return;
+    _hideContextMenu();
+  }
 
-    if (isEmpty) {
-      if (_hasActiveSelection || _isFullDocumentSelected) {
-        setState(() {
-          _hasActiveSelection = false;
-          _isFullDocumentSelected = false;
-          _lastSelectedPlainText = '';
-        });
-      }
-      return;
+  void _selectBlock(DocumentBlock block, [Offset? anchorPosition]) {
+    setState(() {
+      _selection = TextSelection(
+        baseOffset: block.startOffset,
+        extentOffset: block.endOffset,
+      );
+    });
+    HapticsHelper.reportSelectionState(isCollapsed: false);
+    _showContextMenu(anchorPosition ?? const Offset(200, 120));
+  }
+
+  // -------------------------------------------------------------------------
+  // Menu Contestuale
+  // -------------------------------------------------------------------------
+
+  void _showContextMenu(Offset globalPosition) {
+    _contextMenuController.remove();
+
+    _contextMenuController.show(
+      context: context,
+      contextMenuBuilder: (context) {
+        return AdaptiveTextSelectionToolbar.buttonItems(
+          anchors: TextSelectionToolbarAnchors(primaryAnchor: globalPosition),
+          buttonItems: [
+            ContextMenuButtonItem(
+              type: ContextMenuButtonType.copy,
+              onPressed: () {
+                _copySelection();
+              },
+            ),
+            ContextMenuButtonItem(
+              type: ContextMenuButtonType.selectAll,
+              onPressed: () {
+                _selectAll();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _hideContextMenu() {
+    if (_contextMenuController.isShown) {
+      _contextMenuController.remove();
     }
-
-    // Caso raro: l'utente seleziona "a mano" (drag) l'intera nota senza
-    // passare dal pulsante/scorciatoia dedicati. Confronto normalizzato
-    // (non uguaglianza stretta) perché la concatenazione nativa di più
-    // `SelectableText.rich` e la nostra estrazione in chiaro possono
-    // differire per spazi/interruzioni di riga senza che il contenuto
-    // "sostanziale" selezionato sia diverso.
-    final matchesFullDocument =
-        _logicalDocument?.matchesFullText(selectedText) ?? false;
-
-    if (!_hasActiveSelection ||
-        _isFullDocumentSelected != matchesFullDocument ||
-        _lastSelectedPlainText != selectedText) {
-      setState(() {
-        _hasActiveSelection = true;
-        _isFullDocumentSelected = matchesFullDocument;
-        _lastSelectedPlainText = selectedText;
-      });
-    }
   }
 
-  /// Testo da copiare per lo stato logico corrente: l'intero documento se
-  /// è attivo un "Seleziona tutto" logico, altrimenti l'ultima selezione
-  /// parziale nota — mai ricalcolato interrogando l'albero dei widget.
-  String get _textToCopy => _isFullDocumentSelected
-      ? (_logicalDocument?.plainText ?? '')
-      : _lastSelectedPlainText;
-
-  void _copyLogicalSelection() {
-    final text = _textToCopy;
-    if (text.isEmpty) return;
-    Clipboard.setData(ClipboardData(text: text));
-  }
+  // -------------------------------------------------------------------------
+  // Stili
+  // -------------------------------------------------------------------------
 
   void _ensureStyles(
     ThemeData theme,
@@ -280,6 +372,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
     _isDark = theme.brightness == Brightness.dark;
     _primaryColor = theme.colorScheme.primary;
+    _selectionColor = _primaryColor.withValues(alpha: 0.28);
     _fontSize = fontSize;
 
     final baseTextStyle = AppTheme.getTextStyleForFont(
@@ -385,6 +478,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Build
+  // -------------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -392,116 +489,64 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
     );
 
-    if (_cachedContent != widget.content || _cachedTitle != widget.title) {
-      _cachedContent = widget.content;
-      _cachedTitle = widget.title;
-      final effectiveContent =
-          widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
-      _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
-      _logicalDocument = _LogicalDocument.build(
-        title: widget.title,
-        blocks: _cachedBlocks!,
-      );
-      // La nota è cambiata: qualunque selezione precedente si riferiva al
-      // documento vecchio e non ha più significato su quello nuovo.
-      _resetSelectionState();
-    }
-
     _ensureStyles(theme, fontFamily, fontSize, lineHeight);
 
-    return _buildFormattedView(theme);
-  }
-
-  Widget _buildFormattedView(ThemeData theme) {
-    final blocks = _cachedBlocks!;
-    final hasTitle = widget.title.trim().isNotEmpty;
-    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
-
-    return DefaultSelectionStyle(
-      selectionColor: theme.colorScheme.primary.withValues(alpha: 0.35),
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
       child: Shortcuts(
         shortcuts: const <ShortcutActivator, Intent>{
-          SingleActivator(LogicalKeyboardKey.keyA, control: true):
-              SelectAllTextIntent(SelectionChangedCause.keyboard),
-          SingleActivator(LogicalKeyboardKey.keyA, meta: true):
-              SelectAllTextIntent(SelectionChangedCause.keyboard),
-          SingleActivator(LogicalKeyboardKey.keyC, control: true):
-              CopySelectionTextIntent.copy,
-          SingleActivator(LogicalKeyboardKey.keyC, meta: true):
-              CopySelectionTextIntent.copy,
+          SingleActivator(LogicalKeyboardKey.keyA, control: true): _SelectAllIntent(),
+          SingleActivator(LogicalKeyboardKey.keyA, meta: true): _SelectAllIntent(),
+          SingleActivator(LogicalKeyboardKey.keyC, control: true): _CopyIntent(),
+          SingleActivator(LogicalKeyboardKey.keyC, meta: true): _CopyIntent(),
+          SingleActivator(LogicalKeyboardKey.escape): _ClearSelectionIntent(),
         },
         child: Actions(
           actions: <Type, Action<Intent>>{
-            SelectAllTextIntent: CallbackAction<SelectAllTextIntent>(
-              onInvoke: (intent) {
-                unawaited(_performLogicalSelectAll());
-                return null;
-              },
+            _SelectAllIntent: CallbackAction<_SelectAllIntent>(
+              onInvoke: (_) => _selectAll(),
             ),
-            CopySelectionTextIntent:
-                CallbackAction<CopySelectionTextIntent>(
-              onInvoke: (intent) {
-                _copyLogicalSelection();
-                return null;
-              },
+            _CopyIntent: CallbackAction<_CopyIntent>(
+              onInvoke: (_) => _copySelection(),
+            ),
+            _ClearSelectionIntent: CallbackAction<_ClearSelectionIntent>(
+              onInvoke: (_) => _clearSelection(),
             ),
           },
-          child: SelectableRegion(
-            key: _selectableRegionKey,
-            focusNode: _selectionFocusNode,
-            selectionControls: _platformSelectionControls,
-            onSelectionChanged: _handleSelectionChanged,
-            contextMenuBuilder: (context, selectableRegionState) {
-              final items = selectableRegionState.contextMenuButtonItems
-                  .map((item) {
-                if (item.type == ContextMenuButtonType.selectAll) {
-                  return ContextMenuButtonItem(
-                    type: item.type,
-                    label: item.label,
-                    onPressed: () {
-                      ContextMenuController.removeAny();
-                      unawaited(_performLogicalSelectAll());
-                    },
-                  );
-                }
-                if (item.type == ContextMenuButtonType.copy &&
-                    _isFullDocumentSelected) {
-                  // Con l'intero documento logicamente selezionato, il
-                  // pulsante nativo copierebbe solo il sottoinsieme di
-                  // testo effettivamente montato: lo sostituiamo perché
-                  // copi sempre l'intero documento logico.
-                  return ContextMenuButtonItem(
-                    type: item.type,
-                    label: item.label,
-                    onPressed: () {
-                      ContextMenuController.removeAny();
-                      _copyLogicalSelection();
-                    },
-                  );
-                }
-                return item;
-              }).toList();
-
-              return AdaptiveTextSelectionToolbar.buttonItems(
-                anchors: selectableRegionState.contextMenuAnchors,
-                buttonItems: items,
-              );
-            },
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: _clearSelection,
             child: ScrollConfiguration(
-              behavior: _NoGlowScrollBehavior(),
+              behavior: const _NoGlowScrollBehavior(),
               child: ListView.builder(
-                key: const ValueKey('markdown-formatted-listview'),
+                key: const ValueKey('markdown-logical-rendered-listview'),
                 controller: _scrollController,
                 padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-                cacheExtent: _effectiveCacheExtent,
-                itemCount: itemCount,
+                cacheExtent: _kStableCacheExtent,
+                itemCount: _document.blocks.length,
                 itemBuilder: (context, index) {
-                  if (hasTitle && index == 0) {
-                    return _buildTitleWidget(theme);
+                  final block = _document.blocks[index];
+                  final localSelection = _hasSelection
+                      ? block.getLocalSelection(_selectionStart, _selectionEnd)
+                      : null;
+                  final isFullySelected = _hasSelection &&
+                      block.isFullySelected(_selectionStart, _selectionEnd);
+
+                  if (block.isTitle) {
+                    return _buildTitleWidget(
+                      theme: theme,
+                      block: block,
+                      localSelection: localSelection,
+                      isFullySelected: isFullySelected,
+                    );
                   }
-                  final blockIndex = hasTitle ? index - 1 : index;
-                  final blockText = blocks[blockIndex];
-                  return _buildMarkdownBlock(blockIndex, blockText);
+
+                  return _buildMarkdownBlockWidget(
+                    block: block,
+                    localSelection: localSelection,
+                    isFullySelected: isFullySelected,
+                  );
                 },
               ),
             ),
@@ -511,48 +556,69 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
-  Widget _buildTitleWidget(ThemeData theme) {
+  Widget _buildTitleWidget({
+    required ThemeData theme,
+    required DocumentBlock block,
+    required (int, int)? localSelection,
+    required bool isFullySelected,
+  }) {
+    Widget titleTextWidget;
+
+    if (localSelection != null && !isFullySelected) {
+      final (s, e) = localSelection;
+      titleTextWidget = Text.rich(
+        TextSpan(
+          children: [
+            if (s > 0)
+              TextSpan(text: block.text.substring(0, s)),
+            TextSpan(
+              text: block.text.substring(s, e),
+              style: TextStyle(
+                backgroundColor: _selectionColor,
+                borderRadius: const BorderRadius.all(Radius.circular(2)),
+              ),
+            ),
+            if (e < block.text.length)
+              TextSpan(text: block.text.substring(e)),
+          ],
+          style: _titleTextStyle,
+        ),
+      );
+    } else {
+      titleTextWidget = Text(
+        block.text,
+        style: _titleTextStyle,
+      );
+    }
+
     return Align(
       key: const ValueKey('rendered-block-title'),
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              widget.title,
-              style: _titleTextStyle,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onDoubleTapDown: (details) => _selectBlock(block, details.globalPosition),
+          onLongPressStart: (details) => _selectBlock(block, details.globalPosition),
+          onSecondaryTapUp: (details) => _selectBlock(block, details.globalPosition),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: isFullySelected ? _selectionColor : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
             ),
-            const SizedBox(height: 16),
-            Divider(
-              color: theme.colorScheme.outline.withValues(alpha: 0.3),
-              thickness: 1,
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMarkdownBlock(int blockIndex, String blockText) {
-    return Align(
-      key: ValueKey('rendered-block-$blockIndex-${blockText.hashCode}'),
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 840),
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: _MarkdownBlockView(
-              blockText: blockText,
-              styleSheet: _markdownStyleSheet,
-              inlineCodeStyle: _inlineCodeStyle,
-              fontSize: _fontSize,
-              isDark: _isDark,
-              primaryColor: _primaryColor,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                titleTextWidget,
+                const SizedBox(height: 16),
+                Divider(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.3),
+                  thickness: 1,
+                ),
+                const SizedBox(height: 20),
+              ],
             ),
           ),
         ),
@@ -560,142 +626,56 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
-  List<String> _splitMarkdownIntoBlocks(String content) {
-    final lines = content.split('\n');
-    final blocks = <String>[];
-    final currentBlock = <String>[];
-    bool inCodeBlock = false;
-
-    for (final line in lines) {
-      if (line.trimLeft().startsWith('```')) {
-        inCodeBlock = !inCodeBlock;
-        currentBlock.add(line);
-        if (!inCodeBlock) {
-          blocks.add(currentBlock.join('\n'));
-          currentBlock.clear();
-        }
-        continue;
-      }
-
-      if (inCodeBlock) {
-        currentBlock.add(line);
-        continue;
-      }
-
-      if (line.trim().isEmpty) {
-        if (currentBlock.isNotEmpty) {
-          blocks.add(currentBlock.join('\n'));
-          currentBlock.clear();
-        }
-      } else {
-        currentBlock.add(line);
-      }
-    }
-
-    if (currentBlock.isNotEmpty) {
-      blocks.add(currentBlock.join('\n'));
-    }
-
-    return blocks.isEmpty ? [''] : blocks;
-  }
-}
-
-/// Rappresentazione logica, puramente testuale, dell'intera nota — la
-/// "fonte di verità" per selezione totale e copia, completamente
-/// indipendente da quali blocchi risultano montati nella `ListView`
-/// virtualizzata in un dato istante (si veda la documentazione di classe
-/// di [MarkdownRenderedView]).
-///
-/// Ricostruita una sola volta per ogni cambio di `title`/`content` (non ad
-/// ogni frame): il costo di attraversare il testo una volta è trascurabile
-/// rispetto a quello di rendering dei blocchi Markdown stessi.
-@immutable
-class _LogicalDocument {
-  const _LogicalDocument({required this.plainText});
-
-  /// Testo "in chiaro" dell'intera nota: titolo (se presente) seguito dal
-  /// contenuto reso senza marcatori Markdown superflui (`**`, `#`, `_`,
-  /// link in forma `[testo](url)` ridotti al solo testo, ecc.), con
-  /// l'impaginazione a blocchi preservata da righe vuote. È esattamente
-  /// ciò che un utente si aspetterebbe copiando l'intera nota renderizzata.
-  final String plainText;
-
-  factory _LogicalDocument.build({
-    required String title,
-    required List<String> blocks,
+  Widget _buildMarkdownBlockWidget({
+    required DocumentBlock block,
+    required (int, int)? localSelection,
+    required bool isFullySelected,
   }) {
-    final buffer = StringBuffer();
-    final trimmedTitle = title.trim();
-    if (trimmedTitle.isNotEmpty) {
-      buffer.writeln(trimmedTitle);
-      buffer.writeln();
-    }
-
-    final parser = md.Document(extensionSet: md.ExtensionSet.gitHubFlavored);
-    var wroteAnyBlock = false;
-    for (final block in blocks) {
-      final plain = _plainTextForBlock(parser, block);
-      if (plain.isEmpty) continue;
-      if (wroteAnyBlock) buffer.write('\n\n');
-      buffer.write(plain);
-      wroteAnyBlock = true;
-    }
-
-    return _LogicalDocument(plainText: buffer.toString());
+    return Align(
+      key: ValueKey('rendered-block-${block.index}'),
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 840),
+        child: SizedBox(
+          width: double.infinity,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onDoubleTapDown: (details) => _selectBlock(block, details.globalPosition),
+              onLongPressStart: (details) => _selectBlock(block, details.globalPosition),
+              onSecondaryTapUp: (details) => _selectBlock(block, details.globalPosition),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                decoration: BoxDecoration(
+                  color: isFullySelected
+                      ? _selectionColor
+                      : (localSelection != null
+                          ? _selectionColor.withValues(alpha: 0.15)
+                          : Colors.transparent),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: _MarkdownBlockView(
+                  blockText: block.text,
+                  styleSheet: _markdownStyleSheet,
+                  inlineCodeStyle: _inlineCodeStyle,
+                  fontSize: _fontSize,
+                  isDark: _isDark,
+                  primaryColor: _primaryColor,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
-
-  static String _plainTextForBlock(md.Document parser, String blockMarkdown) {
-    final nodes = parser.parseLines(blockMarkdown.split('\n'));
-    final buffer = StringBuffer();
-    for (final node in nodes) {
-      _writePlainText(node, buffer);
-    }
-    return buffer.toString().trim();
-  }
-
-  static const _kBlockLevelTags = {
-    'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'li', 'blockquote', 'pre', 'tr',
-  };
-
-  static void _writePlainText(md.Node node, StringBuffer buffer) {
-    if (node is md.Text) {
-      buffer.write(node.text);
-      return;
-    }
-    if (node is md.Element) {
-      if (node.tag == 'br') {
-        buffer.write('\n');
-        return;
-      }
-      final children = node.children;
-      if (children != null && children.isNotEmpty) {
-        for (final child in children) {
-          _writePlainText(child, buffer);
-        }
-      } else {
-        buffer.write(node.textContent);
-      }
-      if (_kBlockLevelTags.contains(node.tag)) {
-        buffer.write('\n');
-      }
-    }
-  }
-
-  /// Confronto "best-effort" (normalizzato sugli spazi bianchi) fra un
-  /// testo effettivamente selezionato a video e l'intero documento
-  /// logico. Usato solo per il caso raro in cui l'utente selezioni "a
-  /// mano" l'intera nota senza passare dal pulsante/scorciatoia dedicati:
-  /// per il percorso principale (`_performLogicalSelectAll`) lo stato
-  /// viene impostato direttamente, senza bisogno di questo confronto.
-  bool matchesFullText(String candidate) {
-    if (candidate.isEmpty || plainText.isEmpty) return false;
-    return _normalize(candidate) == _normalize(plainText);
-  }
-
-  static String _normalize(String value) =>
-      value.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
+
+// ---------------------------------------------------------------------------
+// Render del Blocco Markdown
+// ---------------------------------------------------------------------------
 
 class _MarkdownBlockView extends StatefulWidget {
   final String blockText;
@@ -824,10 +804,11 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
 }
 
 class _NoGlowScrollBehavior extends ScrollBehavior {
+  const _NoGlowScrollBehavior();
+
   @override
   Widget buildOverscrollIndicator(
       BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
 }
-
