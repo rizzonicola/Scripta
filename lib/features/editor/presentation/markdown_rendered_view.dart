@@ -190,11 +190,13 @@ class MarkdownBlockItem extends StatelessWidget {
 // ============================================================================
 
 class MarkdownRenderedView extends StatefulWidget {
+  final String? title;
   final List<String>? markdownBlocks;
   final String? content;
 
   const MarkdownRenderedView({
     super.key,
+    this.title,
     this.markdownBlocks,
     this.content,
   }) : assert(markdownBlocks != null || content != null,
@@ -229,48 +231,67 @@ class _MarkdownRenderedViewState extends State<MarkdownRenderedView> {
     final blocksList = widget.blocks;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Viewer Markdown'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.select_all),
-            tooltip: 'Seleziona Tutto',
-            onPressed: () {
-              _selectionController.selectAll(blocksList.length);
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.copy),
-            tooltip: 'Copia',
-            onPressed: () async {
-              await _selectionController.copyToClipboard(blocksList);
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Testo copiato negli appunti!')),
+      appBar: widget.title != null
+          ? AppBar(
+              title: Text(widget.title!),
+              actions: _buildActions(blocksList),
+            )
+          : null,
+      body: Column(
+        children: [
+          if (widget.title == null)
+            Material(
+              elevation: 1,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: _buildActions(blocksList),
+              ),
+            ),
+          Expanded(
+            child: ListView.builder(
+              cacheExtent: 250.0,
+              itemCount: blocksList.length,
+              itemBuilder: (context, index) {
+                return MarkdownBlockItem(
+                  key: ValueKey('block_$index'),
+                  index: index,
+                  rawText: blocksList[index],
+                  selectionController: _selectionController,
                 );
-              }
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.clear),
-            tooltip: 'Deseleziona',
-            onPressed: () => _selectionController.clear(),
+              },
+            ),
           ),
         ],
       ),
-      body: ListView.builder(
-        cacheExtent: 250.0,
-        itemCount: blocksList.length,
-        itemBuilder: (context, index) {
-          return MarkdownBlockItem(
-            key: ValueKey('block_$index'),
-            index: index,
-            rawText: blocksList[index],
-            selectionController: _selectionController,
-          );
-        },
-      ),
     );
   }
-}
 
+  List<Widget> _buildActions(List<String> blocksList) {
+    return [
+      IconButton(
+        icon: const Icon(Icons.select_all),
+        tooltip: 'Seleziona Tutto',
+        onPressed: () {
+          _selectionController.selectAll(blocksList.length);
+        },
+      ),
+      IconButton(
+        icon: const Icon(Icons.copy),
+        tooltip: 'Copia',
+        onPressed: () async {
+          await _selectionController.copyToClipboard(blocksList);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Testo copiato negli appunti!')),
+            );
+          }
+        },
+      ),
+      IconButton(
+        icon: const Icon(Icons.clear),
+        tooltip: 'Deseleziona',
+        onPressed: () => _selectionController.clear(),
+      ),
+    ];
+  }
+}
