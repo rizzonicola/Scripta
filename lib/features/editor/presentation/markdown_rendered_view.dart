@@ -1,6 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+// Solo i controlli di selezione Cupertino: `show` evita qualunque rischio
+// di export ambiguo con `material.dart`. Servono per replicare la scelta
+// platform-adaptive che `SelectionArea` faceva implicitamente di default
+// (Material su Android/desktop non-Apple, Cupertino su iOS/macOS), ora che
+// usiamo `SelectableRegion` esplicito e dobbiamo specificarli noi stessi.
+import 'package:flutter/cupertino.dart'
+    show cupertinoTextSelectionControls, cupertinoDesktopTextSelectionControls;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -16,7 +23,9 @@ import '../../settings/providers/settings_provider.dart';
 /// formattato: non esiste più una modalità "testo grezzo" separata.
 ///
 /// La selezione del testo avviene direttamente sui blocchi formattati
-/// tramite [SelectionArea]. Per restare fluida anche su note molto estese,
+/// tramite [SelectableRegion] (l'equivalente esplicito di [SelectionArea],
+/// necessario qui per poter intervenire su "Seleziona tutto" — vedi sotto).
+/// Per restare fluida anche su note molto estese,
 /// questa vista porta al suo interno le ottimizzazioni che in precedenza
 /// erano riservate alla (ex) modalità testo grezzo:
 ///  - gli stili derivati da tema/font (incluso il [MarkdownStyleSheet])
@@ -33,9 +42,19 @@ import '../../settings/providers/settings_provider.dart';
 ///    del contenuto, cosicché lo scheletro di `ListView.builder` possa
 ///    riutilizzare correttamente Element/RenderObject anche se l'indice
 ///    del titolo/blocco dovesse spostarsi;
-///  - la lista sfrutta un `cacheExtent` maggiorato per mantenere "caldi"
-///    i blocchi appena fuori schermo durante il trascinamento della
-///    selezione vicino ai bordi della viewport.
+///  - la lista sfrutta un `cacheExtent` dinamico per mantenere "caldi" (cioè
+///    montati, anche se fuori dalla viewport) i blocchi coinvolti in una
+///    selezione attiva. In assenza di selezione il `cacheExtent` resta
+///    piccolo (leggero, poca RAM); non appena l'utente inizia a
+///    selezionare/trascinare cresce per evitare sia il "flash bianco" di
+///    blocchi ri-costruiti da zero al rientro in viewport, sia — nel caso
+///    di "Seleziona tutto" — l'esclusione dei blocchi non ancora montati
+///    dal `SelectionRegistrar` (che altrimenti li lascia fuori dalla
+///    selezione, essendo `SelectionArea`/`SelectableRegion` in grado di
+///    selezionare solo i `Selectable` correntemente registrati, cioè
+///    quelli effettivamente costruiti da `ListView.builder`). Il
+///    `cacheExtent` maggiorato viene rilasciato non appena la selezione
+///    collassa, per non appesantire la RAM in modo permanente.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -53,6 +72,62 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final ScrollController _scrollController = ScrollController();
+
+  // --- Gestione selezione full-document (vedi doc-comment della classe) ---
+
+  // Sostituisce `SelectionArea` con `SelectableRegion` esplicito: serve la
+  // GlobalKey per poter invocare programmaticamente `selectAll()` sull'intero
+  // documento (non disponibile tramite la sola API di `SelectionArea`).
+  final GlobalKey<SelectableRegionState> _selectableRegionKey =
+      GlobalKey<SelectableRegionState>();
+  final FocusNode _selectionFocusNode = FocusNode(debugLabel: 'markdown-selection');
+
+  // `cacheExtent` di riposo: leggero, sufficiente per uno scroll fluido
+  // ordinario senza tenere in vita blocchi lontani dalla viewport.
+  static const double _kIdleCacheExtent = 800.0;
+  // `cacheExtent` usato mentre l'utente sta trascinando una selezione
+  // "normale" (non un select-all): abbastanza ampio da coprire diversi
+  // schermate fuori viewport, evitando che i blocchi coinvolti nel
+  // trascinamento vengano scartati e poi ricostruiti da zero al rientro
+  // (il "flash bianco").
+  static const double _kActiveSelectionCacheExtent = 6000.0;
+  // `cacheExtent` usato per garantire che un "Seleziona tutto" copra
+  // davvero l'intero buffer: abbastanza grande da forzare la costruzione
+  // di qualunque nota di dimensioni realistiche, ma finito (evitiamo
+  // `double.infinity`, che nei calcoli di offset dello scrolling di
+  // Flutter può propagare `NaN`/eccezioni di layout).
+  static const double _kFullDocumentCacheExtent = 1.0e7;
+
+  // true durante una selezione attiva (drag in corso o testo selezionato
+  // non collassato), a prescindere dalla causa.
+  bool _hasActiveSelection = false;
+  // true solo mentre è in corso/valida una selezione "tutto il documento"
+  // esplicitamente richiesta (scorciatoia da tastiera o voce di menu).
+  bool _forceFullRealization = false;
+
+  double get _effectiveCacheExtent {
+    if (_forceFullRealization) return _kFullDocumentCacheExtent;
+    if (_hasActiveSelection) return _kActiveSelectionCacheExtent;
+    return _kIdleCacheExtent;
+  }
+
+  // Replica la scelta platform-adaptive che `SelectionArea` applicava di
+  // default (maniglie/toolbar in stile Material ovunque tranne iOS/macOS,
+  // dove usa lo stile Cupertino), ora che specifichiamo esplicitamente
+  // `selectionControls` su `SelectableRegion`.
+  TextSelectionControls get _platformSelectionControls {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+        return cupertinoTextSelectionControls;
+      case TargetPlatform.macOS:
+        return cupertinoDesktopTextSelectionControls;
+      case TargetPlatform.android:
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.windows:
+        return materialTextSelectionControls;
+    }
+  }
 
   // Cache del parsing in blocchi: invalidata solo quando il contenuto
   // della nota cambia davvero (non ad ogni build/rebuild del genitore).
@@ -77,7 +152,88 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _selectionFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Gestore centrale di "Seleziona tutto" per l'intero buffer della nota.
+  ///
+  /// Porting dell'algoritmo della ex modalità testo grezzo: lì un singolo
+  /// `EditableText` conteneva SEMPRE l'intero testo, quindi un
+  /// `TextSelection` da 0 a `text.length` copriva per costruzione l'intero
+  /// buffer, in modo sincrono, senza dipendere da cosa fosse attualmente
+  /// montato a schermo.
+  ///
+  /// Qui il documento è invece frammentato in N blocchi Markdown dentro un
+  /// `ListView.builder`: `SelectableRegion.selectAll()` può selezionare
+  /// solo i `Selectable` attualmente registrati presso il suo
+  /// `SelectionRegistrar`, cioè solo i blocchi correntemente montati. Se
+  /// chiamato a `cacheExtent` normale, i blocchi fuori viewport (non
+  /// montati) restano fuori dalla selezione: è esattamente il bug da
+  /// correggere.
+  ///
+  /// La correzione forza quindi, in ordine:
+  ///  1. l'espansione del `cacheExtent` della lista a un valore che copre
+  ///     l'intero documento, cosicché `ListView.builder` costruisca (monti)
+  ///     OGNI blocco, anche quelli lontanissimi dalla viewport corrente;
+  ///  2. l'attesa di due frame (build + layout) affinché ogni blocco
+  ///     appena montato abbia effettivamente completato la registrazione
+  ///     presso il `SelectionRegistrar` (la registrazione avviene durante
+  ///     l'attach/layout dei render object dei blocchi, non è sincrona
+  ///     rispetto al solo `setState`);
+  ///  3. SOLO a quel punto, l'invocazione di `selectAll()` sulla region,
+  ///     che a questo punto vede l'intero documento come selezionabile.
+  ///
+  /// Il `cacheExtent` maggiorato resta attivo finché la selezione non
+  /// collassa (vedi `onSelectionChanged`), poi viene rilasciato.
+  void _performFullDocumentSelectAll() {
+    if (!_forceFullRealization) {
+      setState(() {
+        _forceFullRealization = true;
+        _hasActiveSelection = true;
+      });
+    }
+
+    // Primo frame: il rebuild con `_effectiveCacheExtent` maggiorato ha
+    // luogo e `ListView.builder`/`Sliver` iniziano a montare i blocchi
+    // fuori viewport.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Secondo frame: layout completato, i nuovi `Selectable` si sono
+      // registrati. Solo ora il `selectAll()` è garantito coprire l'intero
+      // buffer, in modo sicuro (nessuna eccezione per Selectable non
+      // ancora presenti nell'albero).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _selectableRegionKey.currentState
+            ?.selectAll(SelectionChangedCause.keyboard);
+      });
+    });
+  }
+
+  void _handleSelectionChanged(SelectedContent? content) {
+    final isEmpty = content == null || content.plainText.isEmpty;
+
+    // Riusa lo stesso "gate" aptico centralizzato già usato dall'editor:
+    // una sola vibrazione leggera all'avvio di ogni nuova selezione,
+    // silenzio durante il trascinamento (o comportamento "strong"/"off"
+    // secondo le impostazioni utente).
+    HapticsHelper.reportSelectionState(isCollapsed: isEmpty);
+
+    if (isEmpty) {
+      // La selezione è stata deselezionata/collassata: rilascia la cache
+      // di layout maggiorata, tornando al `cacheExtent` leggero di riposo.
+      if (_hasActiveSelection || _forceFullRealization) {
+        setState(() {
+          _hasActiveSelection = false;
+          _forceFullRealization = false;
+        });
+      }
+    } else if (!_hasActiveSelection) {
+      setState(() {
+        _hasActiveSelection = true;
+      });
+    }
   }
 
   void _ensureStyles(
@@ -226,40 +382,86 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // per continuità visiva.
     return DefaultSelectionStyle(
       selectionColor: theme.colorScheme.primary.withValues(alpha: 0.35),
-      child: SelectionArea(
-        // Il menu contestuale di default di `SelectionArea` include già
-        // "Copia" e "Seleziona tutto" (oltre alla scorciatoia da tastiera
-        // Ctrl/Cmd+A quando l'area ha il focus): non va ricostruito da
-        // capo, farlo comporterebbe solo allocazioni aggiuntive ad ogni
-        // apertura del menu senza alcun beneficio reale.
-        onSelectionChanged: (content) {
-          // Riusa lo stesso "gate" aptico centralizzato già usato
-          // dall'editor: una sola vibrazione leggera all'avvio di ogni
-          // nuova selezione, silenzio durante il trascinamento (o
-          // comportamento "strong"/"off" secondo le impostazioni utente).
-          HapticsHelper.reportSelectionState(
-            isCollapsed: content == null || content.plainText.isEmpty,
-          );
+      // `Shortcuts`+`Actions` a livello di antenato intercettano
+      // `SelectAllTextIntent` (Ctrl/Cmd+A) PRIMA che raggiunga l'azione di
+      // default interna di `SelectableRegion`. Questo funziona perché
+      // `SelectableRegion`, come `EditableText`, implementa le proprie
+      // scorciatoie di editing tramite `Action<T>.overridable(...)`:
+      // un'azione "overridable" cerca prima un antenato che gestisca lo
+      // stesso tipo di `Intent` e, se lo trova (come in questo caso), le
+      // cede il controllo invece di eseguire il comportamento di default
+      // (che sarebbe un `selectAll()` limitato ai soli blocchi già
+      // montati: esattamente il bug da correggere).
+      child: Shortcuts(
+        shortcuts: const <ShortcutActivator, Intent>{
+          SingleActivator(LogicalKeyboardKey.keyA, control: true):
+              SelectAllTextIntent(SelectionChangedCause.keyboard),
+          SingleActivator(LogicalKeyboardKey.keyA, meta: true):
+              SelectAllTextIntent(SelectionChangedCause.keyboard),
         },
-        child: ScrollConfiguration(
-          behavior: _NoGlowScrollBehavior(),
-          child: ListView.builder(
-            key: const ValueKey('markdown-formatted-listview'),
-            controller: _scrollController,
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-            // Mantiene "caldi" i blocchi appena fuori viewport, così il
-            // trascinamento di una maniglia di selezione verso il bordo
-            // dello schermo non innesca layout costosi a scatti.
-            cacheExtent: 800,
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-              if (hasTitle && index == 0) {
-                return _buildTitleWidget(theme);
-              }
-              final blockIndex = hasTitle ? index - 1 : index;
-              final blockText = blocks[blockIndex];
-              return _buildMarkdownBlock(blockIndex, blockText);
+        child: Actions(
+          actions: <Type, Action<Intent>>{
+            SelectAllTextIntent: CallbackAction<SelectAllTextIntent>(
+              onInvoke: (intent) {
+                _performFullDocumentSelectAll();
+                return null;
+              },
+            ),
+          },
+          child: SelectableRegion(
+            key: _selectableRegionKey,
+            focusNode: _selectionFocusNode,
+            selectionControls: _platformSelectionControls,
+            onSelectionChanged: _handleSelectionChanged,
+            contextMenuBuilder: (context, selectableRegionState) {
+              // Ricostruisce il menu contestuale di default (che include
+              // già "Copia" e "Seleziona tutto"), sostituendo però il
+              // gestore della sola voce "Seleziona tutto" con la nostra
+              // versione full-document: il comportamento predefinito di
+              // `SelectableRegionState` chiamerebbe altrimenti un
+              // `selectAll()` diretto, soggetto allo stesso bug dei
+              // blocchi non montati.
+              final items = selectableRegionState.contextMenuButtonItems
+                  .map((item) {
+                if (item.type == ContextMenuButtonType.selectAll) {
+                  return ContextMenuButtonItem(
+                    type: item.type,
+                    label: item.label,
+                    onPressed: () {
+                      ContextMenuController.removeAny();
+                      _performFullDocumentSelectAll();
+                    },
+                  );
+                }
+                return item;
+              }).toList();
+
+              return AdaptiveTextSelectionToolbar.buttonItems(
+                anchors: selectableRegionState.contextMenuAnchors,
+                buttonItems: items,
+              );
             },
+            child: ScrollConfiguration(
+              behavior: _NoGlowScrollBehavior(),
+              child: ListView.builder(
+                key: const ValueKey('markdown-formatted-listview'),
+                controller: _scrollController,
+                padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+                // Dinamico: leggero a riposo, maggiorato durante una
+                // selezione attiva o un "Seleziona tutto" (vedi
+                // `_effectiveCacheExtent` e il doc-comment della classe).
+                cacheExtent: _effectiveCacheExtent,
+                itemCount: itemCount,
+                itemBuilder: (context, index) {
+                  if (hasTitle && index == 0) {
+                    return _buildTitleWidget(theme);
+                  }
+                  final blockIndex = hasTitle ? index - 1 : index;
+                  final blockText = blocks[blockIndex];
+                  return _buildMarkdownBlock(blockIndex, blockText);
+                },
+              ),
+            ),
           ),
         ),
       ),
