@@ -204,13 +204,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'markdown-rendered-view');
   final ContextMenuController _contextMenuController = ContextMenuController();
 
-  // Dimensione di cache fissa per garantire 60/120 fps costanti nello scroll
+  // Dimensione fissa di cache per garantire fluidità a 60/120 fps
   static const double _kStableCacheExtent = 600.0;
 
   late LogicalDocument _document;
   TextSelection? _selection;
 
-  // Stili e Theme caching
   (ThemeData, String, double, double)? _cachedStyleKey;
   late MarkdownStyleSheet _markdownStyleSheet;
   late TextStyle _inlineCodeStyle;
@@ -274,7 +273,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
     HapticsHelper.reportSelectionState(isCollapsed: false);
 
-    // Auto-scroll verso l'inizio per mostrare la testa della selezione se l'utente è scrollato in basso
+    // Auto-scroll fluido all'inizio per mostrare la selezione se l'utente ha scrollato
     if (_scrollController.hasClients && _scrollController.offset > 0) {
       _scrollController.animateTo(
         0,
@@ -283,7 +282,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       );
     }
 
-    _showContextMenu(const Offset(200, 100));
+    _showContextMenu();
   }
 
   void _clearSelection() {
@@ -316,21 +315,33 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       );
     });
     HapticsHelper.reportSelectionState(isCollapsed: false);
-    _showContextMenu(anchorPosition ?? const Offset(200, 120));
+    _showContextMenu(anchorPosition);
   }
 
   // -------------------------------------------------------------------------
-  // Menu Contestuale
+  // Menu Contestuale Adattivo
   // -------------------------------------------------------------------------
 
-  void _showContextMenu(Offset globalPosition) {
+  void _showContextMenu([Offset? globalPosition]) {
     _contextMenuController.remove();
+
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    final Offset anchor;
+    if (globalPosition != null) {
+      anchor = globalPosition;
+    } else if (box != null && box.hasSize) {
+      final size = box.size;
+      final topLeft = box.localToGlobal(Offset.zero);
+      anchor = Offset(topLeft.dx + (size.width / 2), topLeft.dy + 80);
+    } else {
+      anchor = const Offset(200, 100);
+    }
 
     _contextMenuController.show(
       context: context,
       contextMenuBuilder: (context) {
         return AdaptiveTextSelectionToolbar.buttonItems(
-          anchors: TextSelectionToolbarAnchors(primaryAnchor: globalPosition),
+          anchors: TextSelectionToolbarAnchors(primaryAnchor: anchor),
           buttonItems: [
             ContextMenuButtonItem(
               type: ContextMenuButtonType.copy,
@@ -575,7 +586,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
               text: block.text.substring(s, e),
               style: TextStyle(
                 backgroundColor: _selectionColor,
-                borderRadius: const BorderRadius.all(Radius.circular(2)),
               ),
             ),
             if (e < block.text.length)
