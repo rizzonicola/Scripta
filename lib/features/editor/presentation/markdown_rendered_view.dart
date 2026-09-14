@@ -283,6 +283,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   late LogicalDocument _document;
   TextSelection? _logicalSelection;
+  String? _lastVisualSelectedText;
 
   // Caching stili Markdown
   (ThemeData, String, double, double)? _cachedStyleKey;
@@ -336,6 +337,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           content: widget.content,
         );
         _logicalSelection = null;
+        _lastVisualSelectedText = null;
       });
     }
   }
@@ -352,6 +354,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   // -------------------------------------------------------------------------
 
   void _handleSelectionChanged(SelectedContent? content) {
+    _lastVisualSelectedText = content?.plainText;
     final isEmpty = content == null || content.plainText.isEmpty;
     HapticsHelper.reportSelectionState(isCollapsed: isEmpty);
 
@@ -409,11 +412,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       if (s < e) {
         textToCopy = _document.fullText.substring(s, e);
       }
-    } else {
-      final fallback = _selectableRegionKey.currentState?.getSelectedContent();
-      if (fallback != null) {
-        textToCopy = fallback.plainText;
-      }
+    } else if (_lastVisualSelectedText != null && _lastVisualSelectedText!.isNotEmpty) {
+      textToCopy = _lastVisualSelectedText!;
     }
 
     if (textToCopy.isNotEmpty) {
