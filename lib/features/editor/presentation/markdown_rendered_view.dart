@@ -1,555 +1,267 @@
-import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/cupertino.dart'
-    show cupertinoTextSelectionControls, cupertinoDesktopTextSelectionControls;
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:markdown/markdown.dart' as md;
-import 'package:url_launcher/url_launcher.dart';
-import '../../../core/l10n/app_localizations.dart';
-import '../../../core/theme/app_theme.dart';
-import '../../../core/utils/haptics_helper.dart';
-import '../../../core/utils/syntax_highlighter.dart';
-import '../../settings/providers/settings_provider.dart';
 
-/// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
-/// formattato: non esiste più una modalità "testo grezzo" separata.
-class MarkdownRenderedView extends ConsumerStatefulWidget {
-  final String title;
-  final String content;
+// ============================================================================
+// 1. MODELLO DI STATO DELLA SELEZIONE
+// ============================================================================
 
-  const MarkdownRenderedView({
-    super.key,
-    required this.title,
-    required this.content,
-  });
-
-  @override
-  ConsumerState<MarkdownRenderedView> createState() =>
-      _MarkdownRenderedViewState();
+abstract class BlockSelectionState {
+  const BlockSelectionState();
 }
 
-class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
-  final ScrollController _scrollController = ScrollController();
+/// Il blocco non è selezionato
+class BlockSelectedNone extends BlockSelectionState {
+  const BlockSelectedNone();
+}
 
-  final GlobalKey<SelectableRegionState> _selectableRegionKey =
-      GlobalKey<SelectableRegionState>();
-  final FocusNode _selectionFocusNode = FocusNode(debugLabel: 'markdown-selection');
+/// Il blocco è completamente selezionato (Zero calcoli di layout visivo)
+class BlockSelectedFull extends BlockSelectionState {
+  const BlockSelectedFull();
+}
 
-  static const double _kIdleCacheExtent = 800.0;
-  static const double _kActiveSelectionCacheExtent = 6000.0;
-  static const double _kFullDocumentCacheExtent = 1.0e7;
+/// Il blocco contiene una o più selezioni parziali/disgiunte
+class BlockSelectedPartial extends BlockSelectionState {
+  final List<TextRange> ranges;
+  const BlockSelectedPartial(this.ranges);
+}
 
-  bool _hasActiveSelection = false;
-  bool _forceFullRealization = false;
+// ============================================================================
+// 2. CONTROLLER LOGICO DELLA SELEZIONE (Headless Selection Controller)
+// ============================================================================
 
-  double get _effectiveCacheExtent {
-    if (_forceFullRealization) return _kFullDocumentCacheExtent;
-    if (_hasActiveSelection) return _kActiveSelectionCacheExtent;
-    return _kIdleCacheExtent;
+class DocumentSelectionController extends ValueNotifier<Map<int, BlockSelectionState>> {
+  DocumentSelectionController() : super({});
+
+  bool get hasSelection => value.isNotEmpty && value.values.any((s) => s is! BlockSelectedNone);
+
+  /// Seleziona tutto il documento in 0ms (imposta lo stato FULL su tutti i blocchi)
+  void selectAll(int totalBlocks) {
+    final newState = <int, BlockSelectionState>{};
+    for (int i = 0; i < totalBlocks; i++) {
+      newState[i] = const BlockSelectedFull();
+    }
+    value = newState;
   }
 
-  TextSelectionControls get _platformSelectionControls {
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.iOS:
-        return cupertinoTextSelectionControls;
-      case TargetPlatform.macOS:
-        return cupertinoDesktopTextSelectionControls;
-      case TargetPlatform.android:
-      case TargetPlatform.fuchsia:
-      case TargetPlatform.linux:
-      case TargetPlatform.windows:
-        return materialTextSelectionControls;
+  /// Deseleziona tutto
+  void clear() {
+    value = {};
+  }
+
+  /// Aggiorna lo stato di un singolo blocco (es. deselezione manuale o dragging)
+  void setBlockState(int index, BlockSelectionState state) {
+    final newState = Map<int, BlockSelectionState>.from(value);
+    if (state is BlockSelectedNone) {
+      newState.remove(index);
+    } else {
+      newState[index] = state;
+    }
+    value = newState;
+  }
+
+  /// Estrae il testo selezionato bypassando completamente l'interfaccia visiva
+  String getSelectedText(List<String> rawBlocks) {
+    final buffer = StringBuffer();
+    for (int i = 0; i < rawBlocks.length; i++) {
+      final state = value[i] ?? const BlockSelectedNone();
+      final text = rawBlocks[i];
+
+      if (state is BlockSelectedFull) {
+        buffer.writeln(text);
+      } else if (state is BlockSelectedPartial) {
+        for (final range in state.ranges) {
+          final start = range.start.clamp(0, text.length);
+          final end = range.end.clamp(0, text.length);
+          if (start < end) {
+            buffer.write(text.substring(start, end));
+          }
+        }
+        buffer.writeln();
+      }
+    }
+    return buffer.toString().trimRight();
+  }
+
+  /// Copia negli appunti di sistema
+  Future<void> copyToClipboard(List<String> rawBlocks) async {
+    final text = getSelectedText(rawBlocks);
+    if (text.isNotEmpty) {
+      await Clipboard.setData(ClipboardData(text: text));
     }
   }
+}
 
-  List<String>? _cachedBlocks;
-  String? _cachedContent;
+// ============================================================================
+// 3. WIDGET DEL BLOCCO DI RIGA (Optimized Block Item)
+// ============================================================================
 
-  (ThemeData, String, double, double)? _cachedStyleKey;
-  late MarkdownStyleSheet _markdownStyleSheet;
-  late TextStyle _inlineCodeStyle;
-  late TextStyle _titleTextStyle;
-  late bool _isDark;
-  late Color _primaryColor;
-  late double _fontSize;
+class MarkdownBlockItem extends StatelessWidget {
+  final int index;
+  final String rawText;
+  final DocumentSelectionController selectionController;
+
+  const MarkdownBlockItem({
+    required Key key,
+    required this.index,
+    required this.rawText,
+    required this.selectionController,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final selectionColor = Theme.of(context).primaryColor.withOpacity(0.25);
+
+    return ValueListenableBuilder<Map<int, BlockSelectionState>>(
+      valueListenable: selectionController,
+      // Passiamo il rendering standard del Markdown come `child` pre-costruito per la massima resa
+      child: _buildStandardMarkdownContent(rawText),
+      builder: (context, selectionMap, cachedChild) {
+        final state = selectionMap[index] ?? const BlockSelectedNone();
+
+        // CASO 1: Tutto Selezionato -> Applica sfondo visivo ISTANTANEO (Zero overhead di testo)
+        if (state is BlockSelectedFull) {
+          return Container(
+            color: selectionColor,
+            width: double.infinity,
+            child: cachedChild,
+          );
+        }
+
+        // CASO 2: Selezione Parziale -> Renderizza evidenziando solo le selezioni specifiche
+        if (state is BlockSelectedPartial) {
+          return _buildPartialSelectionContent(context, state.ranges);
+        }
+
+        // CASO 3: Nessuna Selezione -> Renderizza il widget standard virtualizzato
+        return cachedChild!;
+      },
+    );
+  }
+
+  /// Rendering base del Markdown per blocchi normali o completamente selezionati
+  Widget _buildStandardMarkdownContent(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 12.0),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 15, height: 1.4, color: Colors.black87),
+      ),
+    );
+  }
+
+  /// Rendering per intervalli parziali (es. selezioni trascinate o con tasto Ctrl)
+  Widget _buildPartialSelectionContent(BuildContext context, List<TextRange> ranges) {
+    final highlightColor = Theme.of(context).primaryColor.withOpacity(0.35);
+    final spans = <TextSpan>[];
+    int currentOffset = 0;
+
+    // Ordina i range per sovrapporli correttamente
+    final sortedRanges = List<TextRange>.from(ranges)
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    for (final range in sortedRanges) {
+      final start = range.start.clamp(0, rawText.length);
+      final end = range.end.clamp(0, rawText.length);
+
+      if (start > currentOffset) {
+        spans.add(TextSpan(text: rawText.substring(currentOffset, start)));
+      }
+      if (start < end) {
+        spans.add(TextSpan(
+          text: rawText.substring(start, end),
+          style: TextStyle(backgroundColor: highlightColor),
+        ));
+      }
+      currentOffset = end;
+    }
+
+    if (currentOffset < rawText.length) {
+      spans.add(TextSpan(text: rawText.substring(currentOffset)));
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 12.0),
+      child: Text.rich(
+        TextSpan(children: spans),
+        style: const TextStyle(fontSize: 15, height: 1.4, color: Colors.black87),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 4. VISTA PRINCIPALE DEL DOCUMENTO (ListView Virtualizzata)
+// ============================================================================
+
+class OptimizedDocumentViewer extends StatefulWidget {
+  final List<String> markdownBlocks;
+
+  const OptimizedDocumentViewer({super.key, required this.markdownBlocks});
+
+  @override
+  State<OptimizedDocumentViewer> createState() => _OptimizedDocumentViewerState();
+}
+
+class _OptimizedDocumentViewerState extends State<OptimizedDocumentViewer> {
+  late final DocumentSelectionController _selectionController;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectionController = DocumentSelectionController();
+  }
 
   @override
   void dispose() {
-    _scrollController.dispose();
-    _selectionFocusNode.dispose();
+    _selectionController.dispose();
     super.dispose();
   }
 
-  void _performFullDocumentSelectAll() {
-    if (!_forceFullRealization) {
-      setState(() {
-        _forceFullRealization = true;
-        _hasActiveSelection = true;
-      });
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _selectableRegionKey.currentState
-            ?.selectAll(SelectionChangedCause.keyboard);
-      });
-    });
-  }
-
-  void _handleSelectionChanged(SelectedContent? content) {
-    final isEmpty = content == null || content.plainText.isEmpty;
-
-    HapticsHelper.reportSelectionState(isCollapsed: isEmpty);
-
-    if (isEmpty) {
-      if (_hasActiveSelection || _forceFullRealization) {
-        setState(() {
-          _hasActiveSelection = false;
-          _forceFullRealization = false;
-        });
-      }
-    } else if (!_hasActiveSelection) {
-      setState(() {
-        _hasActiveSelection = true;
-      });
-    }
-  }
-
-  void _ensureStyles(
-    ThemeData theme,
-    String fontFamily,
-    double fontSize,
-    double lineHeight,
-  ) {
-    final key = (theme, fontFamily, fontSize, lineHeight);
-    if (_cachedStyleKey == key) return;
-    _cachedStyleKey = key;
-
-    _isDark = theme.brightness == Brightness.dark;
-    _primaryColor = theme.colorScheme.primary;
-    _fontSize = fontSize;
-
-    final baseTextStyle = AppTheme.getTextStyleForFont(
-      fontFamily,
-      fontSize: fontSize,
-      height: lineHeight,
-      color: theme.colorScheme.onSurface,
-    );
-
-    _inlineCodeStyle = GoogleFonts.jetBrainsMono(
-      fontSize: fontSize * 0.9,
-      height: 1.4,
-      color: theme.colorScheme.primary,
-    );
-
-    _titleTextStyle = AppTheme.getTextStyleForFont(
-      fontFamily,
-      fontSize: fontSize * 2.2,
-      fontWeight: FontWeight.w800,
-      color: theme.colorScheme.onSurface,
-      height: 1.25,
-    );
-
-    _markdownStyleSheet = MarkdownStyleSheet(
-      p: baseTextStyle,
-      h1: AppTheme.getTextStyleForFont(
-        fontFamily,
-        fontSize: fontSize * 2.0,
-        fontWeight: FontWeight.w800,
-        color: theme.colorScheme.onSurface,
-        height: 1.3,
-      ),
-      h2: AppTheme.getTextStyleForFont(
-        fontFamily,
-        fontSize: fontSize * 1.6,
-        fontWeight: FontWeight.w700,
-        color: theme.colorScheme.onSurface,
-        height: 1.3,
-      ),
-      h3: AppTheme.getTextStyleForFont(
-        fontFamily,
-        fontSize: fontSize * 1.3,
-        fontWeight: FontWeight.w600,
-        color: theme.colorScheme.onSurface,
-        height: 1.3,
-      ),
-      blockquote: baseTextStyle.copyWith(
-        fontStyle: FontStyle.italic,
-        color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
-      ),
-      blockquoteDecoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(6),
-        border: Border(
-          left: BorderSide(
-            color: theme.colorScheme.primary,
-            width: 4,
-          ),
-        ),
-      ),
-      blockquotePadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      code: _inlineCodeStyle,
-      codeblockDecoration: const BoxDecoration(),
-      codeblockPadding: EdgeInsets.zero,
-      horizontalRuleDecoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(
-            color: theme.colorScheme.outline.withValues(alpha: 0.4),
-            width: 1.5,
-          ),
-        ),
-      ),
-      tableBorder: TableBorder.all(
-        color: theme.colorScheme.outline.withValues(alpha: 0.4),
-        width: 1,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      tableHead: AppTheme.getTextStyleForFont(
-        fontFamily,
-        fontSize: fontSize * 0.95,
-        fontWeight: FontWeight.bold,
-        color: theme.colorScheme.onSurface,
-      ),
-      tableBody: baseTextStyle.copyWith(
-        fontSize: fontSize * 0.95,
-      ),
-      tableHeadAlign: TextAlign.center,
-      tableCellsPadding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      listBullet: baseTextStyle.copyWith(
-        color: theme.colorScheme.primary,
-        fontWeight: FontWeight.bold,
-      ),
-      checkbox: TextStyle(
-        color: theme.colorScheme.primary,
-      ),
-      a: TextStyle(
-        color: theme.colorScheme.primary,
-        decoration: TextDecoration.underline,
-        fontWeight: FontWeight.w500,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final (fontFamily, fontSize, lineHeight) = ref.watch(
-      settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
-    );
-
-    if (_cachedContent != widget.content) {
-      _cachedContent = widget.content;
-      final effectiveContent =
-          widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
-      _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
-    }
-
-    _ensureStyles(theme, fontFamily, fontSize, lineHeight);
-
-    return _buildFormattedView(theme);
-  }
-
-  Widget _buildFormattedView(ThemeData theme) {
-    final blocks = _cachedBlocks!;
-    final hasTitle = widget.title.trim().isNotEmpty;
-    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
-
-    return DefaultSelectionStyle(
-      selectionColor: theme.colorScheme.primary.withValues(alpha: 0.35),
-      child: Shortcuts(
-        shortcuts: const <ShortcutActivator, Intent>{
-          SingleActivator(LogicalKeyboardKey.keyA, control: true):
-              SelectAllTextIntent(SelectionChangedCause.keyboard),
-          SingleActivator(LogicalKeyboardKey.keyA, meta: true):
-              SelectAllTextIntent(SelectionChangedCause.keyboard),
-        },
-        child: Actions(
-          actions: <Type, Action<Intent>>{
-            SelectAllTextIntent: CallbackAction<SelectAllTextIntent>(
-              onInvoke: (intent) {
-                _performFullDocumentSelectAll();
-                return null;
-              },
-            ),
-          },
-          child: SelectableRegion(
-            key: _selectableRegionKey,
-            focusNode: _selectionFocusNode,
-            selectionControls: _platformSelectionControls,
-            onSelectionChanged: _handleSelectionChanged,
-            contextMenuBuilder: (context, selectableRegionState) {
-              final items = selectableRegionState.contextMenuButtonItems
-                  .map((item) {
-                if (item.type == ContextMenuButtonType.selectAll) {
-                  return ContextMenuButtonItem(
-                    type: item.type,
-                    label: item.label,
-                    onPressed: () {
-                      ContextMenuController.removeAny();
-                      _performFullDocumentSelectAll();
-                    },
-                  );
-                }
-                return item;
-              }).toList();
-
-              return AdaptiveTextSelectionToolbar.buttonItems(
-                anchors: selectableRegionState.contextMenuAnchors,
-                buttonItems: items,
-              );
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Viewer Markdown ad Alte Prestazioni'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.select_all),
+            tooltip: 'Seleziona Tutto',
+            onPressed: () {
+              _selectionController.selectAll(widget.markdownBlocks.length);
             },
-            child: ScrollConfiguration(
-              behavior: _NoGlowScrollBehavior(),
-              child: ListView.builder(
-                key: const ValueKey('markdown-formatted-listview'),
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-                cacheExtent: _effectiveCacheExtent,
-                itemCount: itemCount,
-                itemBuilder: (context, index) {
-                  if (hasTitle && index == 0) {
-                    return _buildTitleWidget(theme);
-                  }
-                  final blockIndex = hasTitle ? index - 1 : index;
-                  final blockText = blocks[blockIndex];
-                  return _buildMarkdownBlock(blockIndex, blockText);
-                },
-              ),
-            ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTitleWidget(ThemeData theme) {
-    return Align(
-      key: const ValueKey('rendered-block-title'),
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 840),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              widget.title,
-              style: _titleTextStyle,
-            ),
-            const SizedBox(height: 16),
-            Divider(
-              color: theme.colorScheme.outline.withValues(alpha: 0.3),
-              thickness: 1,
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMarkdownBlock(int blockIndex, String blockText) {
-    return Align(
-      key: ValueKey('rendered-block-$blockIndex-${blockText.hashCode}'),
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 840),
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: _MarkdownBlockView(
-              blockText: blockText,
-              styleSheet: _markdownStyleSheet,
-              inlineCodeStyle: _inlineCodeStyle,
-              fontSize: _fontSize,
-              isDark: _isDark,
-              primaryColor: _primaryColor,
-            ),
+          IconButton(
+            icon: const Icon(Icons.copy),
+            tooltip: 'Copia',
+            onPressed: () async {
+              await _selectionController.copyToClipboard(widget.markdownBlocks);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Testo copiato negli appunti!')),
+                );
+              }
+            },
           ),
-        ),
-      ),
-    );
-  }
-
-  List<String> _splitMarkdownIntoBlocks(String content) {
-    final lines = content.split('\n');
-    final blocks = <String>[];
-    final currentBlock = <String>[];
-    bool inCodeBlock = false;
-
-    for (final line in lines) {
-      if (line.trimLeft().startsWith('```')) {
-        inCodeBlock = !inCodeBlock;
-        currentBlock.add(line);
-        if (!inCodeBlock) {
-          blocks.add(currentBlock.join('\n'));
-          currentBlock.clear();
-        }
-        continue;
-      }
-
-      if (inCodeBlock) {
-        currentBlock.add(line);
-        continue;
-      }
-
-      if (line.trim().isEmpty) {
-        if (currentBlock.isNotEmpty) {
-          blocks.add(currentBlock.join('\n'));
-          currentBlock.clear();
-        }
-      } else {
-        currentBlock.add(line);
-      }
-    }
-
-    if (currentBlock.isNotEmpty) {
-      blocks.add(currentBlock.join('\n'));
-    }
-
-    return blocks.isEmpty ? [''] : blocks;
-  }
-}
-
-class _MarkdownBlockView extends StatefulWidget {
-  final String blockText;
-  final MarkdownStyleSheet styleSheet;
-  final TextStyle inlineCodeStyle;
-  final double fontSize;
-  final bool isDark;
-  final Color primaryColor;
-
-  const _MarkdownBlockView({
-    required this.blockText,
-    required this.styleSheet,
-    required this.inlineCodeStyle,
-    required this.fontSize,
-    required this.isDark,
-    required this.primaryColor,
-  });
-
-  @override
-  State<_MarkdownBlockView> createState() => _MarkdownBlockViewState();
-}
-
-class _MarkdownBlockViewState extends State<_MarkdownBlockView> {
-  Widget? _cachedChild;
-  String? _cachedText;
-  MarkdownStyleSheet? _cachedStyleSheet;
-  double? _cachedFontSize;
-  bool? _cachedIsDark;
-  Color? _cachedPrimaryColor;
-
-  bool get _cacheHit =>
-      _cachedChild != null &&
-      _cachedText == widget.blockText &&
-      _cachedStyleSheet == widget.styleSheet &&
-      _cachedFontSize == widget.fontSize &&
-      _cachedIsDark == widget.isDark &&
-      _cachedPrimaryColor == widget.primaryColor;
-
-  @override
-  Widget build(BuildContext context) {
-    if (_cacheHit) {
-      return _cachedChild!;
-    }
-
-    _cachedText = widget.blockText;
-    _cachedStyleSheet = widget.styleSheet;
-    _cachedFontSize = widget.fontSize;
-    _cachedIsDark = widget.isDark;
-    _cachedPrimaryColor = widget.primaryColor;
-
-    _cachedChild = MarkdownBody(
-      data: widget.blockText,
-      selectable: false,
-      styleSheet: widget.styleSheet,
-      extensionSet: md.ExtensionSet.gitHubFlavored,
-      onTapLink: (text, href, title) async {
-        if (href != null && href.isNotEmpty) {
-          final uri = Uri.tryParse(href);
-          if (uri != null && await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-        }
-      },
-      builders: {
-        'code': _CodeBlockBuilder(
-          inlineCodeStyle: widget.inlineCodeStyle,
-          fontSize: widget.fontSize,
-          isDark: widget.isDark,
-        ),
-      },
-    );
-
-    return _cachedChild!;
-  }
-}
-
-class _CodeBlockBuilder extends MarkdownElementBuilder {
-  final TextStyle inlineCodeStyle;
-  final double fontSize;
-  final bool isDark;
-
-  _CodeBlockBuilder({
-    required this.inlineCodeStyle,
-    required this.fontSize,
-    required this.isDark,
-  });
-
-  @override
-  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
-    final String text = element.textContent;
-
-    if (element.attributes.containsKey('class') || text.contains('\n')) {
-      return Container(
-        width: double.infinity,
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Text(
-            text.trimRight(),
-            style: GoogleFonts.jetBrainsMono(
-              fontSize: fontSize * 0.85,
-              height: 1.4,
-            ),
+          IconButton(
+            icon: const Icon(Icons.clear),
+            tooltip: 'Deseleziona',
+            onPressed: () => _selectionController.clear(),
           ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEFEFEF),
-        borderRadius: BorderRadius.circular(4),
+        ],
       ),
-      child: Text(
-        text,
-        style: inlineCodeStyle,
+      body: ListView.builder(
+        // Utilizzo del buffer standard di Flutter: performance ottimali guaranteed
+        cacheExtent: 250.0,
+        itemCount: widget.markdownBlocks.length,
+        itemBuilder: (context, index) {
+          return MarkdownBlockItem(
+            key: ValueKey('block_$index'),
+            index: index,
+            rawText: widget.markdownBlocks[index],
+            selectionController: _selectionController,
+          );
+        },
       ),
     );
-  }
-}
-
-class _NoGlowScrollBehavior extends ScrollBehavior {
-  @override
-  Widget buildOverscrollIndicator(
-      BuildContext context, Widget child, ScrollableDetails details) {
-    return child;
   }
 }
