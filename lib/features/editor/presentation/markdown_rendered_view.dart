@@ -12,7 +12,30 @@ import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/syntax_highlighter.dart';
 import '../../settings/providers/settings_provider.dart';
 
-/// Vista di sola lettura di una nota Markdown con supporto a selezione fluida nativa.
+/// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
+/// formattato: non esiste più una modalità "testo grezzo" separata.
+///
+/// La selezione del testo avviene direttamente sui blocchi formattati
+/// tramite [SelectionArea]. Per restare fluida anche su note molto estese,
+/// questa vista porta al suo interno le ottimizzazioni che in precedenza
+/// erano riservate alla (ex) modalità testo grezzo:
+///  - gli stili derivati da tema/font (incluso il [MarkdownStyleSheet])
+///    vengono calcolati UNA SOLA VOLTA per build e condivisi da tutti i
+///    blocchi, invece di essere ricostruiti da capo per ciascuno;
+///  - ogni blocco vive nel proprio [_MarkdownBlockView], che ricorda
+///    l'ultimo albero di widget prodotto da `MarkdownBody` e lo
+///    restituisce inalterato finché testo e stile non cambiano
+///    realmente: Flutter riconosce l'identità del widget e salta la
+///    ricostruzione (e il re-parsing Markdown) di quel sottoalbero anche
+///    quando il genitore si ricostruisce per motivi non correlati (es.
+///    notifiche di scroll, cambi di stato altrove nell'albero);
+///  - ogni blocco riceve una [ValueKey] stabile basata su indice e hash
+///    del contenuto, cosicché lo scheletro di `ListView.builder` possa
+///    riutilizzare correttamente Element/RenderObject anche se l'indice
+///    del titolo/blocco dovesse spostarsi;
+///  - la lista sfrutta un `cacheExtent` maggiorato per mantenere "caldi"
+///    i blocchi appena fuori schermo durante il trascinamento della
+///    selezione vicino ai bordi della viewport.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -31,319 +54,45 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final ScrollController _scrollController = ScrollController();
 
-  final TextEditingController _rawTextController = TextEditingController();
-  final FocusNode _rawFocusNode = FocusNode();
-  final GlobalKey<EditableTextState> _rawEditableTextKey =
-      GlobalKey<EditableTextState>();
-  TextSelection? _pendingRawSelection;
-  double? _lastPointerGlobalY;
-
-  bool _isRawMode = false;
-  Timer? _revertTimer;
-
+  // Cache del parsing in blocchi: invalidata solo quando il contenuto
+  // della nota cambia davvero (non ad ogni build/rebuild del genitore).
   List<String>? _cachedBlocks;
   String? _cachedContent;
 
-  String get _fullText => widget.title.trim().isNotEmpty
-      ? "${widget.title}\n\n${widget.content}"
-      : widget.content;
+  // Cache degli stili derivati da tema/font/dimensione/interlinea.
+  // Porting dell'ottimizzazione "un solo TextStyle condiviso" della ex
+  // modalità testo grezzo: qui costruiamo `MarkdownStyleSheet` e gli
+  // stili accessori una sola volta per combinazione di parametri, e li
+  // passiamo per riferimento a TUTTI i blocchi della lista invece di
+  // ricrearli per ciascuno di essi (potenzialmente decine/centinaia su
+  // una nota lunga).
+  (ThemeData, String, double, double)? _cachedStyleKey;
+  late MarkdownStyleSheet _markdownStyleSheet;
+  late TextStyle _inlineCodeStyle;
+  late TextStyle _titleTextStyle;
+  late bool _isDark;
+  late Color _primaryColor;
+  late double _fontSize;
 
   @override
   void dispose() {
-    _revertTimer?.cancel();
     _scrollController.dispose();
-    _rawTextController.dispose();
-    _rawFocusNode.dispose();
     super.dispose();
   }
 
-  TextSelection? _estimateRawSelection(String fullText, String? selectedText) {
-    final word = selectedText?.trim();
-    if (word == null || word.isEmpty) return null;
-
-    final matches = <int>[];
-    var searchStart = 0;
-    while (true) {
-      final idx = fullText.indexOf(word, searchStart);
-      if (idx == -1) break;
-      matches.add(idx);
-      searchStart = idx + word.length;
-    }
-    if (matches.isEmpty) return null;
-
-    var bestIndex = matches.first;
-    if (matches.length > 1) {
-      final hasExtent = _scrollController.hasClients &&
-          _scrollController.position.maxScrollExtent > 0;
-      final ratio = hasExtent
-          ? (_scrollController.offset /
-                  _scrollController.position.maxScrollExtent)
-              .clamp(0.0, 1.0)
-          : 0.0;
-      final target = (fullText.length * ratio).round();
-      bestIndex = matches.reduce(
-        (a, b) => (a - target).abs() <= (b - target).abs() ? a : b,
-      );
-    }
-
-    return TextSelection(
-      baseOffset: bestIndex,
-      extentOffset: bestIndex + word.length,
-    );
-  }
-
-  void _switchToRawMode({String? selectedText}) {
-    if (_isRawMode) return;
-    final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
-    final fullText = _fullText;
-    final fingerY = _lastPointerGlobalY;
-
-    if (_rawTextController.text != fullText) {
-      _rawTextController.text = fullText;
-    }
-    _pendingRawSelection = _estimateRawSelection(fullText, selectedText);
-
-    setState(() {
-      _isRawMode = true;
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(offset);
-      }
-
-      final pending = _pendingRawSelection;
-      if (pending == null) return;
-
-      _rawFocusNode.requestFocus();
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _rawTextController.selection = pending;
-        _pendingRawSelection = null;
-
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          final editableState = _rawEditableTextKey.currentState;
-          final renderEditable = editableState?.renderEditable;
-
-          if (renderEditable != null &&
-              fingerY != null &&
-              _scrollController.hasClients) {
-            final caretRect = renderEditable.getLocalRectForCaret(
-              TextPosition(offset: pending.baseOffset),
-            );
-            final currentGlobalTop =
-                renderEditable.localToGlobal(caretRect.topLeft).dy;
-            final delta = currentGlobalTop - fingerY;
-            if (delta.abs() > 0.5) {
-              final position = _scrollController.position;
-              final target = (_scrollController.offset + delta)
-                  .clamp(position.minScrollExtent, position.maxScrollExtent);
-              _scrollController.jumpTo(target);
-            }
-          } else {
-            editableState?.bringIntoView(TextPosition(offset: pending.baseOffset));
-          }
-
-          editableState?.showToolbar();
-          _lastPointerGlobalY = null;
-        });
-      });
-    });
-  }
-
-  void _revertToFormatted() {
-    if (!_isRawMode) return;
-    _revertTimer?.cancel();
-    final offset = _scrollController.hasClients ? _scrollController.offset : 0.0;
-    _rawEditableTextKey.currentState?.hideToolbar();
-    _rawFocusNode.unfocus();
-
-    setState(() {
-      _isRawMode = false;
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(offset);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final (fontFamily, fontSize, lineHeight) = ref.watch(
-      settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
-    );
-
-    if (_cachedContent != widget.content) {
-      _cachedContent = widget.content;
-      final effectiveContent =
-          widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
-      _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
-      _rawTextController.text = _fullText;
-    }
-
-    return PopScope(
-      // Se siamo in Raw Mode, canPop è false (intercetta il gesto/tasto indietro per tornare in Formatted).
-      // Se siamo già in Formatted View, canPop è true e Flutter esegue la chiusura nativa della pagina.
-      canPop: !_isRawMode,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) return;
-        if (_isRawMode) {
-          _revertToFormatted();
-        }
-      },
-      child: _isRawMode
-          ? _buildRawView(theme, fontSize, lineHeight)
-          : _buildFormattedView(theme, fontFamily, fontSize, lineHeight),
-    );
-  }
-
-  Widget _buildRawView(ThemeData theme, double fontSize, double lineHeight) {
-    final monoStyle = GoogleFonts.jetBrainsMono(
-      fontSize: fontSize * 0.95,
-      height: lineHeight,
-      color: theme.colorScheme.onSurface.withValues(alpha: 0.9),
-    );
-
-    return ScrollConfiguration(
-      behavior: _NoGlowScrollBehavior(),
-      child: SingleChildScrollView(
-        controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 840),
-            child: SizedBox(
-              width: double.infinity,
-              child: EditableText(
-                key: _rawEditableTextKey,
-                controller: _rawTextController,
-                focusNode: _rawFocusNode,
-                readOnly: true,
-                enableInteractiveSelection: true,
-                showCursor: false,
-                showSelectionHandles: true,
-                maxLines: null,
-                style: monoStyle,
-                cursorColor: theme.colorScheme.primary,
-                backgroundCursorColor: theme.colorScheme.primary,
-                selectionColor:
-                    theme.colorScheme.primary.withValues(alpha: 0.35),
-                selectionControls: materialTextSelectionHandleControls,
-                contextMenuBuilder: (context, editableTextState) {
-                  return AdaptiveTextSelectionToolbar.editableText(
-                    editableTextState: editableTextState,
-                  );
-                },
-                onSelectionChanged: (selection, cause) {
-                  HapticsHelper.reportSelectionState(
-                      isCollapsed: selection.isCollapsed);
-                  if (selection.isCollapsed) {
-                    _revertTimer?.cancel();
-                    _revertTimer = Timer(const Duration(seconds: 3), () {
-                      if (mounted && _isRawMode) {
-                        _revertToFormatted();
-                      }
-                    });
-                  } else {
-                    _revertTimer?.cancel();
-                  }
-                },
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFormattedView(
-      ThemeData theme, String fontFamily, double fontSize, double lineHeight) {
-    final blocks = _cachedBlocks!;
-    final hasTitle = widget.title.trim().isNotEmpty;
-    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
-
-    return Listener(
-      onPointerDown: (event) => _lastPointerGlobalY = event.position.dy,
-      child: SelectionArea(
-        onSelectionChanged: (content) {
-          if (content != null && content.plainText.isNotEmpty) {
-            _switchToRawMode(selectedText: content.plainText);
-          }
-        },
-        child: ScrollConfiguration(
-          behavior: _NoGlowScrollBehavior(),
-          child: ListView.builder(
-            key: const ValueKey('markdown-formatted-listview'),
-            controller: _scrollController,
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-              if (hasTitle && index == 0) {
-                return _buildTitleWidget(theme, fontFamily, fontSize);
-              }
-              final blockIndex = hasTitle ? index - 1 : index;
-              return _buildMarkdownBlock(
-                context,
-                blocks[blockIndex],
-                theme,
-                fontFamily,
-                fontSize,
-                lineHeight,
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTitleWidget(
-      ThemeData theme, String fontFamily, double fontSize) {
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 840),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              widget.title,
-              style: AppTheme.getTextStyleForFont(
-                fontFamily,
-                fontSize: fontSize * 2.2,
-                fontWeight: FontWeight.w800,
-                color: theme.colorScheme.onSurface,
-                height: 1.25,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Divider(
-              color: theme.colorScheme.outline.withValues(alpha: 0.3),
-              thickness: 1,
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMarkdownBlock(
-    BuildContext context,
-    String blockText,
+  void _ensureStyles(
     ThemeData theme,
     String fontFamily,
     double fontSize,
     double lineHeight,
   ) {
-    final isDark = theme.brightness == Brightness.dark;
+    final key = (theme, fontFamily, fontSize, lineHeight);
+    if (_cachedStyleKey == key) return;
+    _cachedStyleKey = key;
+
+    _isDark = theme.brightness == Brightness.dark;
+    _primaryColor = theme.colorScheme.primary;
+    _fontSize = fontSize;
 
     final baseTextStyle = AppTheme.getTextStyleForFont(
       fontFamily,
@@ -352,13 +101,21 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       color: theme.colorScheme.onSurface,
     );
 
-    final inlineCodeStyle = GoogleFonts.jetBrainsMono(
+    _inlineCodeStyle = GoogleFonts.jetBrainsMono(
       fontSize: fontSize * 0.9,
       height: 1.4,
       color: theme.colorScheme.primary,
     );
 
-    final markdownStyleSheet = MarkdownStyleSheet(
+    _titleTextStyle = AppTheme.getTextStyleForFont(
+      fontFamily,
+      fontSize: fontSize * 2.2,
+      fontWeight: FontWeight.w800,
+      color: theme.colorScheme.onSurface,
+      height: 1.25,
+    );
+
+    _markdownStyleSheet = MarkdownStyleSheet(
       p: baseTextStyle,
       h1: AppTheme.getTextStyleForFont(
         fontFamily,
@@ -397,7 +154,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       ),
       blockquotePadding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      code: inlineCodeStyle,
+      code: _inlineCodeStyle,
       codeblockDecoration: const BoxDecoration(),
       codeblockPadding: EdgeInsets.zero,
       horizontalRuleDecoration: BoxDecoration(
@@ -423,7 +180,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         fontSize: fontSize * 0.95,
       ),
       tableHeadAlign: TextAlign.center,
-      tableCellsPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      tableCellsPadding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       listBullet: baseTextStyle.copyWith(
         color: theme.colorScheme.primary,
         fontWeight: FontWeight.bold,
@@ -437,8 +195,109 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         fontWeight: FontWeight.w500,
       ),
     );
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final (fontFamily, fontSize, lineHeight) = ref.watch(
+      settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
+    );
+
+    if (_cachedContent != widget.content) {
+      _cachedContent = widget.content;
+      final effectiveContent =
+          widget.content.isEmpty ? '*Nessun contenuto*' : widget.content;
+      _cachedBlocks = _splitMarkdownIntoBlocks(effectiveContent);
+    }
+
+    _ensureStyles(theme, fontFamily, fontSize, lineHeight);
+
+    return _buildFormattedView(theme);
+  }
+
+  Widget _buildFormattedView(ThemeData theme) {
+    final blocks = _cachedBlocks!;
+    final hasTitle = widget.title.trim().isNotEmpty;
+    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
+
+    // `DefaultSelectionStyle` allinea il colore di evidenziazione della
+    // selezione a quello che aveva l'ex `EditableText` del testo grezzo,
+    // per continuità visiva.
+    return DefaultSelectionStyle(
+      selectionColor: theme.colorScheme.primary.withValues(alpha: 0.35),
+      child: SelectionArea(
+        // Il menu contestuale di default di `SelectionArea` include già
+        // "Copia" e "Seleziona tutto" (oltre alla scorciatoia da tastiera
+        // Ctrl/Cmd+A quando l'area ha il focus): non va ricostruito da
+        // capo, farlo comporterebbe solo allocazioni aggiuntive ad ogni
+        // apertura del menu senza alcun beneficio reale.
+        onSelectionChanged: (content) {
+          // Riusa lo stesso "gate" aptico centralizzato già usato
+          // dall'editor: una sola vibrazione leggera all'avvio di ogni
+          // nuova selezione, silenzio durante il trascinamento (o
+          // comportamento "strong"/"off" secondo le impostazioni utente).
+          HapticsHelper.reportSelectionState(
+            isCollapsed: content == null || content.plainText.isEmpty,
+          );
+        },
+        child: ScrollConfiguration(
+          behavior: _NoGlowScrollBehavior(),
+          child: ListView.builder(
+            key: const ValueKey('markdown-formatted-listview'),
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+            // Mantiene "caldi" i blocchi appena fuori viewport, così il
+            // trascinamento di una maniglia di selezione verso il bordo
+            // dello schermo non innesca layout costosi a scatti.
+            cacheExtent: 800,
+            itemCount: itemCount,
+            itemBuilder: (context, index) {
+              if (hasTitle && index == 0) {
+                return _buildTitleWidget(theme);
+              }
+              final blockIndex = hasTitle ? index - 1 : index;
+              final blockText = blocks[blockIndex];
+              return _buildMarkdownBlock(blockIndex, blockText);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTitleWidget(ThemeData theme) {
     return Align(
+      key: const ValueKey('rendered-block-title'),
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 840),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.title,
+              style: _titleTextStyle,
+            ),
+            const SizedBox(height: 16),
+            Divider(
+              color: theme.colorScheme.outline.withValues(alpha: 0.3),
+              thickness: 1,
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarkdownBlock(int blockIndex, String blockText) {
+    // Chiave stabile per indice+contenuto: protegge il riuso corretto di
+    // Element/RenderObject da parte di `ListView.builder` anche nei rari
+    // casi in cui l'indice di un blocco si sposti (es. comparsa/scomparsa
+    // del titolo), senza dover ricorrere a `GlobalKey` più costose.
+    return Align(
+      key: ValueKey('rendered-block-$blockIndex-${blockText.hashCode}'),
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
@@ -446,31 +305,114 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           width: double.infinity,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 16),
-            child: MarkdownBody(
-              data: blockText,
-              selectable: false,
-              styleSheet: markdownStyleSheet,
-              builders: {
-                'pre': _CodeBlockBuilder(fontSize: fontSize),
-                'code': _InlineCodeBuilder(
-                  style: inlineCodeStyle,
-                  isDark: isDark,
-                  primaryColor: theme.colorScheme.primary,
-                ),
-              },
-              onTapLink: (text, href, title) async {
-                if (href != null) {
-                  final uri = Uri.tryParse(href);
-                  if (uri != null && await canLaunchUrl(uri)) {
-                    await launchUrl(uri);
-                  }
-                }
-              },
+            child: _MarkdownBlockView(
+              blockText: blockText,
+              styleSheet: _markdownStyleSheet,
+              inlineCodeStyle: _inlineCodeStyle,
+              fontSize: _fontSize,
+              isDark: _isDark,
+              primaryColor: _primaryColor,
             ),
           ),
         ),
       ),
     );
+  }
+}
+
+/// Singolo blocco Markdown con caching del proprio albero di rendering.
+///
+/// Questo è il porting più diretto del vantaggio principale che aveva la
+/// ex modalità testo grezzo: lì un solo `EditableText` non doveva MAI
+/// ricostruire il proprio `TextPainter`/layout a fronte di variazioni
+/// legate alla sola selezione, perché testo e stile restavano identici.
+/// Qui, ogni blocco vive nel proprio `State` e ricorda l'ultimo widget
+/// (`MarkdownBody`, che internamente fa parsing dell'AST Markdown e
+/// costruisce l'albero di widget) prodotto per una data combinazione di
+/// (testo, stylesheet, fontSize, tema, colore primario): se in un
+/// rebuild del genitore questi parametri non sono cambiati, si restituisce
+/// la STESSA istanza di widget già costruita.
+///
+/// Questo è rilevante perché `Element.update` in Flutter esegue un
+/// controllo `identical(newWidget, oldWidget)`: se il widget restituito
+/// da `build()` è letteralmente la stessa istanza di prima, l'intero
+/// sottoalbero viene considerato invariato e la ricostruzione (incluso il
+/// re-parsing Markdown e le allocazioni che ne conseguirebbero) viene
+/// saltata, riducendo sia il lavoro sia gli `object allocation` ad ogni
+/// rebuild non correlato al contenuto del blocco stesso.
+class _MarkdownBlockView extends StatefulWidget {
+  final String blockText;
+  final MarkdownStyleSheet styleSheet;
+  final TextStyle inlineCodeStyle;
+  final double fontSize;
+  final bool isDark;
+  final Color primaryColor;
+
+  const _MarkdownBlockView({
+    required this.blockText,
+    required this.styleSheet,
+    required this.inlineCodeStyle,
+    required this.fontSize,
+    required this.isDark,
+    required this.primaryColor,
+  });
+
+  @override
+  State<_MarkdownBlockView> createState() => _MarkdownBlockViewState();
+}
+
+class _MarkdownBlockViewState extends State<_MarkdownBlockView> {
+  Widget? _cachedChild;
+  String? _cachedText;
+  MarkdownStyleSheet? _cachedStyleSheet;
+  double? _cachedFontSize;
+  bool? _cachedIsDark;
+  Color? _cachedPrimaryColor;
+
+  bool get _cacheHit =>
+      _cachedChild != null &&
+      _cachedText == widget.blockText &&
+      // Lo stylesheet è condiviso per riferimento da `_ensureStyles` nel
+      // genitore: un confronto per identità è quindi sufficiente e più
+      // economico di un confronto approfondito campo per campo.
+      identical(_cachedStyleSheet, widget.styleSheet) &&
+      _cachedFontSize == widget.fontSize &&
+      _cachedIsDark == widget.isDark &&
+      _cachedPrimaryColor == widget.primaryColor;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_cacheHit) return _cachedChild!;
+
+    final child = MarkdownBody(
+      data: widget.blockText,
+      selectable: false,
+      styleSheet: widget.styleSheet,
+      builders: {
+        'pre': _CodeBlockBuilder(fontSize: widget.fontSize),
+        'code': _InlineCodeBuilder(
+          style: widget.inlineCodeStyle,
+          isDark: widget.isDark,
+          primaryColor: widget.primaryColor,
+        ),
+      },
+      onTapLink: (text, href, title) async {
+        if (href != null) {
+          final uri = Uri.tryParse(href);
+          if (uri != null && await canLaunchUrl(uri)) {
+            await launchUrl(uri);
+          }
+        }
+      },
+    );
+
+    _cachedChild = child;
+    _cachedText = widget.blockText;
+    _cachedStyleSheet = widget.styleSheet;
+    _cachedFontSize = widget.fontSize;
+    _cachedIsDark = widget.isDark;
+    _cachedPrimaryColor = widget.primaryColor;
+    return child;
   }
 }
 
@@ -844,4 +786,3 @@ class _CodeBlockWidgetState extends State<CodeBlockWidget> {
     );
   }
 }
-
