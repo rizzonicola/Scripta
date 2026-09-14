@@ -26,7 +26,7 @@ class BlockSelectedPartial extends BlockSelectionState {
 }
 
 // ============================================================================
-// 2. CONTROLLER LOGICO DELLA SELEZIONE (Headless Selection Controller)
+// 2. CONTROLLER LOGICO DELLA SELEZIONE
 // ============================================================================
 
 class DocumentSelectionController extends ValueNotifier<Map<int, BlockSelectionState>> {
@@ -48,7 +48,7 @@ class DocumentSelectionController extends ValueNotifier<Map<int, BlockSelectionS
     value = {};
   }
 
-  /// Aggiorna lo stato di un singolo blocco (es. deselezione manuale o dragging)
+  /// Aggiorna lo stato di un singolo blocco
   void setBlockState(int index, BlockSelectionState state) {
     final newState = Map<int, BlockSelectionState>.from(value);
     if (state is BlockSelectedNone) {
@@ -92,7 +92,7 @@ class DocumentSelectionController extends ValueNotifier<Map<int, BlockSelectionS
 }
 
 // ============================================================================
-// 3. WIDGET DEL BLOCCO DI RIGA (Optimized Block Item)
+// 3. WIDGET DEL BLOCCO DI RIGA
 // ============================================================================
 
 class MarkdownBlockItem extends StatelessWidget {
@@ -113,12 +113,11 @@ class MarkdownBlockItem extends StatelessWidget {
 
     return ValueListenableBuilder<Map<int, BlockSelectionState>>(
       valueListenable: selectionController,
-      // Passiamo il rendering standard del Markdown come `child` pre-costruito per la massima resa
       child: _buildStandardMarkdownContent(rawText),
       builder: (context, selectionMap, cachedChild) {
         final state = selectionMap[index] ?? const BlockSelectedNone();
 
-        // CASO 1: Tutto Selezionato -> Applica sfondo visivo ISTANTANEO (Zero overhead di testo)
+        // CASO 1: Tutto Selezionato -> Applica sfondo visivo senza ri-renderizzare il testo
         if (state is BlockSelectedFull) {
           return Container(
             color: selectionColor,
@@ -127,18 +126,17 @@ class MarkdownBlockItem extends StatelessWidget {
           );
         }
 
-        // CASO 2: Selezione Parziale -> Renderizza evidenziando solo le selezioni specifiche
+        // CASO 2: Selezione Parziale -> Evidenziazione chirurgica
         if (state is BlockSelectedPartial) {
           return _buildPartialSelectionContent(context, state.ranges);
         }
 
-        // CASO 3: Nessuna Selezione -> Renderizza il widget standard virtualizzato
+        // CASO 3: Nessuna Selezione -> Renderizza il widget standard
         return cachedChild!;
       },
     );
   }
 
-  /// Rendering base del Markdown per blocchi normali o completamente selezionati
   Widget _buildStandardMarkdownContent(String text) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 12.0),
@@ -149,13 +147,11 @@ class MarkdownBlockItem extends StatelessWidget {
     );
   }
 
-  /// Rendering per intervalli parziali (es. selezioni trascinate o con tasto Ctrl)
   Widget _buildPartialSelectionContent(BuildContext context, List<TextRange> ranges) {
     final highlightColor = Theme.of(context).primaryColor.withOpacity(0.35);
     final spans = <TextSpan>[];
     int currentOffset = 0;
 
-    // Ordina i range per sovrapporli correttamente
     final sortedRanges = List<TextRange>.from(ranges)
       ..sort((a, b) => a.start.compareTo(b.start));
 
@@ -190,19 +186,30 @@ class MarkdownBlockItem extends StatelessWidget {
 }
 
 // ============================================================================
-// 4. VISTA PRINCIPALE DEL DOCUMENTO (ListView Virtualizzata)
+// 4. VISTA PRINCIPALE DEL DOCUMENTO (MarkdownRenderedView)
 // ============================================================================
 
-class OptimizedDocumentViewer extends StatefulWidget {
-  final List<String> markdownBlocks;
+class MarkdownRenderedView extends StatefulWidget {
+  final List<String>? markdownBlocks;
+  final String? content;
 
-  const OptimizedDocumentViewer({super.key, required this.markdownBlocks});
+  const MarkdownRenderedView({
+    super.key,
+    this.markdownBlocks,
+    this.content,
+  }) : assert(markdownBlocks != null || content != null,
+            'È necessario fornire markdownBlocks o content.');
+
+  List<String> get blocks {
+    if (markdownBlocks != null) return markdownBlocks!;
+    return (content ?? '').split('\n');
+  }
 
   @override
-  State<OptimizedDocumentViewer> createState() => _OptimizedDocumentViewerState();
+  State<MarkdownRenderedView> createState() => _MarkdownRenderedViewState();
 }
 
-class _OptimizedDocumentViewerState extends State<OptimizedDocumentViewer> {
+class _MarkdownRenderedViewState extends State<MarkdownRenderedView> {
   late final DocumentSelectionController _selectionController;
 
   @override
@@ -219,22 +226,24 @@ class _OptimizedDocumentViewerState extends State<OptimizedDocumentViewer> {
 
   @override
   Widget build(BuildContext context) {
+    final blocksList = widget.blocks;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Viewer Markdown ad Alte Prestazioni'),
+        title: const Text('Viewer Markdown'),
         actions: [
           IconButton(
             icon: const Icon(Icons.select_all),
             tooltip: 'Seleziona Tutto',
             onPressed: () {
-              _selectionController.selectAll(widget.markdownBlocks.length);
+              _selectionController.selectAll(blocksList.length);
             },
           ),
           IconButton(
             icon: const Icon(Icons.copy),
             tooltip: 'Copia',
             onPressed: () async {
-              await _selectionController.copyToClipboard(widget.markdownBlocks);
+              await _selectionController.copyToClipboard(blocksList);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Testo copiato negli appunti!')),
@@ -250,14 +259,13 @@ class _OptimizedDocumentViewerState extends State<OptimizedDocumentViewer> {
         ],
       ),
       body: ListView.builder(
-        // Utilizzo del buffer standard di Flutter: performance ottimali guaranteed
         cacheExtent: 250.0,
-        itemCount: widget.markdownBlocks.length,
+        itemCount: blocksList.length,
         itemBuilder: (context, index) {
           return MarkdownBlockItem(
             key: ValueKey('block_$index'),
             index: index,
-            rawText: widget.markdownBlocks[index],
+            rawText: blocksList[index],
             selectionController: _selectionController,
           );
         },
@@ -265,3 +273,4 @@ class _OptimizedDocumentViewerState extends State<OptimizedDocumentViewer> {
     );
   }
 }
+
