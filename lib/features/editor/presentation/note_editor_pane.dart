@@ -73,6 +73,33 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     super.dispose();
   }
 
+  /// Riallinea SOLO i controller di testo (titolo/contenuto) alla nota
+  /// indicata da [nextId], e aggiorna [_currentNoteId] di conseguenza.
+  ///
+  /// Deliberatamente priva di qualunque side-effect su provider (niente
+  /// `flushPendingSaves`/`onNoteChangedOrClosed`): questo la rende sicura da
+  /// invocare anche sincronamente dentro `build()` (vedi sotto), dove
+  /// mutare un provider solleverebbe un errore Riverpod ("tried to modify a
+  /// provider while the widget tree was building").
+  void _syncControllersToNoteId(String? nextId) {
+    if (nextId == null) {
+      _titleController.text = '';
+      _contentController.text = '';
+    } else {
+      final activeNote = ref.read(activeNoteProvider);
+      // Guardia extra: `activeNoteProvider` può in teoria ricadere su
+      // `notes.first` se l'id richiesto non è (ancora) presente in lista
+      // (vedi notes_provider.dart). Scriviamo i controller solo se la nota
+      // letta corrisponde DAVVERO a `nextId`, per non popolare titolo/
+      // contenuto con una nota sbagliata.
+      if (activeNote != null && activeNote.id == nextId) {
+        _titleController.text = activeNote.title;
+        _contentController.text = activeNote.content;
+      }
+    }
+    _currentNoteId = nextId;
+  }
+
   void _onActiveNoteIdChanged(String? prevId, String? nextId) {
     if (nextId == _currentNoteId) return;
 
@@ -86,17 +113,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       ref.read(syncProvider.notifier).onNoteChangedOrClosed();
     }
 
-    _currentNoteId = nextId;
-    if (nextId == null) {
-      _titleController.text = '';
-      _contentController.text = '';
-    } else {
-      final activeNote = ref.read(activeNoteProvider);
-      if (activeNote != null) {
-        _titleController.text = activeNote.title;
-        _contentController.text = activeNote.content;
-      }
-    }
+    _syncControllersToNoteId(nextId);
   }
 
   @override
@@ -121,6 +138,22 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     });
 
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
+
+    // Rete di sicurezza sincrona: in condizioni normali è già
+    // `_onActiveNoteIdChanged` (via `ref.listen` sopra) a tenere i
+    // controller allineati alla nota attiva. Quando però il cambio di nota
+    // avviene mentre questo pannello è in modalità "Sola lettura" — quindi
+    // con `MarkdownEditorField` (e i suoi controller) fuori dall'albero e
+    // non visibile — non c'è alcuna garanzia sincrona che quel listener
+    // abbia già propagato l'aggiornamento nel momento esatto in cui si
+    // passa a "Modifica" e il campo di testo torna a montarsi. Questo
+    // controllo, eseguito ad ogni build PRIMA che l'AnimatedSwitcher scelga
+    // quale ramo costruire, elimina quella finestra: se `activeNoteId` e
+    // `_currentNoteId` sono già allineati (il caso comune) è un no-op.
+    if (activeNoteId != _currentNoteId) {
+      _syncControllersToNoteId(activeNoteId);
+    }
+
     final editorMode = ref.watch(editorProvider.select((s) => s.mode));
     final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
     final isNoteSearchActive = ref.watch(noteSearchProvider.select((s) => s.isActive));
