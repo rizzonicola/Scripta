@@ -46,13 +46,45 @@ class MarkdownDeltaConverter {
 
   /// Converte l'intero Markdown di una nota in un [quill.Document] pronto
   /// per essere passato a un [quill.QuillController] in sola lettura.
+  ///
+  /// Sincrono: per note di dimensione normale (vedi soglia in
+  /// `markdown_rendered_view.dart`) il costo è pochi millisecondi e non
+  /// vale la pena pagare l'overhead di spawn di un isolate. Per note molto
+  /// grandi usare [toDeltaJsonString] dentro `compute()` — vedi sotto.
   static quill.Document toDocument(String markdown) {
     final delta = _toDelta(markdown);
     return quill.Document.fromDelta(delta);
   }
 
+  /// Stessa conversione di [toDocument], ma restituisce una stringa JSON
+  /// (il formato serializzato del `Delta`) invece di un `Document`.
+  ///
+  /// Perché: questa funzione è pensata per essere eseguita dentro
+  /// `compute()` (Flutter), cioè su un isolate Dart separato dalla UI
+  /// thread — utile per non bloccare un frame quando si apre una nota di
+  /// decine di migliaia di parole. Un isolate può scambiare solo dati
+  /// "semplici" col main isolate (stringhe, numeri, liste/mappe — non
+  /// oggetti `Document`/`Delta` con riferimenti interni non garantiti
+  /// serializzabili), quindi qui restituiamo il JSON del Delta e la
+  /// ricostruzione del `Document` vero e proprio avviene sul main isolate
+  /// tramite [documentFromJsonString] — un'operazione economica (nessun
+  /// nuovo parsing di Markdown, solo deserializzazione di dati già pronti).
+  ///
+  /// Deve restare una funzione top-level/static (requisito di `compute()`).
+  static String toDeltaJsonString(String markdown) {
+    return jsonEncode(_toDelta(markdown).toJson());
+  }
+
+  /// Controparte di [toDeltaJsonString]: ricostruisce il [quill.Document]
+  /// sul main isolate a partire dal JSON prodotto in background.
+  static quill.Document documentFromJsonString(String json) {
+    return quill.Document.fromJson(jsonDecode(json) as List);
+  }
+
   static Delta _toDelta(String markdown) {
-    final content = markdown.trim().isEmpty ? '*Nessun contenuto*' : markdown;
+    final content = markdown.trim().isEmpty
+        ? '*Nessun contenuto*'
+        : _decodeHtmlEntities(markdown);
     final blocks = _splitIntoBlocks(content);
 
     final gfmDocument = md.Document(extensionSet: md.ExtensionSet.gitHubFlavored);
@@ -160,6 +192,24 @@ class MarkdownDeltaConverter {
   static final RegExp _hrPattern = RegExp(r'^([-*_])\s*(\1\s*){2,}$');
   static final RegExp _tableSeparatorPattern =
       RegExp(r'^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$');
+
+  /// Decodifica le entità HTML più comuni (`&quot;`, `&gt;`, `&lt;`,
+  /// `&amp;`, `&#39;`/`&apos;`) che a volte restano incorporate come testo
+  /// letterale nel Markdown salvato (es. contenuto proveniente da
+  /// trascrizioni/fonti HTML mai decodificate a monte). `&amp;` va sempre
+  /// decodificato per ultimo, altrimenti trasformerebbe `&amp;quot;` in
+  /// `&quot;` invece che in `&quot;` letterale seguito da testo.
+  static String _decodeHtmlEntities(String text) {
+    if (!text.contains('&')) return text;
+    return text
+        .replaceAll('&quot;', '"')
+        .replaceAll('&apos;', "'")
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&');
+  }
 
   /// Parsing volutamente minimale delle tabelle GFM: sufficiente per il
   /// caso comune (nessuna gestione di pipe escapate `\|` dentro le celle,

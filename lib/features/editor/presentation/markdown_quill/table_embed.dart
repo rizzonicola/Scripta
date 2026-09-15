@@ -18,12 +18,14 @@ class TableEmbed {
 class TableEmbedBuilder extends quill.EmbedBuilder {
   final bool isDark;
   final Color primaryColor;
+  final Color borderColor;
   final TextStyle headerStyle;
   final TextStyle cellStyle;
 
   TableEmbedBuilder({
     required this.isDark,
     required this.primaryColor,
+    required this.borderColor,
     required this.headerStyle,
     required this.cellStyle,
   });
@@ -48,38 +50,80 @@ class TableEmbedBuilder extends quill.EmbedBuilder {
 
     final header = rows.first;
     final body = rows.skip(1).toList();
-    final borderColor =
-        (isDark ? Colors.white : Colors.black).withValues(alpha: 0.18);
+    final zebraColor = (isDark ? Colors.white : Colors.black).withValues(alpha: 0.03);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Table(
-          border: TableBorder.all(color: borderColor, width: 1),
-          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-          children: [
-            TableRow(
-              decoration: BoxDecoration(color: primaryColor.withValues(alpha: 0.08)),
-              children: [
-                for (final cell in header) _cell(cell, headerStyle),
-              ],
+    // `RepaintBoundary`: isola il repaint della tabella da quello del
+    // testo circostante — utile perché la tabella è il widget più
+    // "pesante" (un `Table` con più celle) fra tutti gli embed, e non
+    // deve ridisegnarsi solo perché una riga di testo sopra o sotto lo fa
+    // (es. durante lo scroll, l'animazione della selezione, ecc.).
+    return RepaintBoundary(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: borderColor, width: 1),
+              borderRadius: BorderRadius.circular(10),
             ),
-            for (final row in body)
-              TableRow(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Table(
+                // Fix: `FlexColumnWidth` (il default) dentro una
+                // `SingleChildScrollView(scrollDirection: horizontal)` —
+                // quindi a larghezza non vincolata — può collassare le
+                // colonne a pochi pixel, forzando il testo ad andare a
+                // capo lettera per lettera (il glitch a colonna verticale
+                // segnalato). `IntrinsicColumnWidth` misura la dimensione
+                // reale del contenuto di ogni cella e non richiede un
+                // genitore vincolato: è la scelta corretta qui.
+                defaultColumnWidth: const IntrinsicColumnWidth(),
+                border: TableBorder(
+                  horizontalInside: BorderSide(color: borderColor, width: 1),
+                  verticalInside: BorderSide(color: borderColor, width: 1),
+                ),
+                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                 children: [
-                  for (var i = 0; i < header.length; i++)
-                    _cell(i < row.length ? row[i] : '', cellStyle),
+                  TableRow(
+                    decoration:
+                        BoxDecoration(color: primaryColor.withValues(alpha: 0.12)),
+                    children: [
+                      for (final cell in header) _cell(cell, headerStyle),
+                    ],
+                  ),
+                  for (var r = 0; r < body.length; r++)
+                    TableRow(
+                      // Zebra striping: righe alternate leggermente
+                      // tinte, come nella vecchia vista Markdown — aiuta
+                      // a seguire l'allineamento orizzontale su tabelle
+                      // con molte righe.
+                      decoration: BoxDecoration(
+                        color: r.isOdd ? zebraColor : null,
+                      ),
+                      children: [
+                        for (var i = 0; i < header.length; i++)
+                          _cell(i < body[r].length ? body[r][i] : '', cellStyle),
+                      ],
+                    ),
                 ],
               ),
-          ],
+            ),
+          ),
         ),
       ),
     );
   }
 
   Widget _cell(String text, TextStyle style) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Text(text, style: style, textAlign: TextAlign.left),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: ConstrainedBox(
+          // Larghezza minima: evita colonne troppo strette/schiacciate
+          // quando il contenuto della cella è breve (es. "Sì"/"No"),
+          // mantenendo comunque `IntrinsicColumnWidth` libero di crescere
+          // oltre per celle con testo più lungo.
+          constraints: const BoxConstraints(minWidth: 72),
+          child: Text(text, style: style, textAlign: TextAlign.left),
+        ),
       );
 }
