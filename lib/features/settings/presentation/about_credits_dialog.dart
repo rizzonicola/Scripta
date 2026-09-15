@@ -81,6 +81,7 @@ class AboutCreditsDialog extends StatelessWidget {
               _buildCreditItem(theme, 'Flutter Secure Storage', l10n.creditSecureStorage),
               _buildCreditItem(theme, 'Riverpod 2.x', l10n.creditRiverpod),
               _buildCreditItem(theme, 'Flutter Markdown', l10n.creditMarkdown),
+              _buildCreditItem(theme, 'Flutter Quill', l10n.creditQuill),
               _buildCreditItem(theme, 'Google Fonts', l10n.creditFonts),
               _buildCreditItem(theme, 'Http & Archive', l10n.creditSyncArchive),
               const SizedBox(height: 16),

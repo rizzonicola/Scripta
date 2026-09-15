@@ -376,7 +376,11 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get creditMarkdown =>
-      'Parser e visualizzatore formattato CommonMark & GFM';
+      'Parser CommonMark & GFM (usato anche per l\'evidenziazione nella ricerca)';
+
+  @override
+  String get creditQuill =>
+      'Motore a documento strutturato per la vista di lettura, con selezione testo nativa';
 
   @override
   String get creditFonts => 'Tipografia JetBrains Mono & Inter';

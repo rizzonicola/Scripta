@@ -793,8 +793,14 @@ abstract class AppLocalizations {
   /// No description provided for @creditMarkdown.
   ///
   /// In en, this message translates to:
-  /// **'CommonMark & GFM parser and rich viewer'**
+  /// **'CommonMark & GFM parser (also used for search highlighting)'**
   String get creditMarkdown;
+
+  /// No description provided for @creditQuill.
+  ///
+  /// In en, this message translates to:
+  /// **'Structured document engine for the reading view, with native text selection'**
+  String get creditQuill;
 
   /// No description provided for @creditFonts.
   ///

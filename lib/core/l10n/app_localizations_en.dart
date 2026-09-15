@@ -375,7 +375,12 @@ class AppLocalizationsEn extends AppLocalizations {
       'Reactive state management & Dependency Injection';
 
   @override
-  String get creditMarkdown => 'CommonMark & GFM parser and rich viewer';
+  String get creditMarkdown =>
+      'CommonMark & GFM parser (also used for search highlighting)';
+
+  @override
+  String get creditQuill =>
+      'Structured document engine for the reading view, with native text selection';
 
   @override
   String get creditFonts => 'JetBrains Mono & Inter typography';

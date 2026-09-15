@@ -28,8 +28,22 @@ dependencies:
   # flutter_markdown (Google) è stato dismesso (discontinued); usiamo il
   # fork mantenuto dalla community, drop-in replacement con la stessa API
   # pubblica (Markdown/MarkdownBody/MarkdownStyleSheet/MarkdownElementBuilder).
+  # Ancora usato da `note_search_highlighted_view.dart` (evidenziazione dei
+  # risultati di ricerca) — la vista di lettura principale non lo usa più,
+  # vedi `flutter_quill` qui sotto.
   flutter_markdown_plus: ^1.0.12
   markdown: ^7.3.1
+
+  # Rendering/selezione della nota in sola lettura (markdown_rendered_view.dart)
+  # Motore a documento strutturato di `flutter_quill` (community, stabile,
+  # ampiamente mantenuto) al posto del precedente motore di selezione
+  # custom a blocchi virtualizzati: la selezione (singola, drag,
+  # "Seleziona tutto") e il menu contestuale nativo derivano direttamente
+  # dal `Document`/`Delta` di Quill, non da hit-testing scritto a mano.
+  # `markdown_quill` converte il Markdown della nota in un `Delta` Quill
+  # riusando il parser `package:markdown` già presente in questo progetto.
+  flutter_quill: ^11.4.1
+  markdown_quill: ^4.2.1
 
   # Persistence & Storage
   shared_preferences: ^2.2.3
