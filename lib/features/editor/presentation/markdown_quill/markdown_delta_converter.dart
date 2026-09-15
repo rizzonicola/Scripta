@@ -33,6 +33,7 @@
 // qualunque altro carattere, senza alcun codice speciale nostro.
 import 'dart:convert';
 
+import 'package:dart_quill_delta/dart_quill_delta.dart' show Delta;
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:markdown/markdown.dart' as md;
 import 'package:markdown_quill/markdown_quill.dart';
@@ -50,7 +51,7 @@ class MarkdownDeltaConverter {
     return quill.Document.fromDelta(delta);
   }
 
-  static quill.Delta _toDelta(String markdown) {
+  static Delta _toDelta(String markdown) {
     final content = markdown.trim().isEmpty ? '*Nessun contenuto*' : markdown;
     final blocks = _splitIntoBlocks(content);
 
@@ -62,7 +63,7 @@ class MarkdownDeltaConverter {
     // l'altro, il risultato testuale/di formattazione è invariato.
     final markdownToDelta = MarkdownToDelta(markdownDocument: gfmDocument);
 
-    final result = quill.Delta();
+    final result = Delta();
     for (final block in blocks) {
       final kind = _classify(block);
       switch (kind) {
