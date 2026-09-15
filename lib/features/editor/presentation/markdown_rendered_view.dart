@@ -68,10 +68,19 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   quill.QuillController _buildController(String content) {
     _cachedContent = content;
     final document = MarkdownDeltaConverter.toDocument(content);
-    return quill.QuillController(
+    final controller = quill.QuillController(
       document: document,
       selection: const TextSelection.collapsed(offset: 0),
     );
+    // In flutter_quill 11.5.1 il flag di sola lettura si imposta sul
+    // controller (non più su QuillEditorConfig, che non lo espone più —
+    // vedi errore di build risolto qui): è il controller a dire all'editor
+    // se disabilitare tastiera/cursore, mantenendo però la selezione
+    // nativa attiva. Impostato come proprietà (non come parametro del
+    // costruttore) per robustezza rispetto a eventuali variazioni minori
+    // di firma tra versioni.
+    controller.readOnly = true;
+    return controller;
   }
 
   @override
@@ -131,8 +140,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
             config: quill.QuillEditorConfig(
               // Sola lettura: nessuna tastiera, nessun cursore lampeggiante,
               // ma la SELEZIONE resta attiva — è lo stesso meccanismo nativo
-              // usato da `SelectableText`, non disabilitato da `readOnly`.
-              readOnly: true,
+              // usato da `SelectableText`. Il flag `readOnly` ora vive sul
+              // `QuillController` (vedi `_buildController`), non qui.
               scrollable: true,
               expands: true,
               padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
