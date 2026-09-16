@@ -61,11 +61,16 @@ class CodeBlockWidget extends StatelessWidget {
           if (node.language != null && node.language!.trim().isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
-              child: Text(
-                node.language!.trim(),
-                style: lineNumberStyle.copyWith(
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.4,
+              // Etichetta puramente decorativa (info-string della fence):
+              // esclusa dalla selezione per non alterare il testo
+              // copiato, che deve restare il solo contenuto del blocco.
+              child: ExcludeSelection(
+                child: Text(
+                  node.language!.trim(),
+                  style: lineNumberStyle.copyWith(
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                  ),
                 ),
               ),
             ),
@@ -81,12 +86,20 @@ class CodeBlockWidget extends StatelessWidget {
                     // restare fissa quando il codice scorre in orizzontale.
                     SizedBox(
                       width: gutterWidth,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          for (var i = 0; i < effectiveLines.length; i++)
-                            Text('${i + 1}', style: lineNumberStyle),
-                        ],
+                      // I numeri di riga sono un artefatto del renderer,
+                      // non caratteri del sorgente: esclusi dalla
+                      // selezione, così che il testo copiato di un code
+                      // block corrisponda ESATTAMENTE a `node.code`, da
+                      // cui `MarkdownSelectionSourceMapper` ricostruisce
+                      // la sintassi Markdown sorgente con mappatura 1:1.
+                      child: ExcludeSelection(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            for (var i = 0; i < effectiveLines.length; i++)
+                              Text('${i + 1}', style: lineNumberStyle),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),

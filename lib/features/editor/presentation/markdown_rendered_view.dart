@@ -14,6 +14,7 @@ import 'widgets/blocks/markdown_block_style.dart';
 import 'widgets/blocks/markdown_block_widget.dart';
 import '../models/markdown_ast_nodes.dart';
 import '../services/markdown_ast_parser.dart';
+import '../services/markdown_selection_source_mapper.dart';
 
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste una modalità "testo grezzo" separata.
@@ -59,6 +60,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   bool _hasActiveSelection = false;
   bool _forceFullRealization = false;
+
+  // FASE 3 — Selezione logica + copia non distruttiva: traduce la
+  // selezione VISUALE riportata da `SelectableRegion` nel testo Markdown
+  // SORGENTE esatto corrispondente, tramite l'AST (vedi
+  // `MarkdownSelectionSourceMapper`). Ricostruito solo quando l'AST
+  // cambia (stesso ciclo di vita di `_cachedBlocks`), mai durante lo
+  // scroll.
+  final MarkdownSelectionController _selectionController =
+      MarkdownSelectionController();
 
   double get _effectiveCacheExtent {
     if (_forceFullRealization) return _kFullDocumentCacheExtent;
@@ -118,9 +128,24 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     });
   }
 
+  /// Copia "non distruttiva" (criterio di accettazione 2): scrive nella
+  /// clipboard di sistema il testo Markdown SORGENTE esatto della
+  /// selezione corrente — cancelletti, asterischi, backtick e sintassi
+  /// tabelle/formule inclusi — anziché il testo formattato che
+  /// `SelectableRegion` produrrebbe di default. La risoluzione passa
+  /// sempre dall'AST (vedi `MarkdownSelectionController`); se per
+  /// qualunque motivo non trova una corrispondenza affidabile, ricade sul
+  /// testo renderizzato così com'è, così la copia non si rompe mai.
+  void _performLogicalCopy() {
+    final text = _selectionController.resolveClipboardText();
+    if (text == null || text.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: text));
+  }
+
   void _handleSelectionChanged(SelectedContent? content) {
     final isEmpty = content == null || content.plainText.isEmpty;
 
+    _selectionController.updateSelection(content);
     HapticsHelper.reportSelectionState(isCollapsed: isEmpty);
 
     if (isEmpty) {
@@ -279,6 +304,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     if (_cachedContent != widget.content) {
       _cachedContent = widget.content;
       _cachedBlocks = _astParser.parse(widget.content);
+      _selectionController.updateDocument(
+        MarkdownAstDocument(source: widget.content, blocks: _cachedBlocks!),
+      );
     }
 
     _ensureStyles(theme, fontFamily, fontSize, lineHeight);
@@ -308,6 +336,19 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
                 return null;
               },
             ),
+            // `CopySelectionTextIntent` è un'"overridable action" di
+            // `SelectableRegion`: il framework la instrada qui, ad un
+            // `Actions` antenato, PRIMA di ricadere sulla propria
+            // implementazione di default (che copierebbe il testo
+            // formattato). Intercettarla qui è ciò che rende possibile
+            // la copia non distruttiva sia da tastiera (Ctrl+C/Cmd+C) sia
+            // dal pulsante "Copia" del menu contestuale sotto.
+            CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
+              onInvoke: (intent) {
+                _performLogicalCopy();
+                return null;
+              },
+            ),
           },
           child: SelectableRegion(
             key: _selectableRegionKey,
@@ -324,6 +365,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
                     onPressed: () {
                       ContextMenuController.removeAny();
                       _performFullDocumentSelectAll();
+                    },
+                  );
+                }
+                if (item.type == ContextMenuButtonType.copy) {
+                  return ContextMenuButtonItem(
+                    type: item.type,
+                    label: item.label,
+                    onPressed: () {
+                      ContextMenuController.removeAny();
+                      _performLogicalCopy();
                     },
                   );
                 }
@@ -376,9 +427,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              widget.title,
-              style: _titleTextStyle,
+            // Il titolo NON fa parte del sorgente Markdown (`widget
+            // .content`, l'unica fonte di verità per la copia non
+            // distruttiva): viene escluso dalla selezione logica così
+            // che "Seleziona Tutto"/copia restituiscano sempre e solo il
+            // documento Markdown, mai il titolo mescolato al corpo.
+            ExcludeSelection(
+              child: Text(
+                widget.title,
+                style: _titleTextStyle,
+              ),
             ),
             const SizedBox(height: 16),
             Divider(
@@ -398,11 +456,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
-        child: Text(
-          'Nessun contenuto',
-          style: _blockStyle.styleSheet.p?.copyWith(
-            fontStyle: FontStyle.italic,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+        child: ExcludeSelection(
+          child: Text(
+            'Nessun contenuto',
+            style: _blockStyle.styleSheet.p?.copyWith(
+              fontStyle: FontStyle.italic,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            ),
           ),
         ),
       ),

@@ -64,11 +64,17 @@ class _ListItemRow extends StatelessWidget {
       children: [
         SizedBox(
           width: 24,
-          child: Text(
-            marker,
-            style: (style.styleSheet.listBullet ?? style.styleSheet.p)?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: style.primaryColor,
+          // Il marcatore (bullet/numero) è un elemento decorativo del
+          // renderer, non testo del sorgente Markdown: va escluso dalla
+          // selezione perché non inquini né la copia "grezza" (Fase 3)
+          // né il conteggio caratteri della mappatura logica.
+          child: ExcludeSelection(
+            child: Text(
+              marker,
+              style: (style.styleSheet.listBullet ?? style.styleSheet.p)?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: style.primaryColor,
+              ),
             ),
           ),
         ),
