@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../../core/utils/syntax_highlighter.dart';
 import '../../../models/markdown_ast_nodes.dart';
+import 'block_visual_selection.dart';
 import 'markdown_block_style.dart';
 
 /// Rendering di un [CodeBlockNode] (fence ``` o ~~~): contenitore
@@ -18,10 +19,14 @@ class CodeBlockWidget extends StatelessWidget {
   final CodeBlockNode node;
   final MarkdownBlockStyle style;
 
+  /// FASE 4 — vedi `ParagraphBlockWidget.visualSelection`.
+  final BlockVisualSelection visualSelection;
+
   const CodeBlockWidget({
     super.key,
     required this.node,
     required this.style,
+    this.visualSelection = BlockVisualSelection.none,
   });
 
   @override
@@ -44,7 +49,11 @@ class CodeBlockWidget extends StatelessWidget {
     );
     final gutterWidth = (effectiveLines.length.toString().length * 9.0) + 16.0;
 
-    return Container(
+    return BlockSelectionHighlight(
+      visualSelection: visualSelection,
+      color: style.blockSelectionHighlightColor,
+      borderRadius: const BorderRadius.all(Radius.circular(10)),
+      child: Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
@@ -128,6 +137,7 @@ class CodeBlockWidget extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

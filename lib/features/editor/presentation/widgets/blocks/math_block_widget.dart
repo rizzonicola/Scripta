@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../models/markdown_ast_nodes.dart';
+import 'block_visual_selection.dart';
 import 'markdown_block_style.dart';
 
 /// Rendering di un [MathBlockNode] (`$$ ... $$`).
@@ -16,31 +17,40 @@ class MathBlockWidget extends StatelessWidget {
   final MathBlockNode node;
   final MarkdownBlockStyle style;
 
+  /// FASE 4 — vedi `ParagraphBlockWidget.visualSelection`.
+  final BlockVisualSelection visualSelection;
+
   const MathBlockWidget({
     super.key,
     required this.node,
     required this.style,
+    this.visualSelection = BlockVisualSelection.none,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: style.primaryColor.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: style.primaryColor.withValues(alpha: 0.25)),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Text(
-          node.expression,
-          style: GoogleFonts.jetBrainsMono(
-            fontSize: style.fontSize * 0.95,
-            fontStyle: FontStyle.italic,
-            color: style.onSurfaceColor,
+    return BlockSelectionHighlight(
+      visualSelection: visualSelection,
+      color: style.blockSelectionHighlightColor,
+      borderRadius: const BorderRadius.all(Radius.circular(8)),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: style.primaryColor.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: style.primaryColor.withValues(alpha: 0.25)),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Text(
+            node.expression,
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: style.fontSize * 0.95,
+              fontStyle: FontStyle.italic,
+              color: style.onSurfaceColor,
+            ),
           ),
         ),
       ),

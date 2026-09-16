@@ -480,7 +480,22 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// (garanzia dell'AST, vedi `MarkdownNode`), non da un hash del testo:
   /// identifica quindi lo stesso blocco logico in modo stabile tra un
   /// rebuild e l'altro, anche quando il suo contenuto interno cambia.
+  ///
+  /// FASE 4 — Selezione Visiva Virtualizzata: questo è il punto in cui
+  /// `_selectionController.logicalSourceSelection` (Fase 3 — già
+  /// mantenuta aggiornata ad ogni `onSelectionChanged`, indipendentemente
+  /// da `setState`, vedi `_handleSelectionChanged`) entra nel widget
+  /// tree. Viene letta qui, dentro `itemBuilder`, cosi che OGNI blocco —
+  /// compreso uno che `ListView.builder` sta istanziando per la prima
+  /// volta perché è appena entrato nel viewport durante uno scroll a
+  /// selezione già attiva — riceva fin dalla sua PRIMA build lo stato di
+  /// evidenziazione corretto, calcolato dal dispatcher
+  /// (`MarkdownBlockWidget`) con un confronto O(1) sui soli offset del
+  /// nodo (vedi `resolveBlockVisualSelection`), senza mai dover attendere
+  /// né dipendere dalla sincronizzazione della geometria di selezione
+  /// nativa di `SelectableRegion` per i widget di nuova registrazione.
   Widget _buildTopLevelBlock(MarkdownBlockNode node) {
+    final logicalSelection = _selectionController.logicalSourceSelection;
     return Align(
       key: ValueKey('rendered-block-${node.type}-${node.startOffset}-${node.endOffset}'),
       alignment: Alignment.topCenter,
@@ -490,7 +505,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           width: double.infinity,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 16),
-            child: MarkdownBlockWidget(node: node, style: _blockStyle),
+            child: MarkdownBlockWidget(
+              node: node,
+              style: _blockStyle,
+              logicalSelection: logicalSelection,
+            ),
           ),
         ),
       ),

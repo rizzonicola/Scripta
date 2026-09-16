@@ -4,6 +4,7 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../models/markdown_ast_nodes.dart';
+import 'block_visual_selection.dart';
 import 'inline_code_element_builder.dart';
 import 'markdown_block_style.dart';
 
@@ -18,10 +19,15 @@ class HeadingBlockWidget extends StatelessWidget {
   final HeadingNode node;
   final MarkdownBlockStyle style;
 
+  /// FASE 4 — vedi `ParagraphBlockWidget.visualSelection`: già risolto
+  /// dal dispatcher, questo widget lo applica soltanto.
+  final BlockVisualSelection visualSelection;
+
   const HeadingBlockWidget({
     super.key,
     required this.node,
     required this.style,
+    this.visualSelection = BlockVisualSelection.none,
   });
 
   TextStyle _styleForLevel() {
@@ -48,30 +54,34 @@ class HeadingBlockWidget extends StatelessWidget {
     final headingStyle = _styleForLevel();
     return Padding(
       padding: const EdgeInsets.only(top: 12, bottom: 4),
-      child: MarkdownBody(
-        // Il testo dell'heading è già privo dei cancelletti (vedi
-        // `HeadingNode.text`): passarlo a `MarkdownBody` serve solo a
-        // risolvere l'eventuale formattazione INLINE al suo interno
-        // (`**grassetto**`, link, `code`, ...), non a re-interpretarlo
-        // come blocco.
-        data: node.text.isEmpty ? ' ' : node.text,
-        selectable: false,
-        styleSheet: style.styleSheet.copyWith(p: headingStyle),
-        extensionSet: md.ExtensionSet.gitHubFlavored,
-        onTapLink: (text, href, title) async {
-          if (href == null || href.isEmpty) return;
-          final uri = Uri.tryParse(href);
-          if (uri != null && await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-        },
-        builders: {
-          'code': InlineCodeElementBuilder(
-            inlineCodeStyle: style.inlineCodeStyle,
-            fontSize: style.fontSize,
-            isDark: style.isDark,
-          ),
-        },
+      child: BlockSelectionHighlight(
+        visualSelection: visualSelection,
+        color: style.blockSelectionHighlightColor,
+        child: MarkdownBody(
+          // Il testo dell'heading è già privo dei cancelletti (vedi
+          // `HeadingNode.text`): passarlo a `MarkdownBody` serve solo a
+          // risolvere l'eventuale formattazione INLINE al suo interno
+          // (`**grassetto**`, link, `code`, ...), non a re-interpretarlo
+          // come blocco.
+          data: node.text.isEmpty ? ' ' : node.text,
+          selectable: false,
+          styleSheet: style.styleSheet.copyWith(p: headingStyle),
+          extensionSet: md.ExtensionSet.gitHubFlavored,
+          onTapLink: (text, href, title) async {
+            if (href == null || href.isEmpty) return;
+            final uri = Uri.tryParse(href);
+            if (uri != null && await canLaunchUrl(uri)) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+          },
+          builders: {
+            'code': InlineCodeElementBuilder(
+              inlineCodeStyle: style.inlineCodeStyle,
+              fontSize: style.fontSize,
+              isDark: style.isDark,
+            ),
+          },
+        ),
       ),
     );
   }

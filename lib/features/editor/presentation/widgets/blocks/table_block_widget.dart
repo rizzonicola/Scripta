@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/markdown_ast_nodes.dart';
+import 'block_visual_selection.dart';
 import 'markdown_block_style.dart';
 
 /// Rendering di un [TableBlockNode] (tabella GFM).
@@ -14,10 +15,18 @@ class TableBlockWidget extends StatelessWidget {
   final TableBlockNode node;
   final MarkdownBlockStyle style;
 
+  /// FASE 4 — vedi `ParagraphBlockWidget.visualSelection`. Le tabelle
+  /// sono trattate come blocco ATOMICO anche dal motore di selezione
+  /// logica (Fase 3, vedi `MarkdownSelectionSourceMapper`): coerentemente,
+  /// qui non esiste un'evidenziazione "parziale" per singola cella, solo
+  /// l'evidenziazione dell'intera tabella quando `visualSelection.isFull`.
+  final BlockVisualSelection visualSelection;
+
   const TableBlockWidget({
     super.key,
     required this.node,
     required this.style,
+    this.visualSelection = BlockVisualSelection.none,
   });
 
   TextAlign _textAlignFor(TableColumnAlignment alignment) {
@@ -41,7 +50,10 @@ class TableBlockWidget extends StatelessWidget {
     final cellPadding = style.styleSheet.tableCellsPadding ??
         const EdgeInsets.symmetric(horizontal: 12, vertical: 8);
 
-    return SingleChildScrollView(
+    return BlockSelectionHighlight(
+      visualSelection: visualSelection,
+      color: style.blockSelectionHighlightColor,
+      child: SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Table(
         border: style.styleSheet.tableBorder ??
@@ -83,6 +95,7 @@ class TableBlockWidget extends StatelessWidget {
               ],
             ),
         ],
+      ),
       ),
     );
   }

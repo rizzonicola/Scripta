@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show TextSelection;
 
 import '../../../models/markdown_ast_nodes.dart';
+import 'block_visual_selection.dart';
 import 'code_block_widget.dart';
 import 'heading_block_widget.dart';
 import 'list_block_widget.dart';
@@ -26,35 +28,85 @@ import 'thematic_break_block_widget.dart';
 /// sostituire un renderer esistente con un Custom Renderer avanzato nella
 /// Fase 4) richiede di toccare solo questo file, non
 /// `MarkdownRenderedView` né gli altri renderer.
+///
+/// FASE 4 — Selezione Visiva Virtualizzata: questo è anche l'UNICO punto
+/// che traduce la selezione logica corrente ([logicalSelection], offset
+/// nel sorgente Markdown completo) nello stato di evidenziazione LOCALE
+/// di [node] (vedi [resolveBlockVisualSelection] — O(1), un pugno di
+/// confronti fra interi). Essendo centralizzato qui, ogni nuovo tipo di
+/// blocco eredita gratuitamente il comportamento corretto senza dover
+/// duplicare la logica di intersezione al suo interno; i renderer
+/// concreti ricevono già il risultato pronto ([BlockVisualSelection]) e
+/// si limitano a dipingerlo (vedi [BlockSelectionHighlight]). Per i nodi
+/// CONTENITORE (lista, blockquote) [logicalSelection] viene anche
+/// ripassato invariato ai figli, così che ciascuno ricalcoli — sempre in
+/// O(1), sui propri offset assoluti — il proprio stato indipendentemente
+/// da quello del genitore (un item di lista può essere pienamente
+/// selezionato anche se la lista che lo contiene, nel suo complesso, è
+/// selezionata solo in parte).
 class MarkdownBlockWidget extends StatelessWidget {
   final MarkdownNode node;
   final MarkdownBlockStyle style;
+  final TextSelection? logicalSelection;
 
   const MarkdownBlockWidget({
     super.key,
     required this.node,
     required this.style,
+    this.logicalSelection,
   });
 
   @override
   Widget build(BuildContext context) {
+    final visualSelection =
+        resolveBlockVisualSelection(node, logicalSelection);
+
     switch (node.type) {
       case MarkdownNodeType.heading:
-        return HeadingBlockWidget(node: node as HeadingNode, style: style);
+        return HeadingBlockWidget(
+          node: node as HeadingNode,
+          style: style,
+          visualSelection: visualSelection,
+        );
       case MarkdownNodeType.paragraph:
-        return ParagraphBlockWidget(node: node as ParagraphNode, style: style);
+        return ParagraphBlockWidget(
+          node: node as ParagraphNode,
+          style: style,
+          visualSelection: visualSelection,
+        );
       case MarkdownNodeType.codeBlock:
-        return CodeBlockWidget(node: node as CodeBlockNode, style: style);
+        return CodeBlockWidget(
+          node: node as CodeBlockNode,
+          style: style,
+          visualSelection: visualSelection,
+        );
       case MarkdownNodeType.listBlock:
-        return ListBlockWidget(node: node as ListBlockNode, style: style);
+        return ListBlockWidget(
+          node: node as ListBlockNode,
+          style: style,
+          logicalSelection: logicalSelection,
+        );
       case MarkdownNodeType.blockquote:
-        return QuoteBlockWidget(node: node as BlockquoteNode, style: style);
+        return QuoteBlockWidget(
+          node: node as BlockquoteNode,
+          style: style,
+          visualSelection: visualSelection,
+          logicalSelection: logicalSelection,
+        );
       case MarkdownNodeType.thematicBreak:
         return ThematicBreakBlockWidget(style: style);
       case MarkdownNodeType.tableBlock:
-        return TableBlockWidget(node: node as TableBlockNode, style: style);
+        return TableBlockWidget(
+          node: node as TableBlockNode,
+          style: style,
+          visualSelection: visualSelection,
+        );
       case MarkdownNodeType.mathBlock:
-        return MathBlockWidget(node: node as MathBlockNode, style: style);
+        return MathBlockWidget(
+          node: node as MathBlockNode,
+          style: style,
+          visualSelection: visualSelection,
+        );
       // `listItem` e `tableRow` non vengono mai passati direttamente a
       // questo dispatcher: sono consumati internamente da
       // `ListBlockWidget`/`TableBlockWidget` tramite i getter tipizzati
