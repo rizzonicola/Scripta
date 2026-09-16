@@ -498,7 +498,7 @@ bool _isBlockBoundaryLine(
 
   final mapped = _buildMappedText(source, lineStarts, startLine, trimmedEnd, (li, lt) {
     final m = _blockquoteMarkerRegex.firstMatch(lt);
-    return m?.end(0) ?? 0;
+    return m?.end ?? 0;
   });
   final childBlocks = _parseBlocksFromScratch(mapped.text);
   final remapped = childBlocks.map((b) => b.remapOffsets(mapped.mapOffset)).toList(growable: false);
@@ -514,7 +514,8 @@ bool _isBlockBoundaryLine(
   int startLine,
   RegExpMatch markerMatch,
 ) {
-  final contentStartCol = markerMatch.start(3);
+  final contentStartCol =
+      markerMatch.group(1)!.length + markerMatch.group(2)!.length + 1;
 
   var end = startLine + 1;
   while (end < lineCount) {
