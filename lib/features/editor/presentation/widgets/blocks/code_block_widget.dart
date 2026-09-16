@@ -64,7 +64,7 @@ class CodeBlockWidget extends StatelessWidget {
               // Etichetta puramente decorativa (info-string della fence):
               // esclusa dalla selezione per non alterare il testo
               // copiato, che deve restare il solo contenuto del blocco.
-              child: ExcludeSelection(
+              child: SelectionContainer.disabled(
                 child: Text(
                   node.language!.trim(),
                   style: lineNumberStyle.copyWith(
@@ -92,7 +92,7 @@ class CodeBlockWidget extends StatelessWidget {
                       // block corrisponda ESATTAMENTE a `node.code`, da
                       // cui `MarkdownSelectionSourceMapper` ricostruisce
                       // la sintassi Markdown sorgente con mappatura 1:1.
-                      child: ExcludeSelection(
+                      child: SelectionContainer.disabled(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [

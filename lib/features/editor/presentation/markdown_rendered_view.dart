@@ -327,6 +327,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
               SelectAllTextIntent(SelectionChangedCause.keyboard),
           SingleActivator(LogicalKeyboardKey.keyA, meta: true):
               SelectAllTextIntent(SelectionChangedCause.keyboard),
+          SingleActivator(LogicalKeyboardKey.keyC, control: true):
+              _LogicalCopyIntent(),
+          SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+              _LogicalCopyIntent(),
         },
         child: Actions(
           actions: <Type, Action<Intent>>{
@@ -336,14 +340,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
                 return null;
               },
             ),
-            // `CopySelectionTextIntent` è un'"overridable action" di
-            // `SelectableRegion`: il framework la instrada qui, ad un
-            // `Actions` antenato, PRIMA di ricadere sulla propria
-            // implementazione di default (che copierebbe il testo
-            // formattato). Intercettarla qui è ciò che rende possibile
-            // la copia non distruttiva sia da tastiera (Ctrl+C/Cmd+C) sia
-            // dal pulsante "Copia" del menu contestuale sotto.
-            CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
+            // `_LogicalCopyIntent` è un intent locale (vedi sotto la
+            // classe): non dipende da alcun tipo interno di Flutter,
+            // eliminando il rischio di "tipo non definito" in fase di
+            // build. Intercetta Ctrl+C/Cmd+C per instradarli sulla copia
+            // non distruttiva; il pulsante "Copia" del menu contestuale
+            // sotto usa lo stesso `_performLogicalCopy()` come percorso
+            // alternativo, sempre disponibile.
+            _LogicalCopyIntent: CallbackAction<_LogicalCopyIntent>(
               onInvoke: (intent) {
                 _performLogicalCopy();
                 return null;
@@ -432,7 +436,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
             // distruttiva): viene escluso dalla selezione logica così
             // che "Seleziona Tutto"/copia restituiscano sempre e solo il
             // documento Markdown, mai il titolo mescolato al corpo.
-            ExcludeSelection(
+            SelectionContainer.disabled(
               child: Text(
                 widget.title,
                 style: _titleTextStyle,
@@ -456,7 +460,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
-        child: ExcludeSelection(
+        child: SelectionContainer.disabled(
           child: Text(
             'Nessun contenuto',
             style: _blockStyle.styleSheet.p?.copyWith(
@@ -500,4 +504,16 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
       BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
+}
+
+/// Intent locale, senza alcuna dipendenza da tipi interni di Flutter la
+/// cui esistenza/firma non è verificabile in questo ambiente: usato per
+/// intercettare Ctrl+C/Cmd+C e instradarli sulla copia "non distruttiva"
+/// (Fase 3), esattamente con lo stesso pattern Shortcuts+Actions già
+/// usato sopra per "Seleziona Tutto". Il pulsante "Copia" del menu
+/// contestuale (vedi `contextMenuBuilder`) resta comunque il percorso
+/// garantito per la copia non distruttiva indipendentemente da questo
+/// binding da tastiera.
+class _LogicalCopyIntent extends Intent {
+  const _LogicalCopyIntent();
 }

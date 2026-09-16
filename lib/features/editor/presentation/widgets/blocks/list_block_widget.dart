@@ -68,7 +68,7 @@ class _ListItemRow extends StatelessWidget {
           // renderer, non testo del sorgente Markdown: va escluso dalla
           // selezione perché non inquini né la copia "grezza" (Fase 3)
           // né il conteggio caratteri della mappatura logica.
-          child: ExcludeSelection(
+          child: SelectionContainer.disabled(
             child: Text(
               marker,
               style: (style.styleSheet.listBullet ?? style.styleSheet.p)?.copyWith(
