@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show TextSelection;
 
 import '../../../models/markdown_ast_nodes.dart';
+import '../../../services/markdown_selection_source_mapper.dart';
 import 'block_visual_selection.dart';
 import 'markdown_block_style.dart';
 import 'markdown_block_widget.dart';
@@ -19,24 +19,27 @@ import 'markdown_block_widget.dart';
 /// come farebbero a livello di documento.
 ///
 /// FASE 4 — [visualSelection] (già risolto dal dispatcher per il nodo
-/// blockquote nel suo complesso) intensifica leggermente la cornice
-/// stessa quando l'INTERA citazione è selezionata; [logicalSelection]
-/// viene comunque ripassato invariato ai figli, che ricalcolano il
-/// proprio stato in modo indipendente (una blockquote può essere
-/// selezionata solo in parte pur avendo, al suo interno, uno o più
-/// paragrafi interamente selezionati).
+/// blockquote nel suo complesso, dentro il `ListenableBuilder` di
+/// [MarkdownBlockWidget], quindi già reattivo) intensifica leggermente la
+/// cornice stessa quando l'INTERA citazione è selezionata;
+/// [selectionController] viene comunque ripassato invariato ai figli, che
+/// si abboneranno ad esso in modo indipendente e ricalcoleranno il
+/// proprio stato — una blockquote può essere selezionata solo in parte
+/// pur avendo, al suo interno, uno o più paragrafi interamente
+/// selezionati, e viceversa un paragrafo può uscire dalla selezione
+/// mentre la citazione che lo contiene resta parzialmente coperta.
 class QuoteBlockWidget extends StatelessWidget {
   final BlockquoteNode node;
   final MarkdownBlockStyle style;
   final BlockVisualSelection visualSelection;
-  final TextSelection? logicalSelection;
+  final MarkdownSelectionController? selectionController;
 
   const QuoteBlockWidget({
     super.key,
     required this.node,
     required this.style,
     this.visualSelection = BlockVisualSelection.none,
-    this.logicalSelection,
+    this.selectionController,
   });
 
   @override
@@ -67,7 +70,7 @@ class QuoteBlockWidget extends StatelessWidget {
                 child: MarkdownBlockWidget(
                   node: children[i],
                   style: style,
-                  logicalSelection: logicalSelection,
+                  selectionController: selectionController,
                 ),
               ),
           ],

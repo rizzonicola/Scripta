@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show TextSelection;
 
 import '../../../models/markdown_ast_nodes.dart';
+import '../../../services/markdown_selection_source_mapper.dart';
 import 'block_visual_selection.dart';
 import 'markdown_block_style.dart';
 import 'markdown_block_widget.dart';
@@ -19,24 +19,28 @@ import 'markdown_block_widget.dart';
 /// FASE 4 — questo widget non disegna testo proprio (il marcatore è
 /// decorativo ed escluso dalla selezione, vedi sotto), quindi non
 /// riceve/calcola un proprio [BlockVisualSelection]: si limita a
-/// ripassare [logicalSelection] invariato a [MarkdownBlockWidget] per
-/// ciascun figlio, che ricalcolerà — sempre in O(1), sui propri offset
-/// assoluti nel documento — il proprio stato di evidenziazione. Questo è
-/// ciò che permette a un singolo item di una lista molto lunga (es.
-/// selezionata per intero da "Seleziona Tutto" e poi scrollata) di
-/// apparire correttamente evidenziato fin dalla sua prima build, anche
-/// se l'item non esisteva ancora come widget quando la selezione è
-/// stata stabilita.
+/// ripassare [selectionController] invariato a [MarkdownBlockWidget] per
+/// ciascun figlio, che si abbonerà — in modo indipendente, tramite il
+/// proprio `ListenableBuilder` — allo stesso controller e ricalcolerà,
+/// sempre in O(1) sui propri offset assoluti, il proprio stato di
+/// evidenziazione. Questo è ciò che permette a un singolo item di una
+/// lista molto lunga (es. selezionata per intero da "Seleziona Tutto" e
+/// poi scrollata) di apparire correttamente evidenziato fin dalla sua
+/// prima build, anche se l'item non esisteva ancora come widget quando
+/// la selezione è stata stabilita — E di restare sincronizzato in tempo
+/// reale ad ogni ulteriore variazione (es. un trascinamento che
+/// restringe la selezione), senza attendere un `setState` esterno sulla
+/// `ListView`.
 class ListBlockWidget extends StatelessWidget {
   final ListBlockNode node;
   final MarkdownBlockStyle style;
-  final TextSelection? logicalSelection;
+  final MarkdownSelectionController? selectionController;
 
   const ListBlockWidget({
     super.key,
     required this.node,
     required this.style,
-    this.logicalSelection,
+    this.selectionController,
   });
 
   @override
@@ -54,7 +58,7 @@ class ListBlockWidget extends StatelessWidget {
               item: items[i],
               marker: node.ordered ? '${startNumber + i}.' : '•',
               style: style,
-              logicalSelection: logicalSelection,
+              selectionController: selectionController,
             ),
           ),
       ],
@@ -66,24 +70,41 @@ class _ListItemRow extends StatelessWidget {
   final ListItemNode item;
   final String marker;
   final MarkdownBlockStyle style;
-  final TextSelection? logicalSelection;
+  final MarkdownSelectionController? selectionController;
 
   const _ListItemRow({
     required this.item,
     required this.marker,
     required this.style,
-    this.logicalSelection,
+    this.selectionController,
   });
 
   @override
   Widget build(BuildContext context) {
+    final controller = selectionController;
+    // FASE 4 — Aggancio Reattivo: il marcatore (bullet/numero) non passa
+    // dal dispatcher [MarkdownBlockWidget] (non è un `MarkdownBlockNode`
+    // dispatchabile), quindi questo widget deve abbonarsi DIRETTAMENTE al
+    // controller per ricalcolare — in isolamento, O(1) — il proprio stato
+    // ad ogni notifica, esattamente come fa il dispatcher per gli altri
+    // tipi di blocco.
+    if (controller == null) {
+      return _buildRow(context, BlockVisualSelection.none);
+    }
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final itemVisualSelection = resolveBlockVisualSelection(
+          item,
+          controller.logicalSourceSelection,
+        );
+        return _buildRow(context, itemVisualSelection);
+      },
+    );
+  }
+
+  Widget _buildRow(BuildContext context, BlockVisualSelection itemVisualSelection) {
     final children = item.children.cast<MarkdownBlockNode>();
-    // FASE 4 — O(1): il marcatore si evidenzia insieme al resto
-    // dell'item quando quest'ultimo ricade per intero nella selezione,
-    // cosi che bullet/numero seguano visivamente il testo pur restando
-    // esclusi dalla selezione LOGICA/testuale (vedi commento sotto).
-    final itemVisualSelection =
-        resolveBlockVisualSelection(item, logicalSelection);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -118,7 +139,7 @@ class _ListItemRow extends StatelessWidget {
                   child: MarkdownBlockWidget(
                     node: children[i],
                     style: style,
-                    logicalSelection: logicalSelection,
+                    selectionController: selectionController,
                   ),
                 ),
             ],

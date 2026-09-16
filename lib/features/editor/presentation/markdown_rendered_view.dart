@@ -107,6 +107,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   void dispose() {
     _scrollController.dispose();
     _selectionFocusNode.dispose();
+    // FASE 4 — `MarkdownSelectionController` è ora un `ChangeNotifier`
+    // (vedi `markdown_selection_source_mapper.dart`): va smaltito come
+    // ogni altro Listenable posseduto da questo `State`, per non
+    // trattenere listener di blocchi già smontati.
+    _selectionController.dispose();
     super.dispose();
   }
 
@@ -481,21 +486,21 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   /// identifica quindi lo stesso blocco logico in modo stabile tra un
   /// rebuild e l'altro, anche quando il suo contenuto interno cambia.
   ///
-  /// FASE 4 — Selezione Visiva Virtualizzata: questo è il punto in cui
-  /// `_selectionController.logicalSourceSelection` (Fase 3 — già
-  /// mantenuta aggiornata ad ogni `onSelectionChanged`, indipendentemente
-  /// da `setState`, vedi `_handleSelectionChanged`) entra nel widget
-  /// tree. Viene letta qui, dentro `itemBuilder`, cosi che OGNI blocco —
-  /// compreso uno che `ListView.builder` sta istanziando per la prima
-  /// volta perché è appena entrato nel viewport durante uno scroll a
-  /// selezione già attiva — riceva fin dalla sua PRIMA build lo stato di
-  /// evidenziazione corretto, calcolato dal dispatcher
-  /// (`MarkdownBlockWidget`) con un confronto O(1) sui soli offset del
-  /// nodo (vedi `resolveBlockVisualSelection`), senza mai dover attendere
-  /// né dipendere dalla sincronizzazione della geometria di selezione
-  /// nativa di `SelectableRegion` per i widget di nuova registrazione.
+  /// FASE 4 — Selezione Visiva Virtualizzata (fix sincronizzazione):
+  /// `_selectionController` (Fase 3 — già mantenuto aggiornato ad ogni
+  /// `onSelectionChanged`, indipendentemente da `setState`, vedi
+  /// `_handleSelectionChanged`) viene passato per ISTANZA, non più il suo
+  /// `logicalSourceSelection` letto una tantum qui dentro `itemBuilder`.
+  /// È `MarkdownBlockWidget` (e, ricorsivamente, ogni widget contenitore
+  /// a cui lo ripassa) ad abbonarsi direttamente al controller tramite un
+  /// `ListenableBuilder` locale: così un blocco che `ListView.builder`
+  /// sta istanziando per la prima volta — perché appena entrato nel
+  /// viewport durante uno scroll a selezione già attiva — legge lo stato
+  /// "live" del controller fin dalla sua PRIMA build, E resta
+  /// sincronizzato ad ogni notifica successiva (es. il drag prosegue)
+  /// senza che questo `ListView.builder` debba mai rieseguire un
+  /// `setState` per l'intera lista solo per propagare la variazione.
   Widget _buildTopLevelBlock(MarkdownBlockNode node) {
-    final logicalSelection = _selectionController.logicalSourceSelection;
     return Align(
       key: ValueKey('rendered-block-${node.type}-${node.startOffset}-${node.endOffset}'),
       alignment: Alignment.topCenter,
@@ -508,7 +513,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
             child: MarkdownBlockWidget(
               node: node,
               style: _blockStyle,
-              logicalSelection: logicalSelection,
+              selectionController: _selectionController,
             ),
           ),
         ),

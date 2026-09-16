@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/foundation.dart' show ChangeNotifier, immutable;
 import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart' show TextSelection;
 
@@ -681,7 +681,29 @@ class MarkdownSelectionSourceMapper {
 /// va aggiornato tramite [updateDocument] ogni volta — e SOLO ogni volta
 /// — che il testo sorgente della nota cambia davvero, esattamente come
 /// la cache dell'AST in `MarkdownRenderedView`.
-class MarkdownSelectionController {
+/// FASE 4 — `Listenable`/`ChangeNotifier`: questo è ciò che permette ai
+/// singoli `MarkdownBlockWidget` (e ai widget contenitore che ne
+/// propagano l'istanza, vedi `ListBlockWidget`/`QuoteBlockWidget`) di
+/// agganciarsi DIRETTAMENTE al controller tramite un `ListenableBuilder`
+/// locale, invece di dipendere da un `TextSelection` statico ricevuto
+/// come parametro e quindi "congelato" al momento in cui `ListView
+/// .builder` ha (ri)costruito quel particolare blocco.
+///
+/// `MarkdownRenderedView` NON esegue più un `setState` ad ogni variazione
+/// di selezione per propagare il cambiamento nell'albero (lo fa solo per
+/// motivi ortogonali: `cacheExtent`, vedi `_handleSelectionChanged`) — è
+/// `notifyListeners()`, chiamato qui sotto, a informare ESCLUSIVAMENTE i
+/// widget di blocco effettivamente montati (quindi, per costruzione, solo
+/// quelli vicini al viewport corrente più il margine di `cacheExtent`),
+/// ciascuno dei quali si ricostruisce localmente in isolamento — un
+/// `Element` alla volta, MAI l'intera `ListView` — ricalcolando il
+/// proprio `BlockVisualSelection` in O(1) (vedi
+/// `resolveBlockVisualSelection`). Un blocco montato DURANTE lo scroll
+/// (quindi dopo l'ultima `notifyListeners()`) riceve comunque lo stato
+/// corretto fin dalla sua prima `build`, perché legge
+/// `logicalSourceSelection` "live" dal controller anziché da un
+/// parametro fissato al momento della sua creazione.
+class MarkdownSelectionController extends ChangeNotifier {
   MarkdownSelectionSourceMapper? _mapper;
   SelectedContent? _lastSelection;
   SourceExtractionResult? _lastResolution;
@@ -689,12 +711,14 @@ class MarkdownSelectionController {
   void updateDocument(MarkdownAstDocument document) {
     _mapper = MarkdownSelectionSourceMapper(document);
     _lastResolution = null;
+    notifyListeners();
   }
 
   /// Da chiamare da `SelectableRegion.onSelectionChanged`.
   void updateSelection(SelectedContent? content) {
     _lastSelection = content;
     _lastResolution = null;
+    notifyListeners();
   }
 
   bool get hasSelection =>
