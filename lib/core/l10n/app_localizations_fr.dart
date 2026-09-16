@@ -380,11 +380,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get creditMarkdown =>
-      'Analyseur CommonMark & GFM (utilisé aussi pour la mise en évidence de recherche)';
-
-  @override
-  String get creditQuill =>
-      'Moteur de document structuré pour la vue de lecture, avec sélection de texte native';
+      'Analyseur et visualiseur enrichi CommonMark & GFM';
 
   @override
   String get creditFonts => 'Typographie JetBrains Mono & Inter';
