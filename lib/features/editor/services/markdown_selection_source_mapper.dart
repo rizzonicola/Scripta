@@ -1,7 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show immutable;
-import 'package:flutter/widgets.dart' show SelectedContent, TextSelection;
+import 'package:flutter/rendering.dart' show SelectedContent;
+import 'package:flutter/services.dart' show TextSelection;
 
 import '../models/markdown_ast_nodes.dart';
 import 'markdown_ast_parser.dart';
