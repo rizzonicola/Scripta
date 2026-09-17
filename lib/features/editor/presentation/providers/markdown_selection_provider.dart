@@ -1,8 +1,9 @@
 /// Stato e scorciatoie desktop per la selezione dell'editor Markdown.
 ///
 /// Layer di presentation: incapsula la macchina a stati del gesto di
-/// selezione (drag → commit), il comando "select all" e l'accesso alla
-/// clipboard di sistema. Lo stato esposto contiene **solo offset
+/// selezione (drag → commit), Word-Snap (long-press/double-tap), manipolazione
+/// delle maniglie di selezione (handles), il comando "select all" e l'accesso
+/// alla clipboard di sistema. Lo stato esposto contiene **solo offset
 /// numerici**: il testo sorgente non risiede mai nel provider, viene
 /// letto dal chiamante solo al momento dell'uso.
 library;
@@ -34,11 +35,19 @@ final markdownSelectionProvider =
 ///
 /// Ciclo di vita del gesto:
 /// `startSelection` → `updateSelection`* → `endSelection`.
+/// Word-Snap: `selectWordAt(offset, fullText)`.
+/// Regolazione fine: `updateStartHandle` / `updateEndHandle`.
 ///
 /// Il valore sentinella [noSelection] (`collapsed(-1)`) rappresenta
 /// l'assenza di selezione ed è l'**unico** stato con `isValid == false`:
 /// i consumer discriminano "nessuna selezione" senza campi aggiuntivi.
 class MarkdownSelectionNotifier extends Notifier<MarkdownSelectionRange> {
+  /// Pattern Unicode per spazi bianchi (`\s`, `\n`) e delimitatori/punteggiatura.
+  static final RegExp _separatorRegex = RegExp(
+    r'[\s\p{P}\p{S}]',
+    unicode: true,
+  );
+
   /// Stato iniziale / di riposo: caret sentinella a offset `-1`.
   ///
   /// Pubblico per confronti (`state == MarkdownSelectionNotifier.noSelection`)
@@ -85,6 +94,110 @@ class MarkdownSelectionNotifier extends Notifier<MarkdownSelectionRange> {
   void endSelection() {
     if (!state.isSelecting) return;
     state = state.copyWith(isSelecting: false);
+  }
+
+  /// Aggiorna la posizione della maniglia iniziale (`start`) durante il drag,
+  /// lasciando intatto [end].
+  ///
+  /// No-op se la selezione attuale non è valida. L'offset viene normalizzato
+  /// per evitare valori negativi.
+  void updateStartHandle(int newStartOffset) {
+    if (!state.isValid) return;
+    final int safeOffset = math.max(0, newStartOffset);
+    if (state.start == safeOffset) return;
+    state = state.copyWith(start: safeOffset);
+  }
+
+  /// Aggiorna la posizione della maniglia finale (`end`) durante il drag,
+  /// lasciando intatto [start].
+  ///
+  /// No-op se la selezione attuale non è valida. L'offset viene normalizzato
+  /// per evitare valori negativi.
+  void updateEndHandle(int newEndOffset) {
+    if (!state.isValid) return;
+    final int safeOffset = math.max(0, newEndOffset);
+    if (state.end == safeOffset) return;
+    state = state.copyWith(end: safeOffset);
+  }
+
+  /// Seleziona automaticamente la parola o il token delimitatore sotto [offset]
+  /// (Word-Snap), tipicamente scatenato da un long-press o double-tap.
+  ///
+  /// Logica di espansione:
+  /// - Se [offset] è fuori limiti o il documento è vuoto, imposta un caret
+  ///   sicuro e normalizzato (o no-op se già allineato).
+  /// - Se [offset] cade su uno spazio (`\s`, `\n`) o un delimitatore sintattico,
+  ///   seleziona unicamente quel carattere.
+  /// - Se cade su un carattere alfabetico/parola, espande `wordStart` all'indietro
+  ///   e `wordEnd` in avanti fino ai rispettivi separatori.
+  void selectWordAt(int offset, String fullText) {
+    if (fullText.isEmpty) {
+      final MarkdownSelectionRange next = const MarkdownSelectionRange(
+        start: 0,
+        end: 0,
+        isSelecting: false,
+      );
+      if (state == next) return;
+      state = next;
+      return;
+    }
+
+    if (offset < 0 || offset >= fullText.length) {
+      final int safeCaretOffset = offset.clamp(0, fullText.length);
+      final MarkdownSelectionRange next = MarkdownSelectionRange(
+        start: safeCaretOffset,
+        end: safeCaretOffset,
+        isSelecting: false,
+      );
+      if (state == next) return;
+      state = next;
+      return;
+    }
+
+    int wordStart;
+    int wordEnd;
+
+    if (_isSeparator(fullText[offset])) {
+      // Offset su spazio o delimitatore: seleziona il singolo carattere
+      wordStart = offset;
+      wordEnd = offset + 1;
+    } else {
+      // Cerca all'indietro fino al separatore precedente o all'inizio del testo
+      wordStart = offset;
+      while (wordStart > 0 && !_isSeparator(fullText[wordStart - 1])) {
+        wordStart--;
+      }
+
+      // Cerca in avanti fino al primo separatore successivo o alla fine del testo
+      wordEnd = offset + 1;
+      while (wordEnd < fullText.length && !_isSeparator(fullText[wordEnd])) {
+        wordEnd++;
+      }
+    }
+
+    // Normalizzazione preventiva contro qualsiasi violazione di range
+    final int safeStart = math.max(0, math.min(wordStart, fullText.length));
+    final int safeEnd = math.max(safeStart, math.min(wordEnd, fullText.length));
+
+    final MarkdownSelectionRange next = MarkdownSelectionRange(
+      start: safeStart,
+      end: safeEnd,
+      isSelecting: false,
+    );
+
+    if (next == state) return;
+    state = next;
+  }
+
+  /// Verifica se il carattere specificato corrisponde a uno spazio bianco
+  /// (`\s`, `\n`, `\r`, `\t`) o a un delimitatore/simbolo (Markdown o punteggiatura).
+  static bool _isSeparator(String char) {
+    final int codeUnit = char.codeUnitAt(0);
+    // Fast path: spazi bianchi ASCII e caratteri di controllo
+    if (codeUnit <= 32 || codeUnit == 0x7F) return true;
+    // Protezione per surrogate code units isolati (es. emoji multi-codeunit)
+    if (codeUnit >= 0xD800 && codeUnit <= 0xDFFF) return false;
+    return _separatorRegex.hasMatch(char);
   }
 
   /// Seleziona l'intero documento `[0, totalDocLength]`.
@@ -180,7 +293,7 @@ const Map<ShortcutActivator, Intent> kMarkdownSelectionShortcuts =
 ///
 /// Su mobile il widget è inerte (niente tastiera fisica): gli stessi
 /// comandi restano invocabili dal notifier, es. da una toolbar
-/// contextuale con "Copia" / "Seleziona tutto".
+/// contestuale con "Copia" / "Seleziona tutto".
 class MarkdownSelectionShortcuts extends ConsumerStatefulWidget {
   const MarkdownSelectionShortcuts({
     super.key,
