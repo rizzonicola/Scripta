@@ -1,3 +1,4 @@
+import 'dart:async' show Timer;
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kPrimaryButton;
@@ -72,20 +73,18 @@ typedef _BlockHit = ({MarkdownBlockNode node, RenderBox box});
 ///
 /// - **Mouse**: il drag con pulsante primario seleziona (paradigma desktop).
 ///   Lo scroll col mouse resta quello da rotellina; il trascinamento con il
-///   mouse NON scrolla la lista perché [\_NoGlowScrollBehavior] espone un
+///   mouse NON scrolla la lista perché [_NoGlowScrollBehavior] espone un
 ///   `dragDevices` che esclude esplicitamente il mouse — il gesto resta così
 ///   interamente dedicato alla selezione, senza competizioni nell'arena.
-/// - **Touch / stilo**: il drag scrolla (comportamento nativo della
-///   `ListView`); il tap singolo azzera la selezione come per il mouse. La
-///   selezione estesa su mobile arriva dai comandi del notifier (es. toolbar
-///   contestuale con "Seleziona tutto"), coerentemente con il design del
-///   layer di presentation (`MarkdownSelectionNotifier`).
+/// - **Touch / tablet / stilo**:
+///   1. Lo swipe/drag rapido scrolla la `ListView` in modo fluido e nativo;
+///   2. Il Long-Press (~300ms a dito fermo) attiva la modalità di selezione
+///      con vibrazione aptica, commuta temporaneamente la fisica su
+///      [NeverScrollableScrollPhysics] e consente di trascinare il dito per
+///      selezionare il testo con auto-scroll automatico ai bordi;
+///   3. Il tap singolo azzera la selezione attiva (come per il mouse).
 /// - **Tap (qualsiasi dispositivo)**: se esiste una selezione attiva
 ///   (`isValid && !isCollapsed`), invoca `clearSelection()`.
-///
-/// L'entry point per una futura selezione touch (long-press) è il medesimo
-/// [Listener]: basta aggiungere il riconoscitore senza toccare la risoluzione
-/// delle coordinate.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   /// Titolo della nota, renderizzato in testa allo scroll. NON fa parte del
   /// sorgente Markdown ([content]): un drag che parte dall'area del titolo
@@ -168,6 +167,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// replicata localmente per non dipendere da export non garantiti.
   static const double _kSelectionDragSlop = 18.0;
 
+  /// Durata della pressione prolungata (long-press) su touch / tablet / stilo
+  /// per attivare la modalità di selezione del testo (~300ms).
+  static const Duration _kLongPressTimeout = Duration(milliseconds: 300);
+
   /// Banda di bordo (superiore/inferiore) della viewport che attiva
   /// l'auto-scroll durante il trascinamento, in px logici (~48dp).
   static const double _kAutoScrollEdgeThreshold = 48.0;
@@ -195,6 +198,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // Stato del gesto (macchina a stati locale, complementare e sincrona con
   // `isSelecting` del provider).
   // ---------------------------------------------------------------------
+
+  /// Timer per l'attivazione della selezione tramite Long-Press su dispositivi
+  /// touch / tablet / stilo.
+  Timer? _longPressTimer;
 
   /// Id del puntatore tracciato (il primo che tocca la superficie); i
   /// puntatori successivi (multi-touch) vengono ignorati finché non termina.
@@ -236,6 +243,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   @override
   void dispose() {
+    _cancelLongPressTimer();
     // Il ticker va fermato PRIMA del dispose (un Ticker attivo non può
     // essere disposto) — gestisce anche lo smontaggio a drag in corso.
     _stopAutoScrollTicker();
@@ -297,6 +305,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
           child: ListView.builder(
             key: const ValueKey('markdown-formatted-listview'),
             controller: _scrollController,
+            physics: _selectionDragActive
+                ? const NeverScrollableScrollPhysics()
+                : null,
             padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
             cacheExtent: _kIdleCacheExtent,
             itemCount: itemCount,
@@ -548,8 +559,40 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   // ---------------------------------------------------------------------
-  // GESTI: TAP-CLEAR + CICLO DRAG (start → update → end)
+  // GESTI: TAP-CLEAR + CICLO DRAG (start → update → end) + LONG-PRESS
   // ---------------------------------------------------------------------
+
+  void _startLongPressTimer() {
+    _cancelLongPressTimer();
+    _longPressTimer = Timer(_kLongPressTimeout, _handleLongPressTimeout);
+  }
+
+  void _cancelLongPressTimer() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+  }
+
+  void _handleLongPressTimeout() {
+    _longPressTimer = null;
+    if (!mounted || _pointerDownPosition == null || _trackedPointer == null) {
+      return;
+    }
+
+    // Modalità selezione attivata via Long-Press:
+    // 1. Vibrazione aptica di inizio selezione
+    HapticsHelper.reportSelectionState(isCollapsed: false);
+
+    // 2. Attivazione stato di selezione e proiezione posizione iniziale
+    _selectionDragActive = true;
+    _selectionNotifier.startSelection(
+      _resolveDocumentOffset(_pointerDownPosition!),
+    );
+    _startAutoScrollTicker();
+
+    // 3. Blocca temporaneamente la fisica dello scroll della ListView
+    //    per evitare trascinamento concorrente della pagina durante la selezione.
+    setState(() {});
+  }
 
   void _handlePointerDown(PointerDownEvent event) {
     // Porta il focus sulla superficie: le scorciatoie (Ctrl/Cmd+A, Ctrl/Cmd+C)
@@ -567,7 +610,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
     // Click destro/centro del mouse: nessun gesto di selezione (restano
     // disponibili per menu contestuali futuri). Touch e stilo continuano a
-    // essere tracciati per il tap-to-clear.
+    // essere tracciati per il tap-to-clear e per il long-press.
     if (event.kind == PointerDeviceKind.mouse && !isPrimaryMouse) return;
 
     _trackedPointer = event.pointer;
@@ -575,23 +618,45 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _lastPointerPosition = event.position;
     _selectionDragActive = false;
     _pointerCanDragSelect = isPrimaryMouse;
+
+    // Touch / tablet / stilo: avvia il timer di ~300ms per il Long-Press.
+    // Se il dito resta fermo, scatta la selezione; se si muove oltre lo slop
+    // prima dei 300ms (in _handlePointerMove), il timer viene cancellato
+    // preservando lo scorrimento fluido nativo della ListView.
+    final bool isTouchOrStylus = event.kind == PointerDeviceKind.touch ||
+        event.kind == PointerDeviceKind.stylus ||
+        event.kind == PointerDeviceKind.invertedStylus;
+
+    if (isTouchOrStylus) {
+      _startLongPressTimer();
+    }
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
     if (_trackedPointer != event.pointer) return;
     _lastPointerPosition = event.position;
 
-    // Touch/stilo: il drag appartiene allo scroll nativo della ListView —
-    // nessuna selezione qui (vedi la politica dispositivi sulla classe).
-    if (!_pointerCanDragSelect) return;
+    // Touch / stilo: se il puntatore si muove oltre lo slop prima dei 300ms,
+    // l'utente intende scrollare: cancelliamo il timer lasciando che la
+    // ListView gestisca lo scorrimento nativo senza entrare in selezione.
+    if (_longPressTimer != null) {
+      final double distance =
+          (event.position - _pointerDownPosition!).distance;
+      if (distance >= _kSelectionDragSlop) {
+        _cancelLongPressTimer();
+      }
+    }
+
+    // Se la selezione non è attiva e il puntatore non è abilitato al drag immediato
+    // (es. touch senza long-press scattato), non procediamo con la selezione.
+    if (!_selectionDragActive && !_pointerCanDragSelect) return;
 
     if (!_selectionDragActive) {
+      // Caso mouse: superamento dello slop per avviare la selezione immediata.
       final double distance =
           (event.position - _pointerDownPosition!).distance;
       if (distance < _kSelectionDragSlop) return; // ancora un "tap candidato"
 
-      // Slop superato: inizia il ciclo di selezione. L'ancora è la posizione
-      // del POINTER-DOWN (dove l'utente ha premuto), proiettata sul documento.
       _selectionDragActive = true;
       _selectionNotifier.startSelection(
         _resolveDocumentOffset(_pointerDownPosition!),
@@ -600,12 +665,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       _startAutoScrollTicker();
     }
 
+    // Aggiornamento continuo della selezione mentre il puntatore si muove.
     _selectionNotifier.updateSelection(_resolveDocumentOffset(event.position));
   }
 
   void _handlePointerUp(PointerUpEvent event) {
     if (_trackedPointer != event.pointer) return;
     _lastPointerPosition = event.position;
+    _cancelLongPressTimer();
     _stopAutoScrollTicker();
 
     if (_selectionDragActive) {
@@ -615,8 +682,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         _resolveDocumentOffset(event.position),
       );
       _selectionNotifier.endSelection();
+      // Ripristina la fisica di scroll nativo
+      setState(() {});
     } else {
-      // Movimento rimasto sotto lo slop: è un tap singolo.
+      // Movimento rimasto sotto lo slop e timer non scattato: è un tap singolo.
       _maybeClearSelectionOnTap();
     }
 
@@ -627,6 +696,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   void _handlePointerCancel(PointerCancelEvent event) {
     if (_trackedPointer != event.pointer) return;
+    _cancelLongPressTimer();
     _stopAutoScrollTicker();
 
     if (_selectionDragActive) {
@@ -634,6 +704,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       // congelata così com'è — resta disponibile il tap-to-clear.
       _selectionDragActive = false;
       _selectionNotifier.endSelection();
+      // Ripristina la fisica di scroll nativo
+      setState(() {});
     }
 
     _trackedPointer = null;
@@ -747,8 +819,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // ---------------------------------------------------------------------
   // RISOLUZIONE PUNTATORE → OFFSET DOCUMENTO
   // ---------------------------------------------------------------------
-
-  /// Blocco individuato dal Livello 1, con la `RenderBox` del suo wrapper.
 
   /// Converte una posizione globale del puntatore in un offset assoluto sul
   /// documento Markdown sorgente (lo stesso spazio di
@@ -936,7 +1006,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 ///
 /// - nessun indicatore di overscroll (glow/edge) — coerente col look
 ///   precedente;
-/// - `dragDevices` ESPPLICITO e senza mouse: il drag col mouse non scrolla
+/// - `dragDevices` ESPLICITO e senza mouse: il drag col mouse non scrolla
 ///   mai la lista, quindi resta interamente dedicato alla selezione (non
 ///   compete con nessun riconoscitore nell'arena dei gesti). Touch e stilo
 ///   mantengono lo scroll nativo; la rotellina/trackpad scrollano come prima
