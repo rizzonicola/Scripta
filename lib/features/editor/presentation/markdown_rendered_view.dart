@@ -155,6 +155,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   bool _selectionDragActive = false;
   bool _pointerCanDragSelect = false;
 
+  /// Flag che indica che il long-press è scattato con successo per il gesto corrente.
+  /// Mentre è true, la parola selezionata rimane CONGELATA: qualsiasi movimento
+  /// del dito non sovrascrive l'intervallo con `updateSelection`. Le modifiche
+  /// dimensionali sono affidate esclusivamente al trascinamento delle due maniglie
+  /// (Handles) dedicate.
+  bool _longPressTriggered = false;
+
   /// Flag per il trascinamento attivo di una delle maniglie di selezione.
   bool _isDraggingHandle = false;
   bool _draggingStartHandle = false;
@@ -174,12 +181,30 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   @override
+  void didUpdateWidget(covariant MarkdownRenderedView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.content != widget.content || oldWidget.title != widget.title) {
+      _cancelLongPressTimer();
+      _stopAutoScrollTicker();
+      _selectionNotifier.clearSelection();
+      _toolbarVisible = false;
+      _selectionDragActive = false;
+      _longPressTriggered = false;
+      _isDraggingHandle = false;
+      _trackedPointer = null;
+      _pointerDownPosition = null;
+      _pointerCanDragSelect = false;
+    }
+  }
+
+  @override
   void dispose() {
     _cancelLongPressTimer();
     _stopAutoScrollTicker();
     _autoScrollTicker.dispose();
     _scrollController.dispose();
     _surfaceFocusNode.dispose();
+    _selectionNotifier.clearSelection();
     super.dispose();
   }
 
@@ -220,7 +245,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
               child: ListView.builder(
                 key: const ValueKey('markdown-formatted-listview'),
                 controller: _scrollController,
-                physics: (_selectionDragActive || _isDraggingHandle)
+                physics: (_selectionDragActive || _isDraggingHandle || _longPressTriggered)
                     ? const NeverScrollableScrollPhysics()
                     : null,
                 padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
@@ -480,22 +505,25 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   /// Long-Press con Word-Snap: seleziona la parola intera sotto il dito,
-  /// fa scattare l'aptica, mostra la toolbar e blocca lo scroll.
+  /// fa scattare l'aptica, mostra la toolbar e congela la selezione.
+  /// Eventuali micro-spostamenti del dito non alterano la parola selezionata.
   void _handleLongPressTimeout() {
     _longPressTimer = null;
     if (!mounted || _pointerDownPosition == null || _trackedPointer == null) {
       return;
     }
 
+    _longPressTriggered = true;
+    _pointerCanDragSelect = false;
+    _selectionDragActive = false;
+
     HapticsHelper.reportSelectionState(isCollapsed: false);
 
     final int offset = _resolveDocumentOffset(_pointerDownPosition!);
     _selectionNotifier.selectWordAt(offset, widget.content);
+    _selectionNotifier.endSelection();
 
     _toolbarVisible = true;
-    _selectionDragActive = true;
-    _startAutoScrollTicker();
-
     setState(() {});
   }
 
@@ -515,6 +543,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _pointerDownPosition = event.position;
     _lastPointerPosition = event.position;
     _selectionDragActive = false;
+    _longPressTriggered = false;
     _pointerCanDragSelect = isPrimaryMouse;
 
     final bool isTouchOrStylus = event.kind == PointerDeviceKind.touch ||
@@ -537,6 +566,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         _cancelLongPressTimer();
       }
     }
+
+    // Se il long-press è scattato con successo, la parola selezionata è CONGELATA:
+    // ignoriamo qualsiasi movimento residuo del dito per evitare la race condition
+    // che rimpiccioliva la selezione prima che il dito si sollevasse.
+    if (_longPressTriggered) return;
 
     if (!_selectionDragActive && !_pointerCanDragSelect) return;
 
@@ -562,6 +596,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _lastPointerPosition = event.position;
     _cancelLongPressTimer();
     _stopAutoScrollTicker();
+
+    if (_longPressTriggered) {
+      // Il long-press è già stato finalizzato con successo al timeout:
+      // ripristiniamo lo stato del puntatore senza alterare la selezione né
+      // trattare il gesto come un tap singolo.
+      _longPressTriggered = false;
+      _trackedPointer = null;
+      _pointerDownPosition = null;
+      _pointerCanDragSelect = false;
+      setState(() {});
+      return;
+    }
 
     final bool isTap = _pointerDownPosition != null &&
         (event.position - _pointerDownPosition!).distance < _kSelectionDragSlop;
@@ -594,32 +640,24 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       setState(() {});
     }
 
+    _longPressTriggered = false;
     _trackedPointer = null;
     _pointerDownPosition = null;
     _pointerCanDragSelect = false;
   }
 
-  /// Gestione del tap: deseleziona SOLO se il tocco è avvenuto FUORI dall'area
-  /// selezionata; se cade dentro, alterna la visibilità della toolbar senza
-  /// perdere la selezione attiva.
+  /// Gestione del tap: qualsiasi tap singolo (sia dentro che fuori dall'area
+  /// selezionata) pulisce la selezione e chiude la toolbar.
   void _handleTap(Offset position) {
     final MarkdownSelectionRange selection =
         ref.read(markdownSelectionProvider);
     if (!selection.isValid || selection.isCollapsed) return;
 
-    final int tappedOffset = _resolveDocumentOffset(position);
-
-    if (tappedOffset >= selection.min && tappedOffset <= selection.max) {
-      setState(() {
-        _toolbarVisible = !_toolbarVisible;
-      });
-    } else {
-      _selectionNotifier.clearSelection();
-      HapticsHelper.reportSelectionState(isCollapsed: true);
-      setState(() {
-        _toolbarVisible = false;
-      });
-    }
+    _selectionNotifier.clearSelection();
+    HapticsHelper.reportSelectionState(isCollapsed: true);
+    setState(() {
+      _toolbarVisible = false;
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -1099,20 +1137,20 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
         final bool showStartHandle = startLocalRect != null &&
             viewportRect.overlaps(
               Rect.fromLTWH(
-                startLocalRect.left - 22.0,
+                startLocalRect.left - 24.0,
                 startLocalRect.top,
-                44.0,
-                startLocalRect.height + 36.0,
+                48.0,
+                startLocalRect.height + 40.0,
               ),
             );
 
         final bool showEndHandle = endLocalRect != null &&
             viewportRect.overlaps(
               Rect.fromLTWH(
-                endLocalRect.left - 22.0,
+                endLocalRect.left - 24.0,
                 endLocalRect.top,
-                44.0,
-                endLocalRect.height + 36.0,
+                48.0,
+                endLocalRect.height + 40.0,
               ),
             );
 
@@ -1174,7 +1212,7 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
               if (showStartHandle)
                 _SelectionHandleWidget(
                   caretRect: startLocalRect,
-                  isStart: true,
+                  handleType: TextSelectionHandleType.left,
                   color: primaryColor,
                   onDragStart: () => onHandleDragStart(true),
                   onDragUpdate: (pos) => onHandleDragUpdate(pos, true),
@@ -1183,7 +1221,7 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
               if (showEndHandle)
                 _SelectionHandleWidget(
                   caretRect: endLocalRect,
-                  isStart: false,
+                  handleType: TextSelectionHandleType.right,
                   color: primaryColor,
                   onDragStart: () => onHandleDragStart(false),
                   onDragUpdate: (pos) => onHandleDragUpdate(pos, false),
@@ -1199,12 +1237,15 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
 }
 
 // -----------------------------------------------------------------------
-// WIDGET E PAINTER MANIGLIE DI SELEZIONE
+// WIDGET E PAINTER MANIGLIE DI SELEZIONE (MATERIAL DESIGN)
 // -----------------------------------------------------------------------
 
+/// Maniglia di selezione touch Material-native (a goccia con orientamento esterno).
+/// Dispone di un'area di contatto generosa (48x48+ dp) per tablet e touch screen,
+/// mantenendo il disegno geometrico perfettamente allineato con il cursore di testo.
 class _SelectionHandleWidget extends StatelessWidget {
   final Rect caretRect;
-  final bool isStart;
+  final TextSelectionHandleType handleType;
   final Color color;
   final VoidCallback onDragStart;
   final ValueChanged<Offset> onDragUpdate;
@@ -1212,7 +1253,7 @@ class _SelectionHandleWidget extends StatelessWidget {
 
   const _SelectionHandleWidget({
     required this.caretRect,
-    required this.isStart,
+    required this.handleType,
     required this.color,
     required this.onDragStart,
     required this.onDragUpdate,
@@ -1221,16 +1262,22 @@ class _SelectionHandleWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const double touchWidth = 44.0;
-    final double touchHeight = caretRect.height + 36.0;
+    final double lineHeight = caretRect.height > 0 ? caretRect.height : 24.0;
+    // Raggio proporzionato all'altezza della riga (clamp 10..13 per diametro 20..26)
+    final double handleRadius = (lineHeight * 0.45).clamp(10.0, 13.0);
+    final double handleSize = handleRadius * 2.0;
+
+    const double touchWidth = 48.0;
+    final double touchHeight = lineHeight + handleSize + 20.0;
 
     return Positioned(
-      left: caretRect.left - (touchWidth / 2),
+      left: caretRect.left - (touchWidth / 2.0),
       top: caretRect.top,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanStart: (_) => onDragStart(),
-        onPanUpdate: (details) => onDragUpdate(details.globalPosition),
+        onPanUpdate: (DragUpdateDetails details) =>
+            onDragUpdate(details.globalPosition),
         onPanEnd: (_) => onDragEnd(),
         onPanCancel: onDragEnd,
         child: SizedBox(
@@ -1239,8 +1286,9 @@ class _SelectionHandleWidget extends StatelessWidget {
           child: CustomPaint(
             painter: _SelectionHandlePainter(
               color: color,
-              lineHeight: caretRect.height,
-              isStart: isStart,
+              lineHeight: lineHeight,
+              handleRadius: handleRadius,
+              handleType: handleType,
             ),
           ),
         ),
@@ -1249,65 +1297,96 @@ class _SelectionHandleWidget extends StatelessWidget {
   }
 }
 
+/// Painter per la maniglia Material a goccia standard:
+/// - Traccia la linea cursore verticale sul bordo della selezione;
+/// - Traccia la forma a goccia Material ([TextSelectionHandleType.left] o [TextSelectionHandleType.right])
+///   con la curva circolare orientata verso l'esterno rispetto alla selezione e il vertice
+///   perfettamente raccordato all'estremità inferiore del cursore;
+/// - Applica l'elevazione con ombra sottile Material.
 class _SelectionHandlePainter extends CustomPainter {
   final Color color;
   final double lineHeight;
-  final bool isStart;
+  final double handleRadius;
+  final TextSelectionHandleType handleType;
 
   _SelectionHandlePainter({
     required this.color,
     required this.lineHeight,
-    required this.isStart,
+    required this.handleRadius,
+    required this.handleType,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double centerX = size.width / 2;
+    final double centerX = size.width / 2.0;
+    final double handleSize = handleRadius * 2.0;
+    final bool isLeft = handleType == TextSelectionHandleType.left;
 
+    // 1. Linea cursore verticale (caret) lungo l'altezza della riga
     final Paint linePaint = Paint()
       ..color = color
       ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.round;
 
     canvas.drawLine(
-      Offset(centerX, 0),
+      Offset(centerX, 1.0),
       Offset(centerX, lineHeight),
       linePaint,
     );
 
-    const double radius = 7.5;
-    final double knobCenterX = isStart ? centerX - 5.0 : centerX + 5.0;
-    final double knobCenterY = lineHeight + radius;
+    // 2. Goccia Material all'estremità inferiore del cursore:
+    // Per TextSelectionHandleType.left: cerchio orientato verso sinistra (esterno),
+    // spigolo d'angolo retto allineato a destra sul cursore (x = centerX + 1.0).
+    // Per TextSelectionHandleType.right: cerchio orientato verso destra (esterno),
+    // spigolo d'angolo retto allineato a sinistra sul cursore (x = centerX - 1.0).
+    final double teardropLeft = isLeft
+        ? (centerX + 1.0 - handleSize)
+        : (centerX - 1.0);
+    final double teardropTop = lineHeight;
 
-    final Path shadowPath = Path()
-      ..addOval(
-        Rect.fromCircle(
-          center: Offset(knobCenterX, knobCenterY + 1.0),
-          radius: radius,
-        ),
-      );
-    canvas.drawShadow(shadowPath, Colors.black.withValues(alpha: 0.5), 3.0, true);
+    final Rect circleRect = Rect.fromCircle(
+      center: Offset(teardropLeft + handleRadius, teardropTop + handleRadius),
+      radius: handleRadius,
+    );
+    final Rect cornerRect = isLeft
+        ? Rect.fromLTWH(
+            teardropLeft + handleRadius,
+            teardropTop,
+            handleRadius,
+            handleRadius,
+          )
+        : Rect.fromLTWH(
+            teardropLeft,
+            teardropTop,
+            handleRadius,
+            handleRadius,
+          );
+
+    final Path teardropPath = Path()
+      ..addOval(circleRect)
+      ..addRect(cornerRect);
+
+    // Ombra nativa Material per dare risalto e tridimensionalità alla maniglia
+    canvas.drawShadow(
+      teardropPath,
+      Colors.black.withValues(alpha: 0.35),
+      2.5,
+      true,
+    );
 
     final Paint fillPaint = Paint()
       ..color = color
       ..style = PaintingStyle.fill;
 
-    final Path connectorPath = Path();
-    connectorPath.moveTo(centerX - 1.0, lineHeight);
-    connectorPath.lineTo(centerX + 1.0, lineHeight);
-    connectorPath.lineTo(knobCenterX + (isStart ? 2.0 : -2.0), knobCenterY);
-    connectorPath.lineTo(knobCenterX - (isStart ? 2.0 : -2.0), knobCenterY);
-    connectorPath.close();
-    canvas.drawPath(connectorPath, fillPaint);
-
-    canvas.drawCircle(Offset(knobCenterX, knobCenterY), radius, fillPaint);
+    canvas.drawPath(teardropPath, fillPaint);
   }
 
   @override
   bool shouldRepaint(covariant _SelectionHandlePainter oldDelegate) {
     return oldDelegate.color != color ||
         oldDelegate.lineHeight != lineHeight ||
-        oldDelegate.isStart != isStart;
+        oldDelegate.handleRadius != handleRadius ||
+        oldDelegate.handleType != handleType;
   }
 }
 
