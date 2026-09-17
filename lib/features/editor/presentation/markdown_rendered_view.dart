@@ -19,6 +19,14 @@ import 'providers/markdown_selection_provider.dart';
 import 'widgets/blocks/markdown_block_style.dart';
 import 'widgets/blocks/markdown_block_widget.dart';
 
+/// Blocco individuato dalla risoluzione puntatore → offset documento, con
+/// la `RenderBox` del suo wrapper.
+///
+/// Dichiarato a livello di file: un `typedef` non può essere annidato
+/// dentro una classe (errore di compilazione), quindi vive qui pur
+/// essendo un dettaglio privato di `_MarkdownRenderedViewState`.
+typedef _BlockHit = ({MarkdownBlockNode node, RenderBox box});
+
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste una modalità "testo grezzo" separata.
 ///
@@ -741,7 +749,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // ---------------------------------------------------------------------
 
   /// Blocco individuato dal Livello 1, con la `RenderBox` del suo wrapper.
-  typedef _BlockHit = ({MarkdownBlockNode node, RenderBox box});
 
   /// Converte una posizione globale del puntatore in un offset assoluto sul
   /// documento Markdown sorgente (lo stesso spazio di
@@ -948,7 +955,7 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
         PointerDeviceKind.touch,
         PointerDeviceKind.stylus,
         PointerDeviceKind.invertedStylus,
-        PointerDeviceKind.trackball,
+        PointerDeviceKind.trackpad,
         PointerDeviceKind.unknown,
       };
 }

@@ -230,30 +230,38 @@ class _MarkdownSelectionShortcutsState
     final MarkdownSelectionNotifier notifier =
         ref.watch(markdownSelectionProvider.notifier);
 
-    return Shortcuts(
-      debugLabel: 'MarkdownSelectionShortcuts',
-      focusNode: widget.focusNode ?? _ownedFocusNode,
+    // `Shortcuts` non espone `focusNode`/`autofocus` (li accetta solo
+    // `Focus`): l'ascolto delle combinazioni tastiera richiede quindi un
+    // `Focus` esplicito attorno a `Shortcuts`, che si limita a mappare le
+    // combinazioni indipendentemente da come il focus viene gestito.
+    final FocusNode effectiveFocusNode = widget.focusNode ?? _ownedFocusNode;
+
+    return Focus(
+      focusNode: effectiveFocusNode,
       autofocus: widget.autofocus,
-      shortcuts: kMarkdownSelectionShortcuts,
-      child: Actions(
-        actions: <Type, Action<Intent>>{
-          CopyMarkdownSelectionIntent:
-              CallbackAction<CopyMarkdownSelectionIntent>(
-            onInvoke: (_) {
-              // Fire-and-forget: la clipboard non restituisce esiti e lo
-              // stato non viene più toccato dopo l'await interno.
-              notifier.copySelectedText(widget.documentSource());
-              return null;
-            },
-          ),
-          SelectAllMarkdownIntent: CallbackAction<SelectAllMarkdownIntent>(
-            onInvoke: (_) {
-              notifier.selectAll(widget.documentSource().length);
-              return null;
-            },
-          ),
-        },
-        child: widget.child,
+      child: Shortcuts(
+        debugLabel: 'MarkdownSelectionShortcuts',
+        shortcuts: kMarkdownSelectionShortcuts,
+        child: Actions(
+          actions: <Type, Action<Intent>>{
+            CopyMarkdownSelectionIntent:
+                CallbackAction<CopyMarkdownSelectionIntent>(
+              onInvoke: (_) {
+                // Fire-and-forget: la clipboard non restituisce esiti e lo
+                // stato non viene più toccato dopo l'await interno.
+                notifier.copySelectedText(widget.documentSource());
+                return null;
+              },
+            ),
+            SelectAllMarkdownIntent: CallbackAction<SelectAllMarkdownIntent>(
+              onInvoke: (_) {
+                notifier.selectAll(widget.documentSource().length);
+                return null;
+              },
+            ),
+          },
+          child: widget.child,
+        ),
       ),
     );
   }
