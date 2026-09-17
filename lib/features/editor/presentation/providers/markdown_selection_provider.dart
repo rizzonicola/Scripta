@@ -132,7 +132,7 @@ class MarkdownSelectionNotifier extends Notifier<MarkdownSelectionRange> {
   ///   e `wordEnd` in avanti fino ai rispettivi separatori.
   void selectWordAt(int offset, String fullText) {
     if (fullText.isEmpty) {
-      final MarkdownSelectionRange next = const MarkdownSelectionRange(
+      const MarkdownSelectionRange next = MarkdownSelectionRange(
         start: 0,
         end: 0,
         isSelecting: false,
@@ -238,8 +238,8 @@ class MarkdownSelectionNotifier extends Notifier<MarkdownSelectionRange> {
     if (selection.isCollapsed || !selection.isValid) return;
 
     final int docLength = fullMarkdownSource.length;
-    final int start = math.min(selection.min, docLength);
-    final int end = math.min(selection.max, docLength);
+    final int start = selection.min.clamp(0, docLength);
+    final int end = selection.max.clamp(0, docLength);
 
     if (start >= end) return; // selezione finita fuori dal documento
 

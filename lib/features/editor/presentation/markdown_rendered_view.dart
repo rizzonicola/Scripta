@@ -162,22 +162,25 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// (Handles) dedicate.
   bool _longPressTriggered = false;
 
-  /// Flag per il trascinamento attivo di una delle maniglie di selezione.
-  bool _isDraggingHandle = false;
-  bool _draggingStartHandle = false;
-
   /// Visibilità della toolbar contestuale di sistema.
   bool _toolbarVisible = false;
 
   Duration _lastAutoScrollElapsed = Duration.zero;
 
+  MarkdownSelectionNotifier? _cachedNotifier;
   MarkdownSelectionNotifier get _selectionNotifier =>
-      ref.read(markdownSelectionProvider.notifier);
+      (_cachedNotifier ??= ref.read(markdownSelectionProvider.notifier))!;
 
   @override
   void initState() {
     super.initState();
     _autoScrollTicker = createTicker(_handleAutoScrollTick);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _cachedNotifier = ref.read(markdownSelectionProvider.notifier);
   }
 
   @override
@@ -190,7 +193,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       _toolbarVisible = false;
       _selectionDragActive = false;
       _longPressTriggered = false;
-      _isDraggingHandle = false;
       _trackedPointer = null;
       _pointerDownPosition = null;
       _pointerCanDragSelect = false;
@@ -204,7 +206,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _autoScrollTicker.dispose();
     _scrollController.dispose();
     _surfaceFocusNode.dispose();
-    _selectionNotifier.clearSelection();
+    _cachedNotifier?.clearSelection();
     super.dispose();
   }
 
@@ -231,21 +233,21 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     return MarkdownSelectionShortcuts(
       documentSource: () => widget.content,
       focusNode: _surfaceFocusNode,
-      child: Listener(
+      child: Stack(
         key: _scrollSurfaceKey,
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: _handlePointerDown,
-        onPointerMove: _handlePointerMove,
-        onPointerUp: _handlePointerUp,
-        onPointerCancel: _handlePointerCancel,
-        child: Stack(
-          children: [
-            ScrollConfiguration(
+        children: [
+          Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: _handlePointerDown,
+            onPointerMove: _handlePointerMove,
+            onPointerUp: _handlePointerUp,
+            onPointerCancel: _handlePointerCancel,
+            child: ScrollConfiguration(
               behavior: const _NoGlowScrollBehavior(),
               child: ListView.builder(
                 key: const ValueKey('markdown-formatted-listview'),
                 controller: _scrollController,
-                physics: (_selectionDragActive || _isDraggingHandle || _longPressTriggered)
+                physics: (_selectionDragActive || _longPressTriggered)
                     ? const NeverScrollableScrollPhysics()
                     : null,
                 padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
@@ -263,23 +265,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                 },
               ),
             ),
-            // Layer mirato e reattivo per maniglie e toolbar:
-            // la ListView non viene invalidata né ricostruita a ogni frame di drag
-            _MarkdownSelectionLayer(
-              scrollController: _scrollController,
-              surfaceKey: _scrollSurfaceKey,
-              resolveRect: _resolveRectForOffset,
-              toolbarVisible: _toolbarVisible,
-              content: widget.content,
-              primaryColor: theme.colorScheme.primary,
-              onCopy: _handleCopy,
-              onSelectAll: _handleSelectAll,
-              onHandleDragStart: _handleHandleDragStart,
-              onHandleDragUpdate: _handleHandleDragUpdate,
-              onHandleDragEnd: _handleHandleDragEnd,
-            ),
-          ],
-        ),
+          ),
+          // Layer mirato e reattivo per la toolbar nativa:
+          _MarkdownSelectionLayer(
+            scrollController: _scrollController,
+            surfaceKey: _scrollSurfaceKey,
+            resolveRect: _resolveRectForOffset,
+            toolbarVisible: _toolbarVisible,
+            content: widget.content,
+            onCopy: _handleCopy,
+            onSelectAll: _handleSelectAll,
+          ),
+        ],
       ),
     );
   }
@@ -556,7 +553,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
-    if (_trackedPointer != event.pointer || _isDraggingHandle) return;
+    if (_trackedPointer != event.pointer) return;
     _lastPointerPosition = event.position;
 
     if (_longPressTimer != null) {
@@ -592,7 +589,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   void _handlePointerUp(PointerUpEvent event) {
-    if (_trackedPointer != event.pointer || _isDraggingHandle) return;
+    if (_trackedPointer != event.pointer) return;
     _lastPointerPosition = event.position;
     _cancelLongPressTimer();
     _stopAutoScrollTicker();
@@ -630,7 +627,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
-    if (_trackedPointer != event.pointer || _isDraggingHandle) return;
+    if (_trackedPointer != event.pointer) return;
     _cancelLongPressTimer();
     _stopAutoScrollTicker();
 
@@ -646,8 +643,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _pointerCanDragSelect = false;
   }
 
-  /// Gestione del tap: qualsiasi tap singolo (sia dentro che fuori dall'area
-  /// selezionata) pulisce la selezione e chiude la toolbar.
+  /// Gestione del tap: qualsiasi tap singolo (sia sopra il testo selezionato,
+  /// sia su altro testo o spazio vuoto) azzera la selezione e chiude la toolbar.
   void _handleTap(Offset position) {
     final MarkdownSelectionRange selection =
         ref.read(markdownSelectionProvider);
@@ -661,52 +658,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   // ---------------------------------------------------------------------
-  // MANIPOLAZIONE MANIGLIE (SELECTION HANDLES)
-  // ---------------------------------------------------------------------
-
-  void _handleHandleDragStart(bool isStart) {
-    _cancelLongPressTimer();
-    setState(() {
-      _isDraggingHandle = true;
-      _draggingStartHandle = isStart;
-      _toolbarVisible = false;
-    });
-    _startAutoScrollTicker();
-  }
-
-  void _handleHandleDragUpdate(Offset globalPosition, bool isStart) {
-    _lastPointerPosition = globalPosition;
-
-    // Normalizza il punto di ancoraggio leggermente sopra il dito verso la linea di testo
-    final double verticalCorrection = _blockStyle.fontSize * 0.7 + 8.0;
-    final Offset adjustedPosition = Offset(
-      globalPosition.dx,
-      globalPosition.dy - verticalCorrection,
-    );
-    final int newOffset = _resolveDocumentOffset(adjustedPosition);
-
-    if (isStart) {
-      _selectionNotifier.updateStartHandle(newOffset);
-    } else {
-      _selectionNotifier.updateEndHandle(newOffset);
-    }
-  }
-
-  void _handleHandleDragEnd() {
-    _stopAutoScrollTicker();
-    _selectionNotifier.endSelection();
-    setState(() {
-      _isDraggingHandle = false;
-      _toolbarVisible = true;
-    });
-  }
-
-  // ---------------------------------------------------------------------
   // AZIONI TOOLBAR
   // ---------------------------------------------------------------------
 
-  void _handleCopy() {
-    _selectionNotifier.copySelectedText(widget.content);
+  Future<void> _handleCopy() async {
+    final selection = ref.read(markdownSelectionProvider);
+    if (!selection.isValid || selection.isCollapsed) return;
+
+    await _selectionNotifier.copySelectedText(widget.content);
+    if (!mounted) return;
+
     HapticsHelper.reportSelectionState(isCollapsed: true);
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       const SnackBar(
@@ -725,7 +686,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   // ---------------------------------------------------------------------
-  // AUTO-SCROLL DURANTE IL TRASCINAMENTO (SELEZIONE O MANIGLIE)
+  // AUTO-SCROLL DURANTE IL TRASCINAMENTO DELLA SELEZIONE
   // ---------------------------------------------------------------------
 
   void _startAutoScrollTicker() {
@@ -742,8 +703,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   void _handleAutoScrollTick(Duration elapsed) {
-    if ((!_selectionDragActive && !_isDraggingHandle) ||
-        (_trackedPointer == null && !_isDraggingHandle)) {
+    if (!_selectionDragActive || _trackedPointer == null) {
       return;
     }
 
@@ -798,18 +758,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       if (_selectionDragActive) {
         _selectionNotifier
             .updateSelection(_resolveDocumentOffset(_lastPointerPosition));
-      } else if (_isDraggingHandle) {
-        final double verticalCorrection = _blockStyle.fontSize * 0.7 + 8.0;
-        final Offset adjusted = Offset(
-          _lastPointerPosition.dx,
-          _lastPointerPosition.dy - verticalCorrection,
-        );
-        final int offset = _resolveDocumentOffset(adjusted);
-        if (_draggingStartHandle) {
-          _selectionNotifier.updateStartHandle(offset);
-        } else {
-          _selectionNotifier.updateEndHandle(offset);
-        }
       }
     });
   }
@@ -863,26 +811,33 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       }
     }
 
+    int resolved;
     final _BlockHit? hit = containedHit ?? bandHit;
     if (hit != null) {
       final int? viaTextGeometry =
           _resolveOffsetViaTextGeometry(hit, globalPosition);
-      if (viaTextGeometry != null) return viaTextGeometry;
-      return _resolveOffsetByBlockHeight(hit, globalPosition);
+      if (viaTextGeometry != null) {
+        resolved = viaTextGeometry;
+      } else {
+        resolved = _resolveOffsetByBlockHeight(hit, globalPosition);
+      }
+    } else if (!hasLiveBlocks || globalPosition.dy < topmostBandTop) {
+      resolved = 0;
+    } else if (globalPosition.dy > bottomBandBottom) {
+      resolved = documentLength;
+    } else {
+      resolved = (globalPosition.dy - topmostBandTop) <=
+              (bottomBandBottom - globalPosition.dy)
+          ? 0
+          : documentLength;
     }
 
-    if (!hasLiveBlocks) return 0;
-    if (globalPosition.dy < topmostBandTop) return 0;
-    if (globalPosition.dy > bottomBandBottom) return documentLength;
-
-    return (globalPosition.dy - topmostBandTop) <=
-            (bottomBandBottom - globalPosition.dy)
-        ? 0
-        : documentLength;
+    return resolved.clamp(0, documentLength);
   }
 
   int? _resolveOffsetViaTextGeometry(
       _BlockHit hit, Offset globalPosition) {
+    final int documentLength = _cachedContent?.length ?? 0;
     final List<(RenderParagraph, int)> paragraphs = <(RenderParagraph, int)>[];
     _collectTextParagraphs(hit.box, paragraphs);
     if (paragraphs.isEmpty) return null;
@@ -902,25 +857,30 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       }
       final TextPosition textPosition = paragraph.getPositionForOffset(local);
       final int relative =
-          math.max(0, math.min(length, textPosition.offset));
-      return _projectToSourceRange(
+          textPosition.offset.clamp(0, length);
+      final int calculated = _projectToSourceRange(
         hit.node,
         (charactersBefore + relative) / totalCharacters,
       );
+      return calculated.clamp(0, documentLength);
     }
     return null;
   }
 
   int _resolveOffsetByBlockHeight(_BlockHit hit, Offset globalPosition) {
+    final int documentLength = _cachedContent?.length ?? 0;
     final Offset local = hit.box.globalToLocal(globalPosition);
     final double height = hit.box.size.height;
-    if (height <= 0.0) return hit.node.startOffset;
-    return _projectToSourceRange(hit.node, local.dy / height);
+    if (height <= 0.0) return hit.node.startOffset.clamp(0, documentLength);
+    final int calculated = _projectToSourceRange(hit.node, local.dy / height);
+    return calculated.clamp(0, documentLength);
   }
 
   int _projectToSourceRange(MarkdownBlockNode node, double fraction) {
+    final int documentLength = _cachedContent?.length ?? 0;
     final double clamped = _clamp01(fraction);
-    return node.startOffset + (clamped * node.length).round();
+    final int calculated = node.startOffset + (clamped * node.length).round();
+    return calculated.clamp(0, documentLength);
   }
 
   void _collectTextParagraphs(
@@ -928,7 +888,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     List<(RenderParagraph, int)> out,
   ) {
     if (renderObject is RenderParagraph) {
-      out.add((renderObject, renderObject.text.toPlainText().length));
+      if (renderObject.attached &&
+          renderObject.hasSize &&
+          !renderObject.debugNeedsLayout) {
+        out.add((renderObject, renderObject.text.toPlainText().length));
+      }
       return;
     }
     renderObject.visitChildren((RenderObject child) {
@@ -938,8 +902,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   /// Risolve il rettangolo globale di un dato offset sorgente del documento
   /// per posizionare con precisione sub-pixel maniglie e toolbar.
-  Rect? _resolveRectForOffset(int documentOffset, {bool isEnd = false}) {
+  Rect? _resolveRectForOffset(int rawOffset, {bool isEnd = false}) {
     if (_cachedBlocks == null || _cachedBlocks!.isEmpty) return null;
+    final int documentLength = _cachedContent?.length ?? 0;
+    final int documentOffset = rawOffset.clamp(0, documentLength);
 
     MarkdownBlockNode? targetNode;
     for (final node in _cachedBlocks!) {
@@ -964,7 +930,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final BuildContext? elementContext = blockKey?.currentContext;
     if (elementContext == null) return null;
     final RenderObject? renderObject = elementContext.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.attached) return null;
+    if (renderObject is! RenderBox ||
+        !renderObject.attached ||
+        !renderObject.hasSize ||
+        renderObject.debugNeedsLayout) {
+      return null;
+    }
 
     final double defaultLineHeight = _blockStyle.fontSize * 1.4;
 
@@ -992,14 +963,19 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
             final int relative =
                 (targetChar - charactersBefore).clamp(0, length);
             final TextPosition textPos = TextPosition(
-              offset: relative,
+              offset: relative.clamp(0, length),
               affinity: isEnd ? TextAffinity.upstream : TextAffinity.downstream,
             );
 
+            final int baseOffset =
+                (isEnd ? math.max(0, relative - 1) : relative).clamp(0, length);
+            final int extentOffset =
+                (isEnd ? relative : math.min(length, relative + 1)).clamp(0, length);
+
             final List<TextBox> boxes = paragraph.getBoxesForSelection(
               TextSelection(
-                baseOffset: isEnd ? math.max(0, relative - 1) : relative,
-                extentOffset: isEnd ? relative : math.min(length, relative + 1),
+                baseOffset: baseOffset,
+                extentOffset: extentOffset,
               ),
             );
 
@@ -1061,7 +1037,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 }
 
 // -----------------------------------------------------------------------
-// LAYER REATTIVO MIRATO PER MANIGLIE E TOOLBAR
+// LAYER REATTIVO MIRATO PER LA TOOLBAR NATIVA
 // -----------------------------------------------------------------------
 
 class _MarkdownSelectionLayer extends ConsumerWidget {
@@ -1070,12 +1046,8 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
   final Rect? Function(int offset, {bool isEnd}) resolveRect;
   final bool toolbarVisible;
   final String content;
-  final Color primaryColor;
   final VoidCallback onCopy;
   final VoidCallback onSelectAll;
-  final void Function(bool isStart) onHandleDragStart;
-  final void Function(Offset pos, bool isStart) onHandleDragUpdate;
-  final VoidCallback onHandleDragEnd;
 
   const _MarkdownSelectionLayer({
     required this.scrollController,
@@ -1083,12 +1055,8 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
     required this.resolveRect,
     required this.toolbarVisible,
     required this.content,
-    required this.primaryColor,
     required this.onCopy,
     required this.onSelectAll,
-    required this.onHandleDragStart,
-    required this.onHandleDragUpdate,
-    required this.onHandleDragEnd,
   });
 
   @override
@@ -1096,7 +1064,7 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
     final MarkdownSelectionRange selection =
         ref.watch(markdownSelectionProvider);
 
-    if (!selection.isValid || selection.isCollapsed) {
+    if (!toolbarVisible || !selection.isValid || selection.isCollapsed) {
       return const SizedBox.shrink();
     }
 
@@ -1133,260 +1101,57 @@ class _MarkdownSelectionLayer extends ConsumerWidget {
               )
             : null;
 
-        final Rect viewportRect = Offset.zero & surfaceBox.size;
-        final bool showStartHandle = startLocalRect != null &&
-            viewportRect.overlaps(
-              Rect.fromLTWH(
-                startLocalRect.left - 24.0,
-                startLocalRect.top,
-                48.0,
-                startLocalRect.height + 40.0,
-              ),
-            );
+        Offset? primaryAnchor;
+        Offset? secondaryAnchor;
 
-        final bool showEndHandle = endLocalRect != null &&
-            viewportRect.overlaps(
-              Rect.fromLTWH(
-                endLocalRect.left - 24.0,
-                endLocalRect.top,
-                48.0,
-                endLocalRect.height + 40.0,
-              ),
-            );
+        if (startLocalRect != null && endLocalRect != null) {
+          final double anchorX =
+              ((startLocalRect.center.dx + endLocalRect.center.dx) / 2)
+                  .clamp(24.0, math.max(24.0, surfaceBox.size.width - 24.0));
+          final double topY =
+              math.min(startLocalRect.top, endLocalRect.top);
+          final double bottomY =
+              math.max(startLocalRect.bottom, endLocalRect.bottom);
+          primaryAnchor = Offset(anchorX, math.max(0.0, topY));
+          secondaryAnchor = Offset(anchorX, bottomY);
+        } else if (startLocalRect != null) {
+          final double anchorX = startLocalRect.center.dx
+              .clamp(24.0, math.max(24.0, surfaceBox.size.width - 24.0));
+          primaryAnchor =
+              Offset(anchorX, math.max(0.0, startLocalRect.top));
+          secondaryAnchor = Offset(anchorX, startLocalRect.bottom);
+        } else if (endLocalRect != null) {
+          final double anchorX = endLocalRect.center.dx
+              .clamp(24.0, math.max(24.0, surfaceBox.size.width - 24.0));
+          primaryAnchor =
+              Offset(anchorX, math.max(0.0, endLocalRect.top));
+          secondaryAnchor = Offset(anchorX, endLocalRect.bottom);
+        }
 
-        Widget? toolbarWidget;
-        if (toolbarVisible) {
-          Offset? primaryAnchor;
-          Offset? secondaryAnchor;
-
-          if (startLocalRect != null && endLocalRect != null) {
-            final double anchorX =
-                ((startLocalRect.center.dx + endLocalRect.center.dx) / 2)
-                    .clamp(24.0, math.max(24.0, surfaceBox.size.width - 24.0));
-            final double topY =
-                math.min(startLocalRect.top, endLocalRect.top);
-            final double bottomY =
-                math.max(startLocalRect.bottom, endLocalRect.bottom);
-            primaryAnchor = Offset(anchorX, math.max(0.0, topY));
-            secondaryAnchor = Offset(anchorX, bottomY);
-          } else if (startLocalRect != null) {
-            final double anchorX = startLocalRect.center.dx
-                .clamp(24.0, math.max(24.0, surfaceBox.size.width - 24.0));
-            primaryAnchor =
-                Offset(anchorX, math.max(0.0, startLocalRect.top));
-            secondaryAnchor = Offset(anchorX, startLocalRect.bottom);
-          } else if (endLocalRect != null) {
-            final double anchorX = endLocalRect.center.dx
-                .clamp(24.0, math.max(24.0, surfaceBox.size.width - 24.0));
-            primaryAnchor =
-                Offset(anchorX, math.max(0.0, endLocalRect.top));
-            secondaryAnchor = Offset(anchorX, endLocalRect.bottom);
-          }
-
-          if (primaryAnchor != null) {
-            toolbarWidget = Positioned.fill(
-              child: AdaptiveTextSelectionToolbar.buttonItems(
-                anchors: TextSelectionToolbarAnchors(
-                  primaryAnchor: primaryAnchor,
-                  secondaryAnchor: secondaryAnchor,
-                ),
-                buttonItems: <ContextMenuButtonItem>[
-                  ContextMenuButtonItem(
-                    onPressed: onCopy,
-                    type: ContextMenuButtonType.copy,
-                  ),
-                  ContextMenuButtonItem(
-                    onPressed: onSelectAll,
-                    type: ContextMenuButtonType.selectAll,
-                  ),
-                ],
-              ),
-            );
-          }
+        if (primaryAnchor == null) {
+          return const SizedBox.shrink();
         }
 
         return Positioned.fill(
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              if (showStartHandle)
-                _SelectionHandleWidget(
-                  caretRect: startLocalRect,
-                  handleType: TextSelectionHandleType.left,
-                  color: primaryColor,
-                  onDragStart: () => onHandleDragStart(true),
-                  onDragUpdate: (pos) => onHandleDragUpdate(pos, true),
-                  onDragEnd: onHandleDragEnd,
-                ),
-              if (showEndHandle)
-                _SelectionHandleWidget(
-                  caretRect: endLocalRect,
-                  handleType: TextSelectionHandleType.right,
-                  color: primaryColor,
-                  onDragStart: () => onHandleDragStart(false),
-                  onDragUpdate: (pos) => onHandleDragUpdate(pos, false),
-                  onDragEnd: onHandleDragEnd,
-                ),
-              if (toolbarWidget != null) toolbarWidget,
+          child: AdaptiveTextSelectionToolbar.buttonItems(
+            anchors: TextSelectionToolbarAnchors(
+              primaryAnchor: primaryAnchor,
+              secondaryAnchor: secondaryAnchor,
+            ),
+            buttonItems: <ContextMenuButtonItem>[
+              ContextMenuButtonItem(
+                onPressed: onCopy,
+                type: ContextMenuButtonType.copy,
+              ),
+              ContextMenuButtonItem(
+                onPressed: onSelectAll,
+                type: ContextMenuButtonType.selectAll,
+              ),
             ],
           ),
         );
       },
     );
-  }
-}
-
-// -----------------------------------------------------------------------
-// WIDGET E PAINTER MANIGLIE DI SELEZIONE (MATERIAL DESIGN)
-// -----------------------------------------------------------------------
-
-/// Maniglia di selezione touch Material-native (a goccia con orientamento esterno).
-/// Dispone di un'area di contatto generosa (48x48+ dp) per tablet e touch screen,
-/// mantenendo il disegno geometrico perfettamente allineato con il cursore di testo.
-class _SelectionHandleWidget extends StatelessWidget {
-  final Rect caretRect;
-  final TextSelectionHandleType handleType;
-  final Color color;
-  final VoidCallback onDragStart;
-  final ValueChanged<Offset> onDragUpdate;
-  final VoidCallback onDragEnd;
-
-  const _SelectionHandleWidget({
-    required this.caretRect,
-    required this.handleType,
-    required this.color,
-    required this.onDragStart,
-    required this.onDragUpdate,
-    required this.onDragEnd,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final double lineHeight = caretRect.height > 0 ? caretRect.height : 24.0;
-    // Raggio proporzionato all'altezza della riga (clamp 10..13 per diametro 20..26)
-    final double handleRadius = (lineHeight * 0.45).clamp(10.0, 13.0);
-    final double handleSize = handleRadius * 2.0;
-
-    const double touchWidth = 48.0;
-    final double touchHeight = lineHeight + handleSize + 20.0;
-
-    return Positioned(
-      left: caretRect.left - (touchWidth / 2.0),
-      top: caretRect.top,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (_) => onDragStart(),
-        onPanUpdate: (DragUpdateDetails details) =>
-            onDragUpdate(details.globalPosition),
-        onPanEnd: (_) => onDragEnd(),
-        onPanCancel: onDragEnd,
-        child: SizedBox(
-          width: touchWidth,
-          height: touchHeight,
-          child: CustomPaint(
-            painter: _SelectionHandlePainter(
-              color: color,
-              lineHeight: lineHeight,
-              handleRadius: handleRadius,
-              handleType: handleType,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Painter per la maniglia Material a goccia standard:
-/// - Traccia la linea cursore verticale sul bordo della selezione;
-/// - Traccia la forma a goccia Material ([TextSelectionHandleType.left] o [TextSelectionHandleType.right])
-///   con la curva circolare orientata verso l'esterno rispetto alla selezione e il vertice
-///   perfettamente raccordato all'estremità inferiore del cursore;
-/// - Applica l'elevazione con ombra sottile Material.
-class _SelectionHandlePainter extends CustomPainter {
-  final Color color;
-  final double lineHeight;
-  final double handleRadius;
-  final TextSelectionHandleType handleType;
-
-  _SelectionHandlePainter({
-    required this.color,
-    required this.lineHeight,
-    required this.handleRadius,
-    required this.handleType,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final double centerX = size.width / 2.0;
-    final double handleSize = handleRadius * 2.0;
-    final bool isLeft = handleType == TextSelectionHandleType.left;
-
-    // 1. Linea cursore verticale (caret) lungo l'altezza della riga
-    final Paint linePaint = Paint()
-      ..color = color
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawLine(
-      Offset(centerX, 1.0),
-      Offset(centerX, lineHeight),
-      linePaint,
-    );
-
-    // 2. Goccia Material all'estremità inferiore del cursore:
-    // Per TextSelectionHandleType.left: cerchio orientato verso sinistra (esterno),
-    // spigolo d'angolo retto allineato a destra sul cursore (x = centerX + 1.0).
-    // Per TextSelectionHandleType.right: cerchio orientato verso destra (esterno),
-    // spigolo d'angolo retto allineato a sinistra sul cursore (x = centerX - 1.0).
-    final double teardropLeft = isLeft
-        ? (centerX + 1.0 - handleSize)
-        : (centerX - 1.0);
-    final double teardropTop = lineHeight;
-
-    final Rect circleRect = Rect.fromCircle(
-      center: Offset(teardropLeft + handleRadius, teardropTop + handleRadius),
-      radius: handleRadius,
-    );
-    final Rect cornerRect = isLeft
-        ? Rect.fromLTWH(
-            teardropLeft + handleRadius,
-            teardropTop,
-            handleRadius,
-            handleRadius,
-          )
-        : Rect.fromLTWH(
-            teardropLeft,
-            teardropTop,
-            handleRadius,
-            handleRadius,
-          );
-
-    final Path teardropPath = Path()
-      ..addOval(circleRect)
-      ..addRect(cornerRect);
-
-    // Ombra nativa Material per dare risalto e tridimensionalità alla maniglia
-    canvas.drawShadow(
-      teardropPath,
-      Colors.black.withValues(alpha: 0.35),
-      2.5,
-      true,
-    );
-
-    final Paint fillPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-
-    canvas.drawPath(teardropPath, fillPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _SelectionHandlePainter oldDelegate) {
-    return oldDelegate.color != color ||
-        oldDelegate.lineHeight != lineHeight ||
-        oldDelegate.handleRadius != handleRadius ||
-        oldDelegate.handleType != handleType;
   }
 }
 

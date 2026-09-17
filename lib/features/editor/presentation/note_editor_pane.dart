@@ -14,6 +14,7 @@ import 'markdown_rendered_view.dart';
 import 'markdown_toolbar.dart';
 import 'note_search_bar.dart';
 import 'note_search_highlighted_view.dart';
+import 'providers/markdown_selection_provider.dart';
 import '../../sync/providers/sync_provider.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
@@ -103,6 +104,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   void _onActiveNoteIdChanged(String? prevId, String? nextId) {
     if (nextId == _currentNoteId) return;
 
+    ref.read(markdownSelectionProvider.notifier).clearSelection();
+
     if (_currentNoteId != null) {
       // flushPendingSaves() ora è awaitato esplicitamente: non è più
       // strettamente necessario per la correttezza della sync (che dal suo
@@ -118,6 +121,16 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
   @override
   Widget build(BuildContext context) {
+    // Clear selection when switching between read-only and edit modes
+    ref.listen<EditorMode>(
+      editorProvider.select((s) => s.mode),
+      (prev, next) {
+        if (prev != next) {
+          ref.read(markdownSelectionProvider.notifier).clearSelection();
+        }
+      },
+    );
+
     // Listen to note switching without causing builds on note content changes
     ref.listen<String?>(
       notesProvider.select((s) => s.activeNoteId),

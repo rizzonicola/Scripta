@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -40,11 +39,9 @@ InlineSpan applyHighlightToSpan(InlineSpan span, Color highlightColor) {
     final effectiveStyle = (span.style ?? const TextStyle()).copyWith(
       backgroundColor: highlightColor,
     );
-    final List<InlineSpan>? newChildren = span.children != null
-        ? span.children!
-            .map((c) => applyHighlightToSpan(c, highlightColor))
-            .toList()
-        : null;
+    final List<InlineSpan>? newChildren = span.children
+        ?.map((c) => applyHighlightToSpan(c, highlightColor))
+        .toList();
 
     return TextSpan(
       text: span.text,
@@ -118,7 +115,7 @@ List<InlineSpan> _sliceSingleSpan(
     if (sliceEnd < textLen) {
       out.add(
         TextSpan(
-          text: text.substring(math.max(0, sliceEnd)),
+          text: text.substring(math.max(0, math.min(textLen, sliceEnd))),
           style: span.style,
           recognizer: span.recognizer,
           semanticsLabel: span.semanticsLabel,
@@ -439,14 +436,7 @@ class ParagraphBlockWidget extends StatelessWidget {
             break;
 
           case 'code':
-            childStyle = childStyle.merge(
-              style.inlineCodeStyle ??
-                  style.styleSheet.code ??
-                  TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: style.fontSize,
-                  ),
-            );
+            childStyle = childStyle.merge(style.inlineCodeStyle);
             break;
 
           case 'a':

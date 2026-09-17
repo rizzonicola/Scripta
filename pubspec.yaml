@@ -22,7 +22,7 @@ dependencies:
   # per il dettaglio di quali usano ancora la StateNotifier API legacy
   # (mantenuta 1:1 per non alterare la logica di business/sync) e quali sono
   # stati migrati alla nuova API Notifier.
-  flutter_riverpod: ^3.4.0
+  flutter_riverpod: ^3.3.2
 
   # Markdown Rendering & Parsing
   # flutter_markdown (Google) è stato dismesso (discontinued); usiamo il

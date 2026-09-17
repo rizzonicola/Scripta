@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/markdown_selection_range.dart';
@@ -11,17 +13,20 @@ import 'markdown_block_style.dart';
 /// sono già stati estratti dal parser durante la costruzione dell'AST,
 /// quindi vengono disegnati direttamente in una `Table`, senza dover
 /// ri-analizzare il testo sorgente della tabella.
+///
+/// ## Selezione a grana fine cella per cella
+///
+/// Se [intersection.type] è diverso da [SelectionType.none], la tabella NON
+/// viene evidenziata come un blocco unico. Ciascuna cella calcola la propria
+/// finestra di offset rispetto alla riga e al blocco tabella:
+/// solo il testo che ricade nell'intervallo `[intersection.localStart, intersection.localEnd)`
+/// riceve lo sfondo azzurro di selezione (`backgroundColor: highlightColor`),
+/// mentre le celle non toccate rimangono con il loro stile e sfondo originale invariato.
 class TableBlockWidget extends StatelessWidget {
   final TableBlockNode node;
   final MarkdownBlockStyle style;
 
-  /// Intersezione tra la selezione del documento e questo blocco.
-  ///
-  /// L'AST non conserva l'offset di sorgente di ogni singola cella,
-  /// quindi quando [SelectionType.full] o [SelectionType.partial]
-  /// indicano che la tabella è coinvolta dalla selezione, lo sfondo di
-  /// evidenziazione viene applicato a tutte le celle (intestazione e
-  /// corpo), senza distinzione a grana fine tra le celle.
+  /// Intersezione tra la selezione del documento e questo blocco tabella.
   final BlockSelectionIntersection intersection;
 
   const TableBlockWidget({
@@ -51,19 +56,90 @@ class TableBlockWidget extends StatelessWidget {
     final bodyStyle = style.styleSheet.tableBody ?? style.styleSheet.p;
     final cellPadding = style.styleSheet.tableCellsPadding ??
         const EdgeInsets.symmetric(horizontal: 12, vertical: 8);
-    final highlighted = intersection.type != SelectionType.none;
     final highlightColor =
         Theme.of(context).colorScheme.primary.withValues(alpha: 0.28);
 
-    Widget buildCell(String text, TextStyle? textStyle, TextAlign align) {
-      final cell = Padding(
+    final int colCount = math.max(1, node.columnCount);
+    final int totalRows = 1 + node.dataRows.length;
+    final int blockLength = math.max(1, node.length);
+
+    (int, int) getRowOffsets(int r) {
+      if (r < node.rows.length) {
+        final rowNode = node.rows[r];
+        final start =
+            (rowNode.startOffset - node.startOffset).clamp(0, blockLength);
+        final end =
+            (rowNode.endOffset - node.startOffset).clamp(start, blockLength);
+        return (start, end);
+      }
+      final double fraction = blockLength / totalRows;
+      final start = (r * fraction).round().clamp(0, blockLength);
+      final end = ((r + 1) * fraction).round().clamp(start, blockLength);
+      return (start, end);
+    }
+
+    Widget buildCell({
+      required String text,
+      required TextStyle? textStyle,
+      required TextAlign align,
+      required int rowIndex,
+      required int colIndex,
+    }) {
+      final (rowStart, rowEnd) = getRowOffsets(rowIndex);
+      final int rowSpan = math.max(1, rowEnd - rowStart);
+      final double colWidth = rowSpan / colCount;
+      final int cellStart = rowStart + (colIndex * colWidth).round();
+      final int cellEnd = (colIndex == colCount - 1)
+          ? rowEnd
+          : rowStart + ((colIndex + 1) * colWidth).round();
+
+      final bool hasIntersection =
+          intersection.type != SelectionType.none &&
+          intersection.localEnd > cellStart &&
+          intersection.localStart < cellEnd &&
+          text.isNotEmpty;
+
+      Widget textWidget;
+      if (!hasIntersection) {
+        textWidget = Text(text, style: textStyle, textAlign: align);
+      } else {
+        final int cellLen = math.max(1, cellEnd - cellStart);
+        final int selStartInCell =
+            ((intersection.localStart - cellStart) * text.length / cellLen)
+                .round()
+                .clamp(0, text.length);
+        final int selEndInCell =
+            ((intersection.localEnd - cellStart) * text.length / cellLen)
+                .round()
+                .clamp(0, text.length);
+
+        if (selStartInCell >= selEndInCell) {
+          textWidget = Text(text, style: textStyle, textAlign: align);
+        } else {
+          textWidget = Text.rich(
+            TextSpan(
+              style: textStyle,
+              children: [
+                if (selStartInCell > 0)
+                  TextSpan(text: text.substring(0, selStartInCell)),
+                TextSpan(
+                  text: text.substring(selStartInCell, selEndInCell),
+                  style: (textStyle ?? const TextStyle()).copyWith(
+                    backgroundColor: highlightColor,
+                  ),
+                ),
+                if (selEndInCell < text.length)
+                  TextSpan(text: text.substring(selEndInCell)),
+              ],
+            ),
+            textAlign: align,
+          );
+        }
+      }
+
+      return Padding(
         padding: cellPadding,
-        child: Text(text, style: textStyle, textAlign: align),
-      );
-      if (!highlighted) return cell;
-      return DecoratedBox(
-        decoration: BoxDecoration(color: highlightColor),
-        child: cell,
+        child: textWidget,
       );
     }
 
@@ -76,31 +152,33 @@ class TableBlockWidget extends StatelessWidget {
         children: [
           TableRow(
             decoration: BoxDecoration(
-              color: highlighted
-                  ? highlightColor
-                  : style.primaryColor.withValues(alpha: 0.06),
+              color: style.primaryColor.withValues(alpha: 0.06),
             ),
             children: [
               for (var c = 0; c < node.columnCount; c++)
                 buildCell(
-                  c < node.headers.length ? node.headers[c] : '',
-                  headStyle,
-                  c < node.alignments.length
+                  text: c < node.headers.length ? node.headers[c] : '',
+                  textStyle: headStyle,
+                  align: c < node.alignments.length
                       ? _textAlignFor(node.alignments[c])
                       : TextAlign.left,
+                  rowIndex: 0,
+                  colIndex: c,
                 ),
             ],
           ),
-          for (final row in node.dataRows)
+          for (var r = 0; r < node.dataRows.length; r++)
             TableRow(
               children: [
                 for (var c = 0; c < node.columnCount; c++)
                   buildCell(
-                    c < row.length ? row[c] : '',
-                    bodyStyle,
-                    c < node.alignments.length
+                    text: c < node.dataRows[r].length ? node.dataRows[r][c] : '',
+                    textStyle: bodyStyle,
+                    align: c < node.alignments.length
                         ? _textAlignFor(node.alignments[c])
                         : TextAlign.left,
+                    rowIndex: r + 1,
+                    colIndex: c,
                   ),
               ],
             ),
