@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../../core/utils/syntax_highlighter.dart';
+import '../../../domain/models/markdown_selection_range.dart';
 import '../../../models/markdown_ast_nodes.dart';
-import 'block_visual_selection.dart';
 import 'markdown_block_style.dart';
 
 /// Rendering di un [CodeBlockNode] (fence ``` o ~~~): contenitore
@@ -19,14 +19,27 @@ class CodeBlockWidget extends StatelessWidget {
   final CodeBlockNode node;
   final MarkdownBlockStyle style;
 
-  /// FASE 4 — vedi `ParagraphBlockWidget.visualSelection`.
-  final BlockVisualSelection visualSelection;
+  /// Intersezione tra la selezione del documento e questo blocco.
+  ///
+  /// NOTA IMPLEMENTATIVA: [MarkdownNode.startOffset]/[endOffset] coprono
+  /// l'intero blocco fence così come appare nel sorgente (comprese le
+  /// righe ``` di apertura/chiusura e l'eventuale info-string del
+  /// linguaggio), mentre [CodeBlockNode] espone solo il contenuto puro in
+  /// [CodeBlockNode.code], senza un offset che indichi dove il contenuto
+  /// inizia all'interno del blocco. Senza quel dato, `intersection.localStart`
+  /// / `localEnd` non possono essere rimappati con certezza sulle singole
+  /// righe di [CodeBlockNode.code] (la lunghezza della riga di apertura
+  /// della fence varia con il linguaggio dichiarato). Come per i renderer
+  /// di paragrafo e heading, sia [SelectionType.full] sia
+  /// [SelectionType.partial] evidenziano quindi l'intero blocco di codice
+  /// anziché le singole righe/caratteri coperti dalla selezione.
+  final BlockSelectionIntersection intersection;
 
   const CodeBlockWidget({
     super.key,
     required this.node,
     required this.style,
-    this.visualSelection = BlockVisualSelection.none,
+    this.intersection = BlockSelectionIntersection.none,
   });
 
   @override
@@ -48,16 +61,17 @@ class CodeBlockWidget extends StatelessWidget {
       color: style.onSurfaceColor.withValues(alpha: 0.35),
     );
     final gutterWidth = (effectiveLines.length.toString().length * 9.0) + 16.0;
+    final highlighted = intersection.type != SelectionType.none;
+    final highlightColor =
+        Theme.of(context).colorScheme.primary.withValues(alpha: 0.28);
 
-    return BlockSelectionHighlight(
-      visualSelection: visualSelection,
-      color: style.blockSelectionHighlightColor,
-      borderRadius: const BorderRadius.all(Radius.circular(10)),
-      child: Container(
+    return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 4),
       decoration: BoxDecoration(
-        color: style.isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5),
+        color: highlighted
+            ? highlightColor
+            : (style.isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5)),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: style.outlineColor.withValues(alpha: 0.25),
@@ -98,9 +112,7 @@ class CodeBlockWidget extends StatelessWidget {
                       // I numeri di riga sono un artefatto del renderer,
                       // non caratteri del sorgente: esclusi dalla
                       // selezione, così che il testo copiato di un code
-                      // block corrisponda ESATTAMENTE a `node.code`, da
-                      // cui `MarkdownSelectionSourceMapper` ricostruisce
-                      // la sintassi Markdown sorgente con mappatura 1:1.
+                      // block corrisponda ESATTAMENTE a `node.code`.
                       child: SelectionContainer.disabled(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
@@ -137,7 +149,6 @@ class CodeBlockWidget extends StatelessWidget {
             ),
           ),
         ],
-      ),
       ),
     );
   }

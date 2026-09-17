@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../domain/models/markdown_selection_range.dart';
 import '../../../models/markdown_ast_nodes.dart';
-import 'block_visual_selection.dart';
 import 'markdown_block_style.dart';
 
 /// Rendering di un [TableBlockNode] (tabella GFM).
@@ -15,18 +15,20 @@ class TableBlockWidget extends StatelessWidget {
   final TableBlockNode node;
   final MarkdownBlockStyle style;
 
-  /// FASE 4 — vedi `ParagraphBlockWidget.visualSelection`. Le tabelle
-  /// sono trattate come blocco ATOMICO anche dal motore di selezione
-  /// logica (Fase 3, vedi `MarkdownSelectionSourceMapper`): coerentemente,
-  /// qui non esiste un'evidenziazione "parziale" per singola cella, solo
-  /// l'evidenziazione dell'intera tabella quando `visualSelection.isFull`.
-  final BlockVisualSelection visualSelection;
+  /// Intersezione tra la selezione del documento e questo blocco.
+  ///
+  /// L'AST non conserva l'offset di sorgente di ogni singola cella,
+  /// quindi quando [SelectionType.full] o [SelectionType.partial]
+  /// indicano che la tabella è coinvolta dalla selezione, lo sfondo di
+  /// evidenziazione viene applicato a tutte le celle (intestazione e
+  /// corpo), senza distinzione a grana fine tra le celle.
+  final BlockSelectionIntersection intersection;
 
   const TableBlockWidget({
     super.key,
     required this.node,
     required this.style,
-    this.visualSelection = BlockVisualSelection.none,
+    this.intersection = BlockSelectionIntersection.none,
   });
 
   TextAlign _textAlignFor(TableColumnAlignment alignment) {
@@ -49,11 +51,23 @@ class TableBlockWidget extends StatelessWidget {
     final bodyStyle = style.styleSheet.tableBody ?? style.styleSheet.p;
     final cellPadding = style.styleSheet.tableCellsPadding ??
         const EdgeInsets.symmetric(horizontal: 12, vertical: 8);
+    final highlighted = intersection.type != SelectionType.none;
+    final highlightColor =
+        Theme.of(context).colorScheme.primary.withValues(alpha: 0.28);
 
-    return BlockSelectionHighlight(
-      visualSelection: visualSelection,
-      color: style.blockSelectionHighlightColor,
-      child: SingleChildScrollView(
+    Widget buildCell(String text, TextStyle? textStyle, TextAlign align) {
+      final cell = Padding(
+        padding: cellPadding,
+        child: Text(text, style: textStyle, textAlign: align),
+      );
+      if (!highlighted) return cell;
+      return DecoratedBox(
+        decoration: BoxDecoration(color: highlightColor),
+        child: cell,
+      );
+    }
+
+    return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Table(
         border: style.styleSheet.tableBorder ??
@@ -62,19 +76,18 @@ class TableBlockWidget extends StatelessWidget {
         children: [
           TableRow(
             decoration: BoxDecoration(
-              color: style.primaryColor.withValues(alpha: 0.06),
+              color: highlighted
+                  ? highlightColor
+                  : style.primaryColor.withValues(alpha: 0.06),
             ),
             children: [
               for (var c = 0; c < node.columnCount; c++)
-                Padding(
-                  padding: cellPadding,
-                  child: Text(
-                    c < node.headers.length ? node.headers[c] : '',
-                    style: headStyle,
-                    textAlign: c < node.alignments.length
-                        ? _textAlignFor(node.alignments[c])
-                        : TextAlign.left,
-                  ),
+                buildCell(
+                  c < node.headers.length ? node.headers[c] : '',
+                  headStyle,
+                  c < node.alignments.length
+                      ? _textAlignFor(node.alignments[c])
+                      : TextAlign.left,
                 ),
             ],
           ),
@@ -82,20 +95,16 @@ class TableBlockWidget extends StatelessWidget {
             TableRow(
               children: [
                 for (var c = 0; c < node.columnCount; c++)
-                  Padding(
-                    padding: cellPadding,
-                    child: Text(
-                      c < row.length ? row[c] : '',
-                      style: bodyStyle,
-                      textAlign: c < node.alignments.length
-                          ? _textAlignFor(node.alignments[c])
-                          : TextAlign.left,
-                    ),
+                  buildCell(
+                    c < row.length ? row[c] : '',
+                    bodyStyle,
+                    c < node.alignments.length
+                        ? _textAlignFor(node.alignments[c])
+                        : TextAlign.left,
                   ),
               ],
             ),
         ],
-      ),
       ),
     );
   }

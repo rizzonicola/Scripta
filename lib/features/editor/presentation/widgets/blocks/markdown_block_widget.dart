@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../models/markdown_ast_nodes.dart';
-import '../../../services/markdown_selection_source_mapper.dart';
-import 'block_visual_selection.dart';
+import '../../../domain/models/markdown_selection_range.dart';
+import '../../providers/markdown_selection_provider.dart';
 import 'code_block_widget.dart';
 import 'heading_block_widget.dart';
 import 'list_block_widget.dart';
@@ -13,7 +14,8 @@ import 'quote_block_widget.dart';
 import 'table_block_widget.dart';
 import 'thematic_break_block_widget.dart';
 
-/// Dispatcher modulare dei blocchi dell'AST Markdown.
+/// Dispatcher modulare dei blocchi dell'AST Markdown, consapevole della
+/// selezione basata sugli offset del documento sorgente.
 ///
 /// Riceve un qualunque [MarkdownNode] (tipicamente un [MarkdownBlockNode]
 /// di primo livello passato da `MarkdownRenderedView`, ma anche un nodo
@@ -23,133 +25,206 @@ import 'thematic_break_block_widget.dart';
 /// [MarkdownNode.type], senza costruire né conoscere il resto
 /// dell'albero.
 ///
-/// Questo è l'unico punto che conosce la mappatura completa
+/// Questo resta l'unico punto che conosce la mappatura completa
 /// tipo-di-nodo → widget: aggiungere un nuovo tipo di blocco (o
-/// sostituire un renderer esistente con un Custom Renderer avanzato nella
-/// Fase 4) richiede di toccare solo questo file, non
+/// sostituire un renderer esistente con un Custom Renderer avanzato
+/// nella Fase 4) richiede di toccare solo questo file, non
 /// `MarkdownRenderedView` né gli altri renderer.
 ///
-/// FASE 4 — Selezione Visiva Virtualizzata (fix sincronizzazione): questo
-/// è anche l'UNICO punto che traduce la selezione logica corrente
-/// (`selectionController.logicalSourceSelection`, offset nel sorgente
-/// Markdown completo) nello stato di evidenziazione LOCALE di [node]
-/// (vedi [resolveBlockVisualSelection] — O(1), un pugno di confronti fra
-/// interi). Essendo centralizzato qui, ogni nuovo tipo di blocco eredita
-/// gratuitamente il comportamento corretto senza dover duplicare la
-/// logica di intersezione al suo interno; i renderer concreti ricevono
-/// già il risultato pronto ([BlockVisualSelection]) e si limitano a
-/// dipingerlo (vedi [BlockSelectionHighlight]). Per i nodi CONTENITORE
-/// (lista, blockquote) [selectionController] viene anche ripassato
-/// invariato ai figli, così che ciascuno ricalcoli — sempre in O(1), sui
-/// propri offset assoluti — il proprio stato indipendentemente da quello
-/// del genitore (un item di lista può essere pienamente selezionato
-/// anche se la lista che lo contiene, nel suo complesso, è selezionata
-/// solo in parte).
+/// ## Sistema di selezione: offset AST + Riverpod
 ///
-/// AGGANCIO REATTIVO: a differenza della versione precedente (che
-/// riceveva un `TextSelection?` statico, calcolato una tantum
-/// dall'`itemBuilder` della `ListView` e quindi "congelato" fino al
-/// prossimo `setState` esterno — che non arriva mai ad ogni drag, per
-/// design, vedi `MarkdownRenderedView._handleSelectionChanged`), questo
-/// widget si abbona DIRETTAMENTE a [selectionController] tramite un
-/// [ListenableBuilder] locale. Ogni volta che il controller notifica un
-/// cambiamento, SOLO questo singolo `Element` (e i suoi discendenti
-/// diretti che leggono lo stesso stato, es. gli item di
-/// [ListBlockWidget]) si ricostruisce — mai l'intera `ListView` — e lo fa
-/// rileggendo `logicalSourceSelection` "live", quindi anche un blocco
-/// montato per la prima volta a metà di un trascinamento (perché appena
-/// entrato nel viewport durante lo scroll) riceve lo stato corretto fin
-/// dalla sua prima `build`, senza dover attendere alcuna sincronizzazione
-/// da parte della selezione nativa di `SelectableRegion`.
-class MarkdownBlockWidget extends StatelessWidget {
+/// Il widget è un [ConsumerWidget] e non partecipa in alcun modo al
+/// motore di selezione nativo di Flutter: nessun `SelectionArea`,
+/// `SelectableRegion`, `SelectionContainer` né `TextSelection` attraversa
+/// questo file. L'evidenziazione è calcolata a partire dagli offset
+/// assoluti del documento mantenuti dall'AST ([MarkdownNode.startOffset]
+/// e [MarkdownNode.endOffset]) e dallo stato pubblicato da
+/// [markdownSelectionProvider], e arriva ai renderer figli come puro
+/// dato: questo widget non legge mai il testo sorgente.
+///
+/// Ogni istanza del dispatcher sottoscrive il provider e calcola, in
+/// forma memoizzata, come la selezione corrente interseca l'intervallo
+/// sorgente del proprio nodo:
+///
+/// ```dart
+/// final intersection = ref.watch(
+///   markdownSelectionProvider.select(
+///     (selection) => calculateBlockIntersection(
+///       blockStartOffset: node.startOffset,
+///       blockEndOffset: node.endOffset,
+///       selection: selection,
+///     ),
+///   ),
+/// );
+/// ```
+///
+/// ## Memoizzazione e costo durante il trascinamento
+///
+/// `select` rivaluta il selettore a ogni cambio di stato del provider,
+/// ma ricostruisce questo widget soltanto se il risultato cambia
+/// secondo `==` ([BlockSelectionIntersection] implementa l'uguaglianza
+/// per valore). Poiché [calculateBlockIntersection] restituisce
+/// l'istanza canonicalizzata [BlockSelectionIntersection.none] per ogni
+/// blocco che la selezione non tocca, durante il trascinamento viene
+/// ricostruito soltanto il blocco (tipicamente uno o due) la cui
+/// intersezione cambia davvero — quelli ai bordi della selezione in
+/// movimento — mentre tutti gli altri sottoscrittori pagano al più
+/// pochi confronti tra interi e nessuna allocazione.
+///
+/// ## Propagazione ai renderer specializzati
+///
+/// L'intersezione è espressa in offset RELATIVI all'inizio del blocco
+/// ([BlockSelectionIntersection.localStart] e
+/// [BlockSelectionIntersection.localEnd], fine esclusiva): i renderer
+/// figli la consumano direttamente — ad esempio
+/// `TextRange(start: intersection.localStart, end: intersection.localEnd)`
+/// — senza alcuna conversione aggiuntiva.
+///
+/// Contratto del parametro nominato `intersection`, identico per tutti
+/// i renderer che ricevono un nodo:
+/// - tipo [BlockSelectionIntersection], parametro opzionale;
+/// - valore di default [BlockSelectionIntersection.none], istanza
+///   `const`: il default non alloca nulla e ogni call-site pregresso
+///   che non passa il parametro resta compilante senza modifiche
+///   (retrocompatibilità);
+/// - `SelectionType.none` → nessuna evidenziazione;
+///   `SelectionType.full` → tutto il testo del blocco;
+///   `SelectionType.partial` → soltanto `[localStart, localEnd)`.
+///
+/// Il renderer di paragrafo e quello di code block — quelli il cui
+/// testo viene evidenziato carattere per carattere — sono i consumer
+/// primari del parametro; heading, liste, blockquote, tabelle e formule
+/// matematiche lo ricevono con la stessa firma, così che ciascuno possa
+/// attivare la propria evidenziazione in un momento successivo senza
+/// dover toccare di nuovo questo dispatcher. L'unica eccezione è
+/// [ThematicBreakBlockWidget]: un separatore orizzontale non espone
+/// testo sorgente evidenziabile (e il suo renderer non riceve nemmeno
+/// il nodo), quindi non partecipa al contratto.
+///
+/// ## Ricorsione nei blocchi contenitore
+///
+/// Liste e blockquote non interrompono la catena della selezione: il
+/// loro contenuto è renderizzato da istanze ricorsive di questo stesso
+/// widget e ogni istanza ricalcola autonomamente la propria
+/// intersezione dagli offset del proprio nodo. La selezione si propaga
+/// quindi a qualsiasi profondità senza prop-drilling e senza aritmetica
+/// sugli offset nei widget contenitore: l'intersezione di un paragrafo
+/// annidato in un item di lista, dentro una blockquote, a sua volta
+/// dentro un item di lista, viene derivata esattamente come quella di
+/// un blocco di primo livello. I contenitori ricevono comunque la
+/// propria intersezione di blocco intero — spendibile, ad esempio, per
+/// evidenziare i marcatori degli item quando l'intera lista è
+/// selezionata — ma la resa dei figli resta delegata alla ricorsione.
+class MarkdownBlockWidget extends ConsumerWidget {
+  /// Nodo dell'AST da renderizzare: tipicamente un [MarkdownBlockNode]
+  /// di primo livello, oppure un nodo innestato proveniente dalla
+  /// ricorsione dei widget contenitore ([ListBlockWidget],
+  /// [QuoteBlockWidget]). I suoi offset assoluti —
+  /// [MarkdownNode.startOffset] ed [MarkdownNode.endOffset] — sono
+  /// l'ancora con cui viene calcolata l'intersezione con la selezione
+  /// corrente del documento.
   final MarkdownNode node;
-  final MarkdownBlockStyle style;
-  final MarkdownSelectionController? selectionController;
 
+  /// Stile condiviso dell'editor Markdown renderizzato (tipografia,
+  /// colori, spaziature), propagato invariato a tutti i renderer figli.
+  final MarkdownBlockStyle style;
+
+  /// Crea il dispatcher per [node], renderizzato con [style].
+  ///
+  /// La selezione NON è un parametro del costruttore: viene letta
+  /// autonomamente da [markdownSelectionProvider] dentro [build]. È
+  /// questa scelta a rendere la ricorsione gratuita — le istanze
+  /// annidate create da [ListBlockWidget]/[QuoteBlockWidget] non hanno
+  /// bisogno di alcun dato aggiuntivo — e a mantenere immutata la
+  /// firma pubblica usata da `MarkdownRenderedView`.
   const MarkdownBlockWidget({
     super.key,
     required this.node,
     required this.style,
-    this.selectionController,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final controller = selectionController;
-
-    // Nessun controller collegato (es. contesto in cui la selezione
-    // logica non è pertinente): si evita del tutto l'iscrizione a un
-    // `Listenable` e si renderizza una volta sola, senza evidenziazione.
-    if (controller == null) {
-      return _dispatch(BlockVisualSelection.none, null);
-    }
-
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) {
-        final visualSelection = resolveBlockVisualSelection(
-          node,
-          controller.logicalSourceSelection,
-        );
-        return _dispatch(visualSelection, controller);
-      },
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Intersezione memoizzata tra la selezione del documento e
+    // l'intervallo sorgente `[node.startOffset, node.endOffset)`.
+    //
+    // Il `select` fa sì che questo widget venga ricostruito soltanto
+    // quando cambia il VALORE dell'intersezione (uguaglianza per valore
+    // di `BlockSelectionIntersection`); per i blocchi fuori selezione
+    // il selettore restituisce sempre l'istanza const canonicalizzata
+    // `BlockSelectionIntersection.none`, quindi il trascinamento non
+    // produce per loro né rebuild né allocazioni.
+    final BlockSelectionIntersection intersection = ref.watch(
+      markdownSelectionProvider.select(
+        (selection) => calculateBlockIntersection(
+          blockStartOffset: node.startOffset,
+          blockEndOffset: node.endOffset,
+          selection: selection,
+        ),
+      ),
     );
-  }
 
-  Widget _dispatch(
-    BlockVisualSelection visualSelection,
-    MarkdownSelectionController? controller,
-  ) {
+    // Dispatch puro tipo-di-nodo → renderer: nessun figlio conosce il
+    // provider, l'intersezione arriva come puro dato tramite il
+    // parametro nominato `intersection` (contratto documentato sulla
+    // classe).
     switch (node.type) {
       case MarkdownNodeType.heading:
         return HeadingBlockWidget(
           node: node as HeadingNode,
           style: style,
-          visualSelection: visualSelection,
+          intersection: intersection,
         );
       case MarkdownNodeType.paragraph:
         return ParagraphBlockWidget(
           node: node as ParagraphNode,
           style: style,
-          visualSelection: visualSelection,
+          intersection: intersection,
         );
       case MarkdownNodeType.codeBlock:
         return CodeBlockWidget(
           node: node as CodeBlockNode,
           style: style,
-          visualSelection: visualSelection,
+          intersection: intersection,
         );
       case MarkdownNodeType.listBlock:
         return ListBlockWidget(
           node: node as ListBlockNode,
           style: style,
-          selectionController: controller,
+          intersection: intersection,
         );
       case MarkdownNodeType.blockquote:
         return QuoteBlockWidget(
           node: node as BlockquoteNode,
           style: style,
-          visualSelection: visualSelection,
-          selectionController: controller,
+          intersection: intersection,
         );
       case MarkdownNodeType.thematicBreak:
+        // Nessuna intersezione: il separatore orizzontale non espone
+        // testo sorgente evidenziabile e il suo renderer non riceve
+        // nemmeno il nodo.
         return ThematicBreakBlockWidget(style: style);
       case MarkdownNodeType.tableBlock:
         return TableBlockWidget(
           node: node as TableBlockNode,
           style: style,
-          visualSelection: visualSelection,
+          intersection: intersection,
         );
       case MarkdownNodeType.mathBlock:
         return MathBlockWidget(
           node: node as MathBlockNode,
           style: style,
-          visualSelection: visualSelection,
+          intersection: intersection,
         );
       // `listItem` e `tableRow` non vengono mai passati direttamente a
       // questo dispatcher: sono consumati internamente da
       // `ListBlockWidget`/`TableBlockWidget` tramite i getter tipizzati
-      // `ListBlockNode.items` / `TableBlockNode.rows`.
+      // `ListBlockNode.items` / `TableBlockNode.rows`. Il contenuto
+      // degli item di lista (paragrafi, code block, liste annidate, ...)
+      // torna però in gioco attraverso istanze ricorsive di questo
+      // stesso widget, che ricalcolano la propria intersezione dai
+      // propri offset: la selezione attraversa l'annidamento senza
+      // prop-drilling.
       case MarkdownNodeType.listItem:
       case MarkdownNodeType.tableRow:
         return const SizedBox.shrink();

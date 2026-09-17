@@ -36,17 +36,6 @@ class MarkdownBlockStyle {
     required this.outlineColor,
   });
 
-  /// FASE 4 — colore di sfondo usato da [BlockSelectionHighlight] per i
-  /// blocchi che ricadono per intero nella selezione logica corrente.
-  /// Derivato (non memorizzato) da [primaryColor], così da non alterare
-  /// `operator ==`/`hashCode` sopra: resta un colore "figlio" dello
-  /// stesso tema, coerente con `DefaultSelectionStyle.selectionColor`
-  /// usato da `MarkdownRenderedView` per l'evidenziazione nativa
-  /// (stessa tinta, alpha più basso per non "raddoppiare" visivamente il
-  /// colore nei rari blocchi in cui entrambi i meccanismi dipingono sulla
-  /// stessa area, vedi note di test in fondo alla Fase 4).
-  Color get blockSelectionHighlightColor => primaryColor.withValues(alpha: 0.16);
-
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
