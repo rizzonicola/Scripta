@@ -22,14 +22,17 @@ dependencies:
   # per il dettaglio di quali usano ancora la StateNotifier API legacy
   # (mantenuta 1:1 per non alterare la logica di business/sync) e quali sono
   # stati migrati alla nuova API Notifier.
-  flutter_riverpod: ^3.3.2
+  flutter_riverpod: ^3.4.0
 
   # Markdown Rendering & Parsing
-  # flutter_markdown (Google) è stato dismesso (discontinued); usiamo il
-  # fork mantenuto dalla community, drop-in replacement con la stessa API
-  # pubblica (Markdown/MarkdownBody/MarkdownStyleSheet/MarkdownElementBuilder).
-  flutter_markdown_plus: ^1.0.12
-  markdown: ^7.3.1
+  # flutter_md ancora la selezione di testo al modello dati immutabile
+  # (Markdown/nodi MD$...) invece che ai RenderObject a schermo: la vista di
+  # lettura (markdown_rendered_view.dart) può quindi restare divisa in blocchi
+  # dentro una ListView.builder virtualizzata con cacheExtent di default,
+  # senza il workaround di realizzazione forzata che serviva col vecchio
+  # motore (flutter_markdown_plus) per far funzionare "Seleziona tutto" e la
+  # selezione su blocchi fuori schermo.
+  flutter_md: ^0.2.0
 
   # Persistence & Storage
   shared_preferences: ^2.2.3

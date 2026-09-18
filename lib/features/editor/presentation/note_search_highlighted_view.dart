@@ -11,23 +11,23 @@ import '../providers/note_search_provider.dart';
 ///
 /// PERCHÉ una vista separata invece di far evidenziare le occorrenze
 /// direttamente dentro `MarkdownRenderedView`: quella vista è un
-/// sottosistema estremamente ottimizzato (virtualizzazione a blocchi,
-/// selezione "seamless" con swap formattato/grezzo, cache multiple — vedi la
-/// sua corposa documentazione di classe) costruito attorno a
-/// `flutter_markdown_plus`, che non espone alcun punto di estensione per
-/// colorare porzioni arbitrarie di testo ALL'INTERNO di un nodo (serve un
-/// controllo carattere per carattere, non a livello di elemento Markdown).
-/// Iniettare l'evidenziazione lì dentro richiederebbe di riscrivere quella
-/// pipeline, con rischio concreto di regressioni su un'area già delicata.
+/// sottosistema estremamente ottimizzato (virtualizzazione a blocchi con
+/// selezione ancorata al modello dati — vedi la sua corposa documentazione
+/// di classe) costruito attorno a `flutter_md`, che non espone alcun punto
+/// di estensione per colorare porzioni arbitrarie di testo ALL'INTERNO di
+/// un nodo (serve un controllo carattere per carattere, non a livello di
+/// blocco/span Markdown — vedi `MarkdownThemeData.builder` e `spanFilter`,
+/// che operano su interi blocchi/span, non su sotto-range di un singolo
+/// span). Iniettare l'evidenziazione lì dentro richiederebbe di riscrivere
+/// quella pipeline, con rischio concreto di regressioni su un'area già
+/// delicata.
 ///
 /// Questa vista, mostrata SOLO per la durata di una ricerca attiva (si torna
 /// a [MarkdownRenderedView] non appena il pannello si chiude o il termine
 /// viene svuotato), mostra invece il testo "grezzo" del corpo della nota
 /// (senza interpretare la sintassi Markdown) con le occorrenze evidenziate:
-/// una scelta deliberata e concettualmente affine alla modalità "raw" già
-/// usata da `MarkdownRenderedView` durante una selezione di testo — qui è
-/// solo permanente per tutta la sessione di ricerca, invece che transitoria
-/// durante un drag.
+/// una scelta deliberata per evitare di dover riscrivere la pipeline di
+/// rendering formattato solo per questo caso d'uso transitorio.
 class NoteSearchHighlightedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
