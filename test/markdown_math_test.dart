@@ -31,8 +31,70 @@ void main() {
     });
 
     test('un \$\$ non chiuso resta testo normale', () {
-      final chunks = splitNoteChunks('\$\$\nx\n\ntesto dopo');
+      final chunks = splitNoteChunks('\$\$\nx\n\ntesto dopo senza chiusura');
       expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
+    });
+
+    test('tollera righe vuote interne se la chiusura arriva entro 30 righe', () {
+      const src = '\$\$\nx = 1\n\ny = 2\n\$\$';
+      final chunks = splitNoteChunks(src);
+      expect(chunks.whereType<DisplayMathChunk>(), hasLength(1));
+      expect(chunks.whereType<DisplayMathChunk>().first.tex, 'x = 1\n\ny = 2');
+    });
+
+    test('un \$\$ che non si chiude entro 30 righe viene rifiutato come blocco', () {
+      final longText = [
+        '\$\$',
+        for (var i = 0; i < 35; i++) 'riga $i',
+        '\$\$',
+      ].join('\n');
+      final chunks = splitNoteChunks(longText);
+      // Non deve essere accoppiato perché supera le 30 righe
+      expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
+    });
+
+    test('un \$\$ orfano seguito da intestazione Markdown non inghiotte la formula successiva', () {
+      const src = '''
+\$\$
+questa era una formula mai chiusa
+
+# Titolo della sezione
+Testo descrittivo normale
+
+\$\$
+x = 42
+\$\$
+''';
+      final chunks = splitNoteChunks(src);
+      // Solo la vera formula deve essere estratta
+      final mathChunks = chunks.whereType<DisplayMathChunk>().toList();
+      expect(mathChunks, hasLength(1));
+      expect(mathChunks.single.tex, 'x = 42');
+    });
+
+    test('due righe vuote consecutive dentro un \$\$ aperto ne determinano l\'abbandono', () {
+      const src = '''
+\$\$
+passo 1
+
+
+passo 2
+\$\$
+''';
+      final chunks = splitNoteChunks(src);
+      expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
+    });
+
+    test('formula multi-riga con sottrazione a inizio riga (- c) resta valida', () {
+      const src = '''
+\$\$
+a = b
+- c
+\$\$
+''';
+      final chunks = splitNoteChunks(src);
+      expect(chunks.whereType<DisplayMathChunk>(), hasLength(1));
+      expect(chunks.whereType<DisplayMathChunk>().first.tex, 'a = b\n- c');
     });
 
     test('\$\$x\$\$ seguito da testo sulla stessa riga non è un blocco', () {

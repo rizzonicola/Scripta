@@ -133,12 +133,45 @@ List<NoteChunk> splitNoteChunks(String source) {
   if (afterOpen.contains(r'$$')) return null;
 
   // Caso multi-riga.
+  // Tolleriamo righe vuote singole interne per leggibilità di blocchi TeX, ma:
+  // 1) Massimo 30 righe totali;
+  // 2) Se incontra 2 o più righe vuote consecutive, interrompe (è un $$ orfano);
+  // 3) Se incontra elementi strutturali Markdown (heading '#', divider '---',
+  //    code fence '```'/'~~~', list item '- ', '* ', numerata '1. '), interrompe;
+  // 4) Se contiene $$ non a fine riga, interrompe.
   final parts = <String>[];
   if (afterOpen.trim().isNotEmpty) parts.add(afterOpen.trim());
-  for (var j = start + 1; j < lines.length; j++) {
-    final t = lines[j].trim();
-    if (t.isEmpty) return null; // niente righe vuote: `$$` non chiuso.
-    if (t.endsWith(r'$$')) {
+  const maxSearchLines = 30;
+  final limit = (start + maxSearchLines < lines.length)
+      ? start + maxSearchLines
+      : lines.length;
+
+  var consecutiveEmpty = 0;
+
+  for (var j = start + 1; j < limit; j++) {
+    final rawLine = lines[j];
+    final t = rawLine.trim();
+
+    if (t.isEmpty) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty >= 2) return null; // 2 righe vuote consecutive: $$ orfano
+      parts.add(t);
+      continue;
+    }
+    consecutiveEmpty = 0;
+
+    // Strutture Markdown incompatibili con un blocco TeX continuo:
+    // indicano con certezza che l'utente è tornato a scrivere Markdown e il $$ era orfano
+    if (t.startsWith('#') ||
+        t.startsWith('---') ||
+        t.startsWith('***') ||
+        t.startsWith('___') ||
+        t.startsWith('```') ||
+        t.startsWith('~~~')) {
+      return null;
+    }
+
+    if (t.endsWith(r'$$') && !t.endsWith(r'\$$')) {
       final before = t.substring(0, t.length - 2).trim();
       if (before.contains(r'$$')) return null;
       if (before.isNotEmpty) parts.add(before);

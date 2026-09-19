@@ -38,7 +38,7 @@ dependencies:
   # matrici...). Le formule inline `$...$` sono invece gestite da flutter_md
   # (`inlineMath: true`, conversione in Unicode): vedi
   # lib/core/utils/markdown_math.dart.
-  flutter_math_fork: ^0.7.4
+  flutter_math_fork: 0.7.4
 
   # Persistence & Storage
   shared_preferences: ^2.2.3

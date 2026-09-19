@@ -11,6 +11,9 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/markdown_math.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../settings/providers/settings_provider.dart';
+import 'package:flutter_math_fork/flutter_math.dart' show ParseException;
+import 'package:flutter_math_fork/tex.dart'
+    show SyntaxTree, TexParser, TexParserSettings;
 import 'code_block_with_copy.dart';
 import 'display_math_block.dart';
 
@@ -163,6 +166,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     for (final chunk in splitNoteChunks(effectiveContent)) {
       switch (chunk) {
         case MarkdownChunk(:final source):
+          if (source.trim().isEmpty) continue;
           final blocks = Markdown.fromString(
             normalizeInlineMath(source),
             inlineMath: true,
@@ -610,8 +614,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   Widget _buildItem(int index, _ViewItem item) {
     final Widget content;
     switch (item) {
-      case _MathItem(:final tex):
-        content = DisplayMathBlock(tex: tex, textStyle: _mathTextStyle);
+      case _MathItem(:final tex, :final ast, :final parseError):
+        content = DisplayMathBlock(
+          tex: tex,
+          textStyle: _mathTextStyle,
+          ast: ast,
+          parseError: parseError,
+        );
       case _BlockItem(:final block, :final documentId):
         final markdownWidget = MarkdownWidget(
           markdown: Markdown(
@@ -692,6 +701,34 @@ final class _BlockItem extends _ViewItem {
 }
 
 final class _MathItem extends _ViewItem {
-  const _MathItem(this.tex);
+  _MathItem(this.tex);
+
   final String tex;
+  bool _parsed = false;
+  SyntaxTree? _ast;
+  ParseException? _parseError;
+
+  void _ensureParsed() {
+    if (_parsed) return;
+    _parsed = true;
+    try {
+      _ast = SyntaxTree(
+        greenRoot: TexParser(tex, const TexParserSettings()).parse(),
+      );
+    } on ParseException catch (e) {
+      _parseError = e;
+    } on Object catch (e) {
+      _parseError = ParseException('Errore sintassi TeX: $e');
+    }
+  }
+
+  SyntaxTree? get ast {
+    _ensureParsed();
+    return _ast;
+  }
+
+  ParseException? get parseError {
+    _ensureParsed();
+    return _parseError;
+  }
 }
