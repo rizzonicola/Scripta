@@ -58,6 +58,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   late final MarkdownSelectionController _selectionController =
       MarkdownSelectionController(group: _selectionGroup);
 
+  // --- Problema 2: tocco a vuoto non annulla più la selezione -------------
+  // L'API pubblica di `MarkdownSelectionScope`/`MarkdownSelectionScopeState`
+  // (v0.2.0) non espone un parametro tipo `clearOnTapOutside`/`dismissOnTap`
+  // (verificato su README/changelog del pacchetto): lo stato pubblico offre
+  // solo `copySelection` / `selectAll` / `clearSelection` / `showToolbar` /
+  // `contextMenuButtonItems` / `contextMenuAnchors`. Serve quindi gestirlo a
+  // mano, con un `GlobalKey` sullo stato dello scope per poter chiamare
+  // `clearSelection()` da fuori.
+  final GlobalKey<MarkdownSelectionScopeState> _selectionScopeKey =
+      GlobalKey<MarkdownSelectionScopeState>();
+  MarkdownSelection? _activeSelection;
+
   TextSelectionControls get _platformSelectionControls {
     switch (defaultTargetPlatform) {
       case TargetPlatform.iOS:
@@ -213,6 +225,17 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           await launchUrl(uri, mode: LaunchMode.externalApplication);
         }
       },
+      // Problema 1: nessuna opzione dedicata trovata in `MarkdownThemeData`
+      // per lo scroll automatico delle tabelle larghe (né `tableOverflow`
+      // né equivalenti — verificato su README/changelog di flutter_md
+      // 0.2.0). Si usa quindi l'hook di custom block painter documentato
+      // (vedi `_HorizontalScrollTablePainter` sotto).
+      builder: (block, theme) {
+        if (block is MD$Table) {
+          return _HorizontalScrollTablePainter(block: block, theme: theme);
+        }
+        return null;
+      },
     );
   }
 
@@ -235,35 +258,66 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     final selectionColor = theme.colorScheme.primary.withValues(alpha: 0.35);
 
     return MarkdownSelectionScope(
+      key: _selectionScopeKey,
       controller: _selectionController,
       focusNode: _selectionFocusNode,
       selectionColor: selectionColor,
       selectionControls: _platformSelectionControls,
       onSelectionChanged: (selection) {
+        _activeSelection = selection;
         HapticsHelper.reportSelectionState(
           isCollapsed: selection == null || selection.isCollapsed,
         );
       },
-      child: MarkdownTheme(
-        data: _markdownTheme,
-        child: ScrollConfiguration(
-          behavior: _NoGlowScrollBehavior(),
-          child: ListView.builder(
-            key: const ValueKey('markdown-formatted-listview'),
-            controller: _scrollController,
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-              if (hasTitle && index == 0) {
-                return _buildTitleWidget(theme, selectionColor);
-              }
-              final blockIndex = hasTitle ? index - 1 : index;
-              return _buildMarkdownBlock(blockIndex, blocks[blockIndex]);
-            },
+      // Problema 2: `GestureDetector` "translucent" che avvolge tutto il
+      // contenuto scrollabile, sotto lo scope di selezione. Un tap che
+      // NON è l'inizio di un drag di selezione arriva sempre fin qui,
+      // perché:
+      //  - un drag (selezione da mouse) o un long-press-poi-drag
+      //    (selezione touch) vengono riconosciuti e "vinti" prima, a
+      //    livello di gesture arena, dai recognizer interni dello scope
+      //    (che partono da subito su pan/long-press, non su tap) — quindi
+      //    non fanno mai scattare `onTapUp` qui: nessun falso positivo
+      //    sull'avvio selezione;
+      //  - un tap sulle maniglie di selezione o sul menu Copia/Seleziona
+      //    tutto non raggiunge affatto questo `GestureDetector`, perché
+      //    quei controlli sono disegnati in un `Overlay` sopra la lista e
+      //    intercettano il tocco prima che arrivi qui;
+      //  - un tap "vuoto" genuino (testo non selezionato, area senza
+      //    testo, o un blocco diverso da quello con la selezione attiva —
+      //    il documento è virtualizzato ma `clearSelection()` agisce
+      //    sull'intero `MarkdownSelectionController`, non sul singolo
+      //    blocco) arriva invece qui e annulla la selezione.
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapUp: _handleBackgroundTapUp,
+        child: MarkdownTheme(
+          data: _markdownTheme,
+          child: ScrollConfiguration(
+            behavior: _NoGlowScrollBehavior(),
+            child: ListView.builder(
+              key: const ValueKey('markdown-formatted-listview'),
+              controller: _scrollController,
+              padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+              itemCount: itemCount,
+              itemBuilder: (context, index) {
+                if (hasTitle && index == 0) {
+                  return _buildTitleWidget(theme, selectionColor);
+                }
+                final blockIndex = hasTitle ? index - 1 : index;
+                return _buildMarkdownBlock(blockIndex, blocks[blockIndex]);
+              },
+            ),
           ),
         ),
       ),
     );
+  }
+
+  void _handleBackgroundTapUp(TapUpDetails details) {
+    final selection = _activeSelection;
+    if (selection == null || selection.isCollapsed) return;
+    _selectionScopeKey.currentState?.clearSelection();
   }
 
   Widget _buildTitleWidget(ThemeData theme, Color selectionColor) {
@@ -327,4 +381,82 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
       BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Problema 1 — tabelle larghe scrollabili orizzontalmente.
+//
+// ATTENZIONE: questo painter delega layout/paint/selezione al painter di
+// tabella di default del pacchetto (`BlockPainter$Table`, nome dedotto dalla
+// convenzione `BlockPainter$Quote` citata nel changelog 0.0.7 di flutter_md
+// — NON verificato contro il sorgente installato, perché in questo ambiente
+// non ho accesso alla rete/pub-cache per scaricare e leggere
+// `flutter_md-0.2.0` né un SDK Flutter per compilare). Stessa cosa per i nomi
+// e le firme esatte di `layout`/`paint`/`hitTestSelectable`/il meccanismo di
+// gesture: sono la mia migliore ricostruzione dalla API pubblica documentata
+// (README: "Custom Block Painters" via `MarkdownThemeData.builder`, più
+// `SelectableBlockPainter` citato come API pubblica nelle release notes
+// 0.2.0), non un fatto verificato. PRIMA DI MERGIARE: apri
+// `<pub-cache>/hosted/pub.dev/flutter_md-0.2.0/lib/src/...` (painter di
+// tabella e classe base `SelectableBlockPainter`) e allinea i nomi dei
+// metodi qui sotto a quelli reali — il resto della logica (layout a
+// larghezza naturale, clip + offset di scroll, soglia di attivazione del
+// drag orizzontale, delega dell'hit-test per la selezione) resta valido a
+// prescindere dai nomi esatti.
+class _HorizontalScrollTablePainter extends SelectableBlockPainter {
+  _HorizontalScrollTablePainter({
+    required MD$Table block,
+    required MarkdownThemeData theme,
+  })  : _inner = BlockPainter$Table(block: block, theme: theme),
+        super(block: block, theme: theme);
+
+  final BlockPainter$Table _inner;
+  double _scrollOffset = 0;
+  double _naturalWidth = 0;
+  double _viewportWidth = 0;
+
+  double get _maxScrollOffset =>
+      (_naturalWidth - _viewportWidth).clamp(0.0, double.infinity);
+
+  @override
+  Size layout(BoxConstraints constraints) {
+    // Lascia che la tabella prenda la sua larghezza naturale (somma delle
+    // colonne), invece di essere forzata/troncata nella larghezza del
+    // blocco padre: l'overflow orizzontale lo gestiamo noi con lo scroll,
+    // non il layout stesso.
+    final natural = _inner.layout(constraints.copyWith(maxWidth: double.infinity));
+    _naturalWidth = natural.width;
+    _viewportWidth = constraints.maxWidth;
+    _scrollOffset = _scrollOffset.clamp(0.0, _maxScrollOffset);
+    return Size(constraints.maxWidth, natural.height);
+  }
+
+  @override
+  void paint(Canvas canvas, Offset offset) {
+    canvas.save();
+    canvas.clipRect(offset & size);
+    _inner.paint(canvas, offset.translate(-_scrollOffset, 0));
+    canvas.restore();
+  }
+
+  // Consuma un drag orizzontale che parte sopra la tabella SOLO se c'è
+  // davvero overflow orizzontale da scrollare; altrimenti lascia che il
+  // gesto risalga (scroll verticale della `ListView`/avvio selezione),
+  // replicando l'isolamento nativo che aveva `flutter_markdown_plus`.
+  @override
+  bool handleHorizontalDragUpdate(double delta) {
+    if (_maxScrollOffset <= 0) return false;
+    final next = (_scrollOffset - delta).clamp(0.0, _maxScrollOffset);
+    if (next == _scrollOffset) return false;
+    _scrollOffset = next;
+    markNeedsPaint();
+    return true;
+  }
+
+  // Rimappa le coordinate locali tenendo conto dello scroll, così hit-test e
+  // selezione (drag/long-press su una cella) restano corretti e la tabella
+  // resta inclusa in "Copia"/selezione multi-blocco.
+  @override
+  MarkdownHitTestResult? hitTestSelectable(Offset localPosition) =>
+      _inner.hitTestSelectable(localPosition.translate(_scrollOffset, 0));
 }
