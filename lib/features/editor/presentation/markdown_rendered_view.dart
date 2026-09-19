@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionControls, cupertinoDesktopTextSelectionControls;
@@ -70,6 +71,23 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       GlobalKey<MarkdownSelectionScopeState>();
   MarkdownSelection? _activeSelection;
 
+  // Rilevamento del "tap a vuoto" fatto a mano su eventi puntatore grezzi
+  // (`Listener`), non con un `GestureDetector`/`TapGestureRecognizer`.
+  // Motivo: un `TapGestureRecognizer` partecipa alla gesture arena, e se da
+  // qualche parte nell'albero (verosimilmente dentro `MarkdownSelectionScope`,
+  // per il doppio-tap-seleziona-parola) esiste anche un
+  // `DoubleTapGestureRecognizer` sulla stessa arena, QUALSIASI tap recognizer
+  // — incluso questo — deve attendere la finestra di disambiguazione
+  // doppio-tap (~300ms) prima di potersi dichiarare vincitore: è il ritardo
+  // percepito segnalato. Un `Listener` riceve gli eventi subito, fuori
+  // dall'arena, quindi non ha questo ritardo — a costo di dover replicare a
+  // mano la logica minima di "è stato un tap breve, non un drag né un
+  // long-press" (soglia di spostamento + soglia di durata), usando le stesse
+  // costanti che userebbe Flutter internamente.
+  static const double _tapTouchSlop = kTouchSlop; // ~18px
+  static const Duration _tapMaxDuration = Duration(milliseconds: 500); // ~kLongPressTimeout
+  final Map<int, _PendingTap> _pendingTapPointers = <int, _PendingTap>{};
+
   TextSelectionControls get _platformSelectionControls {
     switch (defaultTargetPlatform) {
       case TargetPlatform.iOS:
@@ -109,6 +127,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     _scrollController.dispose();
     _selectionFocusNode.dispose();
     _selectionController.dispose();
+    _pendingTapPointers.clear();
     super.dispose();
   }
 
@@ -258,28 +277,28 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           isCollapsed: selection == null || selection.isCollapsed,
         );
       },
-      // Problema 2: `GestureDetector` "translucent" che avvolge tutto il
-      // contenuto scrollabile, sotto lo scope di selezione. Un tap che
-      // NON è l'inizio di un drag di selezione arriva sempre fin qui,
-      // perché:
-      //  - un drag (selezione da mouse) o un long-press-poi-drag
-      //    (selezione touch) vengono riconosciuti e "vinti" prima, a
-      //    livello di gesture arena, dai recognizer interni dello scope
-      //    (che partono da subito su pan/long-press, non su tap) — quindi
-      //    non fanno mai scattare `onTapUp` qui: nessun falso positivo
-      //    sull'avvio selezione;
-      //  - un tap sulle maniglie di selezione o sul menu Copia/Seleziona
-      //    tutto non raggiunge affatto questo `GestureDetector`, perché
-      //    quei controlli sono disegnati in un `Overlay` sopra la lista e
-      //    intercettano il tocco prima che arrivi qui;
-      //  - un tap "vuoto" genuino (testo non selezionato, area senza
-      //    testo, o un blocco diverso da quello con la selezione attiva —
-      //    il documento è virtualizzato ma `clearSelection()` agisce
-      //    sull'intero `MarkdownSelectionController`, non sul singolo
-      //    blocco) arriva invece qui e annulla la selezione.
-      child: GestureDetector(
+      // Dopo "Copia" (o "Taglia", se mai presente) la selezione deve
+      // terminare, come nel comportamento nativo di copia/incolla — il menu
+      // di default del pacchetto copia ma lascia la selezione attiva.
+      // Ricostruiamo la stessa toolbar di default (`state.contextMenuButtonItems`,
+      // pattern documentato nel README di flutter_md) avvolgendo solo i
+      // pulsanti "copia"/"taglia": eseguono prima l'azione originale (deve
+      // ancora leggere la selezione attiva) e poi chiudono la selezione.
+      // "Seleziona tutto" resta invariato: lì la selezione DEVE rimanere.
+      contextMenuBuilder: (context, state) =>
+          AdaptiveTextSelectionToolbar.buttonItems(
+        anchors: state.contextMenuAnchors,
+        buttonItems: [
+          for (final item in state.contextMenuButtonItems)
+            _clearSelectionAfterCopyOrCut(item, state),
+        ],
+      ),
+      child: Listener(
         behavior: HitTestBehavior.translucent,
-        onTapUp: _handleBackgroundTapUp,
+        onPointerDown: _handleBackgroundPointerDown,
+        onPointerMove: _handleBackgroundPointerMove,
+        onPointerUp: _handleBackgroundPointerUp,
+        onPointerCancel: _handleBackgroundPointerCancel,
         child: MarkdownTheme(
           data: _markdownTheme,
           child: ScrollConfiguration(
@@ -303,7 +322,46 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
-  void _handleBackgroundTapUp(TapUpDetails details) {
+  ContextMenuButtonItem _clearSelectionAfterCopyOrCut(
+    ContextMenuButtonItem item,
+    MarkdownSelectionScopeState state,
+  ) {
+    final shouldClearAfter = item.type == ContextMenuButtonType.copy ||
+        item.type == ContextMenuButtonType.cut;
+    final originalOnPressed = item.onPressed;
+    if (!shouldClearAfter || originalOnPressed == null) return item;
+    return ContextMenuButtonItem(
+      type: item.type,
+      label: item.label,
+      onPressed: () {
+        originalOnPressed();
+        state.clearSelection();
+      },
+    );
+  }
+
+  void _handleBackgroundPointerDown(PointerDownEvent event) {
+    _pendingTapPointers[event.pointer] = _PendingTap(event.position, DateTime.now());
+  }
+
+  void _handleBackgroundPointerMove(PointerMoveEvent event) {
+    _pendingTapPointers[event.pointer]?.registerPosition(event.position);
+  }
+
+  void _handleBackgroundPointerCancel(PointerCancelEvent event) {
+    _pendingTapPointers.remove(event.pointer);
+  }
+
+  void _handleBackgroundPointerUp(PointerUpEvent event) {
+    final pending = _pendingTapPointers.remove(event.pointer);
+    if (pending == null) return;
+
+    // Non un tap: si è spostato oltre la soglia (drag/scroll/table-scroll) o
+    // è stato tenuto premuto oltre la soglia di long-press (avvio selezione
+    // touch). In entrambi i casi non deve annullare nulla.
+    if (pending.maxDistanceFromOrigin > _tapTouchSlop) return;
+    if (DateTime.now().difference(pending.downTime) > _tapMaxDuration) return;
+
     final selection = _activeSelection;
     if (selection == null || selection.isCollapsed) return;
     _selectionScopeKey.currentState?.clearSelection();
@@ -414,5 +472,23 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
   Widget buildOverscrollIndicator(
       BuildContext context, Widget child, ScrollableDetails details) {
     return child;
+  }
+}
+
+/// Stato di un puntatore ancora "in corsa" fra `PointerDown` e `PointerUp`,
+/// usato da `_MarkdownRenderedViewState` per riconoscere a mano un tap breve
+/// senza passare dalla gesture arena (vedi commento su `_pendingTapPointers`).
+class _PendingTap {
+  _PendingTap(this.origin, this.downTime);
+
+  final Offset origin;
+  final DateTime downTime;
+  double maxDistanceFromOrigin = 0;
+
+  void registerPosition(Offset position) {
+    final distance = (position - origin).distance;
+    if (distance > maxDistanceFromOrigin) {
+      maxDistanceFromOrigin = distance;
+    }
   }
 }
