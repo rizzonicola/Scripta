@@ -100,6 +100,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   Future<void> _loadFromDb() async {
     final rows = await _foldersDao.getActive();
+    if (!mounted) return;
     _activeRows = rows;
     state = state.copyWith(rootFolders: FolderNode.buildForest(rows));
   }

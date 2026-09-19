@@ -25,25 +25,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python (per lo script icone)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
-
-      - name: Installa Pillow
-        run: python3 -m pip install pillow
-
-      # Crea macos/ se non è nel repository e applica entitlement, nome e
-      # icone (vedi tools/setup_platforms.sh). Con macos/ già committata lo
-      # step di generazione viene saltato, le patch restano idempotenti.
-      - name: Prepara la piattaforma macOS
-        run: bash tools/setup_platforms.sh macos
 
       - name: Install Dependencies
         run: flutter pub get

@@ -7,7 +7,7 @@
 # di destinazione (ilammy/msvc-dev-cmd), così 'cl' produce la DLL corretta
 # (x64 oppure ARM64, anche in cross-compilazione da un runner x64).
 #
-# Uso: pwsh tools/windows_sqlite_dll.ps1 -OutDir <cartella> [-Year 2025] [-Version 3500400]
+# Uso: pwsh windows/packaging/windows_sqlite_dll.ps1 -OutDir <cartella> [-Year 2025] [-Version 3500400]
 #
 # NOTA: Year/Version puntano a un URL di sqlite.org (formato
 # https://www.sqlite.org/<anno>/sqlite-amalgamation-<versione>.zip, con la

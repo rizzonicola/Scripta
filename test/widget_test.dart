@@ -14,25 +14,20 @@ import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:flutter/material.dart';
 
 void main() {
-  Directory? tempDir;
-
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-
-    // sqflite_common_ffi funziona nell'ambiente `flutter test` puro (usa
-    // sqlite3 nativo via FFI, non un platform channel), a differenza di
-    // `path_provider`: per questo ogni test punta il database locale a un
-    // file temporaneo isolato invece di interrogare la directory reale
-    // dell'app (vedi AppDatabase.debugDatabasePathOverride).
     AppDatabase.ensureFactoryInitialized();
     await AppDatabase.instance.close();
-    tempDir = await Directory.systemTemp.createTemp('scripta_test_');
-    AppDatabase.debugDatabasePathOverride = p.join(tempDir!.path, 'scripta_test.db');
+    final dbPath = p.join(
+      Directory.systemTemp.path,
+      'scripta_test_${DateTime.now().microsecondsSinceEpoch}.db',
+    );
+    AppDatabase.debugDatabasePathOverride = dbPath;
   });
 
   tearDown(() async {
     await AppDatabase.instance.close();
-    await tempDir?.delete(recursive: true);
+    AppDatabase.debugDatabasePathOverride = null;
   });
 
   test('MarkdownToolbarActions wraps selection with tags properly', () {
@@ -159,6 +154,9 @@ void main() {
     final noteInParent = notesNotifier.createNote(folderId: parent.id);
     final noteInChild = notesNotifier.createNote(folderId: child.id);
 
+    // Attendere che le creazioni asincrone abbiano persistito su SQLite prima di lanciare la cancellazione
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+
     folderNotifier.deleteFolder(parent.id);
 
     final roots = container.read(folderProvider).rootFolders;
@@ -167,7 +165,7 @@ void main() {
 
     // Attendiamo il completamento della cascade asincrona sul DB locale e il
     // conseguente refresh di notesProvider (vedi FolderNotifier.deleteFolder).
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await Future<void>.delayed(const Duration(milliseconds: 200));
 
     final activeNoteIds = container.read(notesProvider).notes.map((n) => n.id).toSet();
     expect(activeNoteIds.contains(noteInParent.id), isFalse);

@@ -350,26 +350,26 @@ class SettingsView extends ConsumerWidget {
                       .setHapticIntensity(intensity);
                 }
               },
-              child: Column(
+              child: const Column(
                 children: [
                   RadioListTile<HapticIntensity>(
-                    title: const Text('Disattivata'),
-                    subtitle: const Text('Nessuna vibrazione'),
-                    secondary: const Icon(Icons.vibration_rounded),
+                    title: Text('Disattivata'),
+                    subtitle: Text('Nessuna vibrazione'),
+                    secondary: Icon(Icons.vibration_rounded),
                     value: HapticIntensity.off,
                   ),
                   RadioListTile<HapticIntensity>(
-                    title: const Text('Leggera (Default)'),
-                    subtitle: const Text(
+                    title: Text('Leggera (Default)'),
+                    subtitle: Text(
                       'Un tocco impercettibile solo all\'inizio della selezione',
                     ),
-                    secondary: const Icon(Icons.vibration_rounded),
+                    secondary: Icon(Icons.vibration_rounded),
                     value: HapticIntensity.light,
                   ),
                   RadioListTile<HapticIntensity>(
-                    title: const Text('Forte'),
-                    subtitle: const Text('Feedback tattile più marcato'),
-                    secondary: const Icon(Icons.vibration_rounded),
+                    title: Text('Forte'),
+                    subtitle: Text('Feedback tattile più marcato'),
+                    secondary: Icon(Icons.vibration_rounded),
                     value: HapticIntensity.strong,
                   ),
                 ],

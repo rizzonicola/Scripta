@@ -73,11 +73,13 @@ class _HapticGatingBinaryMessenger implements BinaryMessenger {
   }
 
   @override
+  // ignore: deprecated_member_use
   Future<void> handlePlatformMessage(
     String channel,
     ByteData? data,
     ui.PlatformMessageResponseCallback? callback,
   ) {
+    // ignore: deprecated_member_use
     return _inner.handlePlatformMessage(channel, data, callback);
   }
 

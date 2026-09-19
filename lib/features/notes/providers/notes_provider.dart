@@ -156,9 +156,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
   Future<void> _loadFromDb() async {
     final rows = await _dao.getActive();
+    if (!mounted) return;
     final notes = _sortNotes(rows.map(NoteModel.fromRow).toList(), state.sortOrder);
 
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final sortStr = prefs.getString(AppConstants.prefSortMode);
     var sortOrder = state.sortOrder;
     if (sortStr != null) {
@@ -183,6 +185,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// cascade di cancellazione di una cartella (vedi FolderNotifier.deleteFolder).
   Future<void> refreshFromDb() async {
     final rows = await _dao.getActive();
+    if (!mounted) return;
     final notes = _sortNotes(rows.map(NoteModel.fromRow).toList(), state.sortOrder);
     final activeStillExists = notes.any((n) => n.id == state.activeNoteId);
     state = state.copyWith(

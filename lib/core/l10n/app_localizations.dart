@@ -106,7 +106,6 @@ abstract class AppLocalizations {
   /// **'Scripta'**
   String get appName;
 
-
   /// No description provided for @allNotes.
   ///
   /// In en, this message translates to:
@@ -227,8 +226,6 @@ abstract class AppLocalizations {
   /// **'Edit'**
   String get edit;
 
-
-
   /// No description provided for @modeReadOnly.
   ///
   /// In en, this message translates to:
@@ -319,7 +316,6 @@ abstract class AppLocalizations {
   /// **'Code Block'**
   String get codeBlock;
 
-
   /// No description provided for @codeCopied.
   ///
   /// In en, this message translates to:
@@ -367,14 +363,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Color Theme'**
   String get themePalette;
-
-
-
-
-
-
-
-
 
   /// No description provided for @sortBy.
   ///

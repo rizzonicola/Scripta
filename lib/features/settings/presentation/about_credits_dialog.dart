@@ -177,7 +177,7 @@ class AboutCreditsDialog extends StatelessWidget {
 
   static void _showLaunchFailureSnackbar(BuildContext context) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+      const SnackBar(
         content: Text(
           'Impossibile aprire il browser. Link: ${AppConstants.githubUrl}',
         ),

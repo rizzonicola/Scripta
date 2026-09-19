@@ -11,7 +11,6 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get appName => 'Scripta';
 
-
   @override
   String get allNotes => 'Toutes les Notes';
 
@@ -73,8 +72,6 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get edit => 'Édition';
 
-
-
   @override
   String get modeReadOnly => 'Mode Lecture Seule';
 
@@ -120,7 +117,6 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get codeBlock => 'Bloc de Code';
 
-
   @override
   String get codeCopied => 'Copié !';
 
@@ -144,14 +140,6 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get themePalette => 'Palette de Couleurs';
-
-
-
-
-
-
-
-
 
   @override
   String get sortBy => 'Trier par';

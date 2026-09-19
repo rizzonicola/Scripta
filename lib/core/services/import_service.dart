@@ -135,14 +135,17 @@ class ImportService {
         return;
       }
 
+      if (!context.mounted) return;
       await _runImport(
         context,
         ref,
         () async => _extractFromZipBytes(bytes),
       );
     } catch (e) {
-      _showSnack(context, 'Errore durante la lettura dello ZIP: $e',
-          isError: true);
+      if (context.mounted) {
+        _showSnack(context, 'Errore durante la lettura dello ZIP: $e',
+            isError: true);
+      }
     }
   }
 
@@ -157,14 +160,17 @@ class ImportService {
       );
       if (dirPath == null) return;
 
+      if (!context.mounted) return;
       await _runImport(
         context,
         ref,
         () => _extractFromDirectory(Directory(dirPath)),
       );
     } catch (e) {
-      _showSnack(context, 'Errore durante la lettura della cartella: $e',
-          isError: true);
+      if (context.mounted) {
+        _showSnack(context, 'Errore durante la lettura della cartella: $e',
+            isError: true);
+      }
     }
   }
 
@@ -184,21 +190,27 @@ class ImportService {
       if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
 
       if (entries.isEmpty) {
-        _showSnack(
-          context,
-          'Nessuna nota Markdown trovata da importare.',
-        );
+        if (context.mounted) {
+          _showSnack(
+            context,
+            'Nessuna nota Markdown trovata da importare.',
+          );
+        }
         return;
       }
 
-      _showSnack(
-        context,
-        'Importazione completata: ${result.importedNotes} note'
-        '${result.importedFolders > 0 ? ' e ${result.importedFolders} nuove cartelle' : ''}.',
-      );
+      if (context.mounted) {
+        _showSnack(
+          context,
+          'Importazione completata: ${result.importedNotes} note'
+          '${result.importedFolders > 0 ? ' e ${result.importedFolders} nuove cartelle' : ''}.',
+        );
+      }
     } catch (e) {
-      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
-      _showSnack(context, 'Errore durante l\'importazione: $e', isError: true);
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        _showSnack(context, 'Errore durante l\'importazione: $e', isError: true);
+      }
     }
   }
 

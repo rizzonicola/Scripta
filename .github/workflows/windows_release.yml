@@ -40,23 +40,15 @@ jobs:
             build_dir: x64
             msvc_arch: x64
             pe_machine: '0x8664'
-            python: '3.x'
           - name: arm64
             runner: windows-11-arm
             build_dir: arm64
             msvc_arch: arm64
             pe_machine: '0xAA64'
-            # Versione con wheel Pillow per Windows ARM64 sicuramente disponibile.
-            python: '3.13'
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Setup Python (per lo script icone)
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
 
       # x64: azione standard.
       - name: Setup Flutter (x64)
@@ -100,12 +92,6 @@ jobs:
             }
           }
 
-      - name: Installa Pillow
-        run: python -m pip install pillow
-
-      - name: Prepara la piattaforma Windows
-        shell: bash
-        run: bash tools/setup_platforms.sh windows
 
       - name: Install Dependencies
         run: flutter pub get
@@ -177,7 +163,7 @@ jobs:
       - name: Compila sqlite3.dll (${{ matrix.name }})
         if: steps.sqlite_check.outputs.needed == 'true'
         shell: pwsh
-        run: ./tools/windows_sqlite_dll.ps1 -OutDir "$env:BUNDLE"
+        run: ./windows/packaging/windows_sqlite_dll.ps1 -OutDir "$env:BUNDLE"
 
       # Best-effort: il runtime C++ (VC++) è richiesto dall'exe di Flutter e
       # non è incluso nel bundle. Lo copiamo (app-local) se disponibile;
@@ -270,7 +256,7 @@ jobs:
                       "/DAppVersion=$version" `
                       "/DAppVersionNumeric=$numeric" `
                       "/DOutDir=$((Resolve-Path dist).Path)" `
-                      tools/windows_installer.iss
+                      windows/packaging/windows_installer.iss
           if ($LASTEXITCODE -ne 0) { throw "Compilazione dell'installer fallita." }
           Get-ChildItem dist | Format-Table Name, Length
 

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
 
@@ -66,6 +67,12 @@ class FakeNotesDao implements NotesDao {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   group('NotesNotifier.moveNote', () {
     test('updates folderId and bumps updatedAt on move', () async {
       final notifier = NotesNotifier(dao: FakeNotesDao());
