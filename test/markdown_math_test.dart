@@ -63,10 +63,19 @@ void main() {
       expect(normalizeInlineMath(src), src);
     });
 
-    test('frazioni e radici semplici', () {
-      expect(normalizeInlineMath(r'$\frac{1}{2}$'), r'$1/2$');
-      expect(normalizeInlineMath(r'$\frac{a+b}{c}$'), r'$(a+b)/c$');
-      expect(normalizeInlineMath(r'$\sqrt{x+1}$'), r'$√(x+1)$');
+    test('solo testo: toglie i \$ (es. formula chimica senza pedici)', () {
+      expect(normalizeInlineMath(r'Ossido ($\text{BaO}$) +'), r'Ossido (BaO) +');
+    });
+
+    test('con pedici/apici mantiene i \$ per il parser di flutter_md', () {
+      expect(normalizeInlineMath(r'$\text{H}_2\text{O}$'), r'$H_2O$');
+      expect(normalizeInlineMath(r'$E = mc^2$'), r'$E = mc^2$');
+    });
+
+    test('frazioni e radici semplici diventano testo lineare', () {
+      expect(normalizeInlineMath(r'$\frac{1}{2}$'), '1/2');
+      expect(normalizeInlineMath(r'$\frac{a+b}{c}$'), '(a+b)/c');
+      expect(normalizeInlineMath(r'$\sqrt{x+1}$'), '√(x+1)');
     });
   });
 }

@@ -205,12 +205,21 @@ String normalizeTexForInline(String tex) {
   return out;
 }
 
+// Contenuto "solo testo": dopo la normalizzazione non ha più comandi, apici
+// né pedici (es. `$\text{BaO}$` → `BaO`). Il convertitore di flutter_md lascia
+// letterale un `$...$` privo di markup da convertire, quindi i `$` resterebbero
+// visibili: in quel caso i delimitatori li togliamo noi. Si toglie solo se il
+// testo è "sicuro" (lettere, cifre, spazi e punteggiatura semplice), per non
+// far interpretare a Markdown caratteri come `*` o `_`.
+final RegExp _plainTexAfterNormalize =
+    RegExp(r'^[\p{L}\p{N}\s().,:;+\-=/√°%]*$', unicode: true);
+
 String _normalizeInlineSegment(String segment) {
   if (!segment.contains(r'$')) return segment;
-  return segment.replaceAllMapped(
-    _inlineMath,
-    (m) => '\$${normalizeTexForInline(m.group(1)!)}\$',
-  );
+  return segment.replaceAllMapped(_inlineMath, (m) {
+    final tex = normalizeTexForInline(m.group(1)!);
+    return _plainTexAfterNormalize.hasMatch(tex) ? tex : '\$$tex\$';
+  });
 }
 
 String _normalizeInlineLine(String line) {
