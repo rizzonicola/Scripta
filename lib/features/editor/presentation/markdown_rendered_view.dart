@@ -225,17 +225,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
           await launchUrl(uri, mode: LaunchMode.externalApplication);
         }
       },
-      // Problema 1: nessuna opzione dedicata trovata in `MarkdownThemeData`
-      // per lo scroll automatico delle tabelle larghe (né `tableOverflow`
-      // né equivalenti — verificato su README/changelog di flutter_md
-      // 0.2.0). Si usa quindi l'hook di custom block painter documentato
-      // (vedi `_HorizontalScrollTablePainter` sotto).
-      builder: (block, theme) {
-        if (block is MD$Table) {
-          return _HorizontalScrollTablePainter(block: block, theme: theme);
-        }
-        return null;
-      },
     );
   }
 
@@ -351,24 +340,69 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
+  // Problema 1: nessun hook di gesture nel `BlockPainter`. Il log di build
+  // ha rivelato l'interfaccia reale di `BlockPainter`/`SelectableBlockPainter`
+  // (flutter_md 0.2.0):
+  //   abstract final Size size;
+  //   Size layout(double width);
+  //   void paint(Canvas canvas, Size size, double offset);
+  //   void handleTapDown(PointerDownEvent event);
+  //   void handleTapUp(PointerUpEvent event);
+  //   String get renderedText;
+  //   int offsetForLocalPosition(Offset local);
+  //   List<Rect> boxesForRange(int start, int end);
+  //   TextRange wordBoundaryForLocal(Offset local);
+  //   bool isLinkAtLocal(Offset local);
+  // Nessun metodo di pan/drag: un `BlockPainter` riceve solo tap, non
+  // possiede un proprio gesture arena per un drag orizzontale. Il drag di
+  // selezione multi-blocco è quindi orchestrato da un livello sopra (la
+  // `MarkdownWidget`/`MarkdownSelectionScope`), non dal singolo painter —
+  // motivo per cui il mio precedente `_HorizontalScrollTablePainter`
+  // (custom drag consumato dentro il painter) non poteva funzionare: quel
+  // punto di estensione non esiste in questa API.
+  //
+  // Soluzione corretta con l'API reale: non toccare affatto il rendering
+  // interno di flutter_md per le tabelle (lasciamo che disegni/selezioni la
+  // tabella esattamente come per ogni altro blocco), e diamo invece più
+  // spazio orizzontale con un vero `Scrollable` a livello di widget
+  // (`SingleChildScrollView(scrollDirection: Axis.horizontal)`) attorno al
+  // `MarkdownWidget` di quel singolo blocco. Questo non richiede alcun
+  // codice custom per isolare i gesti: la disambiguazione nativa di Flutter
+  // fra `Scrollable` con assi ortogonali fa già esattamente quello che
+  // serve — un drag verticale che parte sopra la tabella risale comunque
+  // alla `ListView` esterna, un drag orizzontale resta isolato qui, e un
+  // long-press-poi-drag per la selezione touch (gestito da
+  // `MarkdownSelectionScope`, non da uno `Scrollable`) non è in
+  // competizione con un semplice `HorizontalDragGestureRecognizer`. Dando
+  // al figlio un vincolo di larghezza non limitato (`maxWidth: infinity`,
+  // che `SingleChildScrollView` fornisce di default sull'asse di scroll),
+  // la tabella può calcolare la sua larghezza naturale (somma colonne)
+  // esattamente come richiesto, invece di essere forzata/troncata nella
+  // larghezza del blocco padre.
   Widget _buildMarkdownBlock(int blockIndex, MD$Block block) {
+    final markdownWidget = MarkdownWidget(
+      markdown: Markdown(
+        markdown: markdownBlockRenderedText(block),
+        blocks: [block],
+      ),
+      documentId: 'block-$blockIndex',
+    );
+
+    final content = block is MD$Table
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: markdownWidget,
+          )
+        : SizedBox(width: double.infinity, child: markdownWidget);
+
     return Align(
       key: ValueKey('rendered-block-$blockIndex'),
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
-        child: SizedBox(
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: MarkdownWidget(
-              markdown: Markdown(
-                markdown: markdownBlockRenderedText(block),
-                blocks: [block],
-              ),
-              documentId: 'block-$blockIndex',
-            ),
-          ),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: content,
         ),
       ),
     );
@@ -381,82 +415,4 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
       BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Problema 1 — tabelle larghe scrollabili orizzontalmente.
-//
-// ATTENZIONE: questo painter delega layout/paint/selezione al painter di
-// tabella di default del pacchetto (`BlockPainter$Table`, nome dedotto dalla
-// convenzione `BlockPainter$Quote` citata nel changelog 0.0.7 di flutter_md
-// — NON verificato contro il sorgente installato, perché in questo ambiente
-// non ho accesso alla rete/pub-cache per scaricare e leggere
-// `flutter_md-0.2.0` né un SDK Flutter per compilare). Stessa cosa per i nomi
-// e le firme esatte di `layout`/`paint`/`hitTestSelectable`/il meccanismo di
-// gesture: sono la mia migliore ricostruzione dalla API pubblica documentata
-// (README: "Custom Block Painters" via `MarkdownThemeData.builder`, più
-// `SelectableBlockPainter` citato come API pubblica nelle release notes
-// 0.2.0), non un fatto verificato. PRIMA DI MERGIARE: apri
-// `<pub-cache>/hosted/pub.dev/flutter_md-0.2.0/lib/src/...` (painter di
-// tabella e classe base `SelectableBlockPainter`) e allinea i nomi dei
-// metodi qui sotto a quelli reali — il resto della logica (layout a
-// larghezza naturale, clip + offset di scroll, soglia di attivazione del
-// drag orizzontale, delega dell'hit-test per la selezione) resta valido a
-// prescindere dai nomi esatti.
-class _HorizontalScrollTablePainter extends SelectableBlockPainter {
-  _HorizontalScrollTablePainter({
-    required MD$Table block,
-    required MarkdownThemeData theme,
-  })  : _inner = BlockPainter$Table(block: block, theme: theme),
-        super(block: block, theme: theme);
-
-  final BlockPainter$Table _inner;
-  double _scrollOffset = 0;
-  double _naturalWidth = 0;
-  double _viewportWidth = 0;
-
-  double get _maxScrollOffset =>
-      (_naturalWidth - _viewportWidth).clamp(0.0, double.infinity);
-
-  @override
-  Size layout(BoxConstraints constraints) {
-    // Lascia che la tabella prenda la sua larghezza naturale (somma delle
-    // colonne), invece di essere forzata/troncata nella larghezza del
-    // blocco padre: l'overflow orizzontale lo gestiamo noi con lo scroll,
-    // non il layout stesso.
-    final natural = _inner.layout(constraints.copyWith(maxWidth: double.infinity));
-    _naturalWidth = natural.width;
-    _viewportWidth = constraints.maxWidth;
-    _scrollOffset = _scrollOffset.clamp(0.0, _maxScrollOffset);
-    return Size(constraints.maxWidth, natural.height);
-  }
-
-  @override
-  void paint(Canvas canvas, Offset offset) {
-    canvas.save();
-    canvas.clipRect(offset & size);
-    _inner.paint(canvas, offset.translate(-_scrollOffset, 0));
-    canvas.restore();
-  }
-
-  // Consuma un drag orizzontale che parte sopra la tabella SOLO se c'è
-  // davvero overflow orizzontale da scrollare; altrimenti lascia che il
-  // gesto risalga (scroll verticale della `ListView`/avvio selezione),
-  // replicando l'isolamento nativo che aveva `flutter_markdown_plus`.
-  @override
-  bool handleHorizontalDragUpdate(double delta) {
-    if (_maxScrollOffset <= 0) return false;
-    final next = (_scrollOffset - delta).clamp(0.0, _maxScrollOffset);
-    if (next == _scrollOffset) return false;
-    _scrollOffset = next;
-    markNeedsPaint();
-    return true;
-  }
-
-  // Rimappa le coordinate locali tenendo conto dello scroll, così hit-test e
-  // selezione (drag/long-press su una cella) restano corretti e la tabella
-  // resta inclusa in "Copia"/selezione multi-blocco.
-  @override
-  MarkdownHitTestResult? hitTestSelectable(Offset localPosition) =>
-      _inner.hitTestSelectable(localPosition.translate(_scrollOffset, 0));
 }
