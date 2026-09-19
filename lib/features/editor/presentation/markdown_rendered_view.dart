@@ -284,13 +284,17 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       // pattern documentato nel README di flutter_md) avvolgendo solo i
       // pulsanti "copia"/"taglia": eseguono prima l'azione originale (deve
       // ancora leggere la selezione attiva) e poi chiudono la selezione.
-      // "Seleziona tutto" resta invariato: lì la selezione DEVE rimanere.
+      // "Seleziona tutto" lascia la selezione com'è, ma deve garantire che la
+      // toolbar resti visibile anche se la selezione di partenza era fuori
+      // schermo (vedi [_keepToolbarVisibleAfterSelectAll]). Le ancore sono
+      // inoltre sempre riportate dentro il viewport (vedi
+      // [_clampAnchorsToViewport]).
       contextMenuBuilder: (context, state) =>
           AdaptiveTextSelectionToolbar.buttonItems(
-        anchors: state.contextMenuAnchors,
+        anchors: _clampAnchorsToViewport(state.contextMenuAnchors),
         buttonItems: [
           for (final item in state.contextMenuButtonItems)
-            _clearSelectionAfterCopyOrCut(item, state),
+            _wrapMenuItem(item, state),
         ],
       ),
       child: Listener(
@@ -322,21 +326,138 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     );
   }
 
-  ContextMenuButtonItem _clearSelectionAfterCopyOrCut(
+  ContextMenuButtonItem _wrapMenuItem(
     ContextMenuButtonItem item,
     MarkdownSelectionScopeState state,
   ) {
-    final shouldClearAfter = item.type == ContextMenuButtonType.copy ||
-        item.type == ContextMenuButtonType.cut;
     final originalOnPressed = item.onPressed;
-    if (!shouldClearAfter || originalOnPressed == null) return item;
-    return ContextMenuButtonItem(
-      type: item.type,
-      label: item.label,
-      onPressed: () {
-        originalOnPressed();
-        state.clearSelection();
-      },
+    if (originalOnPressed == null) return item;
+
+    if (item.type == ContextMenuButtonType.copy ||
+        item.type == ContextMenuButtonType.cut) {
+      return ContextMenuButtonItem(
+        type: item.type,
+        label: item.label,
+        onPressed: () {
+          originalOnPressed();
+          state.clearSelection();
+        },
+      );
+    }
+
+    if (item.type == ContextMenuButtonType.selectAll) {
+      return ContextMenuButtonItem(
+        type: item.type,
+        label: item.label,
+        onPressed: () {
+          originalOnPressed();
+          _keepToolbarVisibleAfterSelectAll(state);
+        },
+      );
+    }
+
+    return item;
+  }
+
+  // BUG ("Seleziona tutto" con selezione di partenza fuori schermo): la
+  // selezione di `flutter_md` è ancorata al modello, non ai `RenderObject`,
+  // quindi sopravvive anche quando il blocco che la contiene esce dalla
+  // `cacheExtent` della `ListView` e viene smontato. Se in quello stato si
+  // preme "Seleziona tutto", la toolbar sparisce e non torna più finché
+  // non si ri-seleziona a mano; con la selezione di partenza visibile il
+  // problema non c'è. (Il sorgente privato del pacchetto non è stato
+  // ispezionato: la causa esatta lato pacchetto è un'ipotesi, il rimedio
+  // sotto è volutamente difensivo e usa solo API pubbliche.)
+  //
+  // Rimedio: subito dopo "Seleziona tutto", per qualche frame (il tempo di
+  // far assestare layout/registry del pacchetto), se la selezione è ancora
+  // attiva ma la toolbar non è visibile, la ri-mostriamo con l'API pubblica
+  // `showToolbar()` (che ricalcola le ancore dalla geometria corrente).
+  // Si ferma da sola se nel frattempo la selezione viene annullata.
+  void _keepToolbarVisibleAfterSelectAll(MarkdownSelectionScopeState state) {
+    void check(int retriesLeft) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !state.mounted) return;
+        final selection = _activeSelection;
+        if (selection == null || selection.isCollapsed) return;
+        if (!state.toolbarIsVisible) state.showToolbar();
+        if (retriesLeft > 0) check(retriesLeft - 1);
+      });
+      // `addPostFrameCallback` da solo non pianifica un frame.
+      WidgetsBinding.instance.ensureVisualUpdate();
+    }
+
+    check(2);
+  }
+
+  // Rettangolo globale della viewport di scroll (l'area in cui il contenuto
+  // è realmente visibile), o `null` se non ancora disponibile.
+  Rect? _viewportGlobalRect() {
+    if (!_scrollController.hasClients) return null;
+    final box = _scrollController.position.context.storageContext
+        .findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  static const double _toolbarExtent = 48.0;
+  static const double _toolbarEdgeMargin = 8.0;
+
+  // Le ancore di default di `flutter_md` sono calcolate sulla geometria dei
+  // soli blocchi MONTATI (top/bottom del bounding box della selezione), che
+  // con "Seleziona tutto" o con una selezione scrollata via possono cadere
+  // ben fuori dalla viewport (blocchi nella `cacheExtent`, o fallback sui
+  // bordi dell'intero scope): la toolbar verrebbe posizionata fuori schermo
+  // e risulterebbe "scomparsa". Qui le ancore che escono dalla viewport
+  // vengono riportate sul bordo visibile più vicino (toolbar agganciata al
+  // bordo superiore/inferiore); quelle già dentro non vengono toccate, così
+  // il flip sopra/sotto della toolbar per selezioni vicine al bordo resta
+  // quello nativo.
+  TextSelectionToolbarAnchors _clampAnchorsToViewport(
+    TextSelectionToolbarAnchors anchors,
+  ) {
+    final viewport = _viewportGlobalRect();
+    if (viewport == null ||
+        viewport.height < 2 * (_toolbarExtent + _toolbarEdgeMargin)) {
+      return anchors;
+    }
+
+    double clampX(double x) =>
+        x.clamp(viewport.left, viewport.right).toDouble();
+
+    // Ancora primaria: la toolbar viene disegnata SOPRA questo punto.
+    Offset clampPrimary(Offset p) {
+      if (p.dy < viewport.top) {
+        return Offset(
+          clampX(p.dx),
+          viewport.top + _toolbarExtent + _toolbarEdgeMargin,
+        );
+      }
+      if (p.dy > viewport.bottom) {
+        return Offset(clampX(p.dx), viewport.bottom - _toolbarEdgeMargin);
+      }
+      return p;
+    }
+
+    // Ancora secondaria: la toolbar viene disegnata SOTTO questo punto (solo
+    // se sopra non c'è spazio).
+    Offset clampSecondary(Offset p) {
+      if (p.dy > viewport.bottom) {
+        return Offset(
+          clampX(p.dx),
+          viewport.bottom - _toolbarExtent - _toolbarEdgeMargin,
+        );
+      }
+      if (p.dy < viewport.top) {
+        return Offset(clampX(p.dx), viewport.top + _toolbarEdgeMargin);
+      }
+      return p;
+    }
+
+    final secondary = anchors.secondaryAnchor;
+    return TextSelectionToolbarAnchors(
+      primaryAnchor: clampPrimary(anchors.primaryAnchor),
+      secondaryAnchor: secondary == null ? null : clampSecondary(secondary),
     );
   }
 
