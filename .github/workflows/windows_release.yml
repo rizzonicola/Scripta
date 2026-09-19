@@ -15,28 +15,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Build del bundle (exe + DLL + data/) per ciascuna architettura.
+  #
+  # x64  : runner x64 standard.
+  # arm64: runner Windows ARM64 NATIVO ('windows-11-arm') con Flutter ARM64.
+  #        La cross-compilazione da x64 (`--target-platform windows-arm64`) NON
+  #        è disponibile nel canale stable di Flutter (flutter/flutter#129808):
+  #        il vecchio step "Verifica che Flutter supporti il target ARM64" falliva
+  #        per questo. Da Flutter 3.44 la stable include Dart e runtime nativi
+  #        ARM64: su un host ARM64, `flutter build windows` produce direttamente
+  #        un eseguibile ARM64 (build/windows/arm64/...).
+  # ---------------------------------------------------------------------------
   build-windows:
     name: Build Windows ${{ matrix.name }}
-    runs-on: windows-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       # Un'architettura che fallisce non deve cancellare l'altra.
       fail-fast: false
       matrix:
         include:
           - name: x64
+            runner: windows-latest
             build_dir: x64
             msvc_arch: x64
-            extra_build_args: ''
-          # ARM64 in CROSS-COMPILAZIONE da un runner x64 (Flutter costruisce
-          # per Windows ARM64 con --target-platform windows-arm64 e la
-          # toolchain MSVC ARM64). ALTERNATIVA se la cross-compilazione non
-          # funziona: runner nativo 'windows-11-arm' (runner ARM di GitHub) +
-          # un Flutter SDK per Windows ARM64, ma subosito/flutter-action
-          # potrebbe non fornirlo: in tal caso installare Flutter a mano da git.
+            pe_machine: '0x8664'
+            python: '3.x'
           - name: arm64
+            runner: windows-11-arm
             build_dir: arm64
-            msvc_arch: amd64_arm64
-            extra_build_args: '--target-platform windows-arm64'
+            msvc_arch: arm64
+            pe_machine: '0xAA64'
+            # Versione con wheel Pillow per Windows ARM64 sicuramente disponibile.
+            python: '3.13'
 
     steps:
       - name: Checkout Repository
@@ -45,13 +56,49 @@ jobs:
       - name: Setup Python (per lo script icone)
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: ${{ matrix.python }}
 
-      - name: Setup Flutter
+      # x64: azione standard.
+      - name: Setup Flutter (x64)
+        if: matrix.name == 'x64'
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
+
+      # arm64: subosito/flutter-action scarica lo zip x64 dell'SDK (Dart x64,
+      # sotto emulazione: produrrebbe un'app x64). Clonando il repository in
+      # una PowerShell ARM64 nativa, Flutter (>= 3.44) scarica invece Dart e
+      # runtime ARM64. Clone "blobless" (veloce) ma con la storia completa:
+      # serve per ricavare la versione da git (un clone --depth 1 darebbe
+      # "0.0.0-unknown" e romperebbe il vincolo `flutter: >=3.27.0`).
+      - name: Setup Flutter (ARM64 nativo)
+        if: matrix.name == 'arm64'
+        shell: pwsh
+        run: |
+          Write-Host "Architettura processo PowerShell: $env:PROCESSOR_ARCHITECTURE"
+          $flutterDir = Join-Path $env:RUNNER_TEMP "flutter"
+          git clone --filter=blob:none --branch stable https://github.com/flutter/flutter.git $flutterDir
+          if ($LASTEXITCODE -ne 0) { throw "git clone di Flutter fallito." }
+          Join-Path $flutterDir "bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+          $flutter = Join-Path $flutterDir "bin\flutter.bat"
+          $dart = Join-Path $flutterDir "bin\dart.bat"
+          & $flutter --version
+          $dartVersion = (& $dart --version 2>&1) | Out-String
+          Write-Host $dartVersion
+
+          if ($dartVersion -notmatch "windows_arm64") {
+            Write-Host "::warning::Dart non è ARM64 (trovato: $dartVersion). Forzo il ri-scaricamento con PowerShell nativa."
+            Remove-Item (Join-Path $flutterDir "bin\cache\engine-dart-sdk.stamp") -Force -ErrorAction SilentlyContinue
+            $nativePs = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+            & $nativePs -NoProfile -ExecutionPolicy Bypass -File (Join-Path $flutterDir "bin\internal\update_dart_sdk.ps1")
+            $dartVersion = (& $dart --version 2>&1) | Out-String
+            Write-Host $dartVersion
+            if ($dartVersion -notmatch "windows_arm64") {
+              throw "Impossibile ottenere un Dart SDK ARM64 su questo runner."
+            }
+          }
 
       - name: Installa Pillow
         run: python -m pip install pillow
@@ -70,18 +117,13 @@ jobs:
           # bundle, le versioni 2.x no (serve sqlite3.dll accanto all'exe).
           grep -A4 -E '^  (sqlite3|sqlite3_flutter_libs|sqflite_common_ffi):' pubspec.lock || echo "pubspec.lock: pacchetti sqlite non trovati"
 
-      - name: Verifica che Flutter supporti il target ARM64
-        if: matrix.build_dir == 'arm64'
-        shell: bash
-        run: |
-          flutter --version
-          if ! flutter build windows --help | grep -q "windows-arm64"; then
-            echo "::error::Questa versione di Flutter non offre --target-platform windows-arm64. Serve una release stabile più recente."
-            exit 1
-          fi
+      - name: Diagnostica Flutter
+        run: flutter doctor -v
 
+      # Nessun --target-platform: Flutter costruisce per l'architettura
+      # dell'host (x64 sul runner x64, ARM64 sul runner ARM64).
       - name: Build Windows (release)
-        run: flutter build windows --release ${{ matrix.extra_build_args }}
+        run: flutter build windows --release
 
       - name: Individua il bundle Release
         shell: bash
@@ -94,6 +136,23 @@ jobs:
           fi
           ls "$BUNDLE"
           echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+
+      # Rete di sicurezza: legge l'header PE dell'exe e verifica che
+      # l'architettura sia quella attesa (evita di pubblicare un'app x64
+      # col nome "arm64").
+      - name: Verifica l'architettura dell'eseguibile
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path $env:BUNDLE -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "Nessun .exe nel bundle $env:BUNDLE" }
+          $bytes = [IO.File]::ReadAllBytes($exe.FullName)
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+          $found = '0x{0:X4}' -f $machine
+          Write-Host "$($exe.Name): machine = $found (atteso ${{ matrix.pe_machine }})"
+          if ($found -ne '${{ matrix.pe_machine }}'.ToUpper().Replace('0X','0x')) {
+            throw "Architettura inattesa per $($exe.Name): $found"
+          }
 
       - name: sqlite3.dll già nel bundle?
         id: sqlite_check
@@ -109,6 +168,7 @@ jobs:
 
       # L'ambiente MSVC viene caricato DOPO 'flutter build' per non influire
       # sul rilevamento della toolchain da parte di Flutter/CMake.
+      # Su ARM64 il build è nativo: arch 'arm64' (non più 'amd64_arm64').
       - name: Ambiente MSVC (${{ matrix.msvc_arch }})
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -135,41 +195,111 @@ jobs:
             } else { Write-Host "::warning::CRT $arch non trovato in $redist" }
           } else { Write-Host "::warning::VCToolsRedistDir non impostato" }
 
-      - name: Crea l'archivio ZIP portabile
-        shell: pwsh
-        run: |
-          $name = "Scripta-windows-${{ matrix.name }}"
-          New-Item -ItemType Directory -Force -Path "dist\$name" | Out-Null
-          Copy-Item "$env:BUNDLE\*" -Destination "dist\$name" -Recurse -Force
-          Compress-Archive -Path "dist\$name" -DestinationPath "dist\$name.zip" -Force
-          Remove-Item "dist\$name" -Recurse -Force
-          Get-ChildItem dist
-
-      - name: Upload Build Artifact
+      # Il bundle passa al job di packaging (installer). Retention breve: è un
+      # artefatto intermedio, non un prodotto finale.
+      - name: Upload bundle (intermedio)
         uses: actions/upload-artifact@v4
         with:
-          name: Scripta-windows-${{ matrix.name }}
-          path: dist/Scripta-windows-${{ matrix.name }}.zip
+          name: windows-bundle-${{ matrix.name }}
+          path: ${{ env.BUNDLE }}
+          retention-days: 1
+          if-no-files-found: error
 
-      - name: Upload Artifacts to Release (tentativo 1)
+  # ---------------------------------------------------------------------------
+  # 2) Installer: un unico Scripta-windows-<arch>-setup.exe (Inno Setup),
+  #    al posto dello zip con la cartella. Gira su runner x64 per entrambe le
+  #    architetture (l'installer ARM64 è solo un contenitore di file ARM64:
+  #    il compilatore non deve girare su ARM64).
+  #    `!cancelled()`: se una sola architettura fallisce il build, l'altra
+  #    viene comunque impacchettata e pubblicata.
+  # ---------------------------------------------------------------------------
+  package-windows:
+    name: Installer Windows ${{ matrix.name }}
+    needs: build-windows
+    if: ${{ !cancelled() }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [x64, arm64]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Scarica il bundle
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-bundle-${{ matrix.name }}
+          path: bundle
+
+      - name: Bundle ${{ matrix.name }} non disponibile
+        if: steps.download.outcome != 'success'
+        shell: bash
+        run: |
+          echo "::warning::Bundle ${{ matrix.name }} non disponibile (build fallito) - installer saltato."
+
+      - name: Installa Inno Setup
+        if: steps.download.outcome == 'success'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          }
+          if (-not $iscc) { throw "ISCC.exe non trovato dopo l'installazione di Inno Setup." }
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Compila l'installer
+        if: steps.download.outcome == 'success'
+        shell: pwsh
+        run: |
+          # Versione dal tag (v0.8.2 -> 0.8.2); senza tag (run manuale) 0.0.0-dev.
+          $version = "0.0.0-dev"
+          if ("${{ github.ref }}" -like "refs/tags/v*") { $version = "${{ github.ref_name }}".TrimStart("v") }
+          $numeric = ($version -replace '[^0-9.].*$', '').Trim('.')
+          if (-not $numeric) { $numeric = "0.0.0" }
+          Write-Host "Versione: $version (numerica: $numeric)"
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          & $env:ISCC "/DSourceDir=$((Resolve-Path bundle).Path)" `
+                      "/DArch=${{ matrix.name }}" `
+                      "/DAppVersion=$version" `
+                      "/DAppVersionNumeric=$numeric" `
+                      "/DOutDir=$((Resolve-Path dist).Path)" `
+                      tools/windows_installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Compilazione dell'installer fallita." }
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Upload Build Artifact
+        if: steps.download.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scripta-windows-${{ matrix.name }}-setup
+          path: dist/Scripta-windows-${{ matrix.name }}-setup.exe
+
+      - name: Upload Installer to Release (tentativo 1)
         id: release_attempt_1
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.download.outcome == 'success' && startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
         with:
-          files: dist/Scripta-windows-${{ matrix.name }}.zip
+          files: dist/Scripta-windows-${{ matrix.name }}-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attendi prima di ritentare la pubblicazione
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        if: steps.download.outcome == 'success' && startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
         shell: bash
         run: sleep 15
 
-      - name: Upload Artifacts to Release (tentativo 2)
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+      - name: Upload Installer to Release (tentativo 2)
+        if: steps.download.outcome == 'success' && startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Scripta-windows-${{ matrix.name }}.zip
+          files: dist/Scripta-windows-${{ matrix.name }}-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

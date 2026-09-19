@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
-import 'package:flutter/gestures.dart' show kTouchSlop;
+import 'package:flutter/gestures.dart'
+    show kTouchSlop, kSecondaryButton, kTertiaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionControls, cupertinoDesktopTextSelectionControls;
@@ -462,6 +463,17 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   }
 
   void _handleBackgroundPointerDown(PointerDownEvent event) {
+    // Desktop (mouse/trackpad/penna): il tasto DESTRO (o centrale) apre il
+    // menu contestuale (Copia / Seleziona tutto) e NON deve mai contare come
+    // "tocco a vuoto": prima veniva trattato come un normale tap breve e
+    // `_handleBackgroundPointerUp` annullava la selezione appena prima/dopo
+    // l'apertura del menu. Il tasto va letto qui, sul `PointerDown`: sul
+    // `PointerUp` `event.buttons` vale già 0. Su touch `buttons` è sempre
+    // `kPrimaryButton`, quindi il comportamento mobile resta identico.
+    if ((event.buttons & (kSecondaryButton | kTertiaryButton)) != 0) {
+      _pendingTapPointers.remove(event.pointer);
+      return;
+    }
     _pendingTapPointers[event.pointer] = _PendingTap(event.position, DateTime.now());
   }
 

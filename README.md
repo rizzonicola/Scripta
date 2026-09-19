@@ -140,8 +140,8 @@ I workflow in `.github/workflows/` compilano e pubblicano automaticamente gli ar
 | Android | `Scripta-*.apk` | APK per ABI + universale |
 | Linux | `Scripta.flatpak` | Flatpak |
 | macOS (Intel + Apple Silicon) | `Scripta-macos-universal.dmg` / `.zip` | Binario universale, firma ad-hoc, **non notarizzato** |
-| Windows x64 | `Scripta-windows-x64.zip` | Portabile, nessun installer |
-| Windows ARM64 | `Scripta-windows-arm64.zip` | Portabile, nessun installer |
+| Windows x64 | `Scripta-windows-x64-setup.exe` | Installer unico (Inno Setup), non firmato |
+| Windows ARM64 | `Scripta-windows-arm64-setup.exe` | Installer unico (Inno Setup), build nativa ARM64, non firmato |
 | iOS | `Scripta-ios-unsigned.ipa` | **Non firmato**: solo per sideloading |
 
 ### macOS — avviso Gatekeeper
@@ -151,7 +151,7 @@ L'app non è notarizzata da Apple, quindi al primo avvio macOS la blocca. Apri i
 - da Terminale: `xattr -dr com.apple.quarantine /Applications/Scripta.app`
 
 ### Windows
-Decomprimi lo `.zip` in una cartella qualsiasi ed esegui `scripta.exe`. Windows SmartScreen può mostrare un avviso perché l'eseguibile non è firmato (*Ulteriori informazioni → Esegui comunque*). Se all'avvio manca `VCRUNTIME140.dll`/`MSVCP140.dll`, installa il *Microsoft Visual C++ Redistributable* (versione della tua architettura). La cartella deve restare intera: `sqlite3.dll` e `data/` vanno tenuti accanto all'eseguibile.
+Scarica l'installer `Scripta-windows-x64-setup.exe` (oppure `-arm64-setup.exe` per i PC Windows su ARM) ed eseguilo: l'installazione è per-utente (non servono privilegi di amministratore; dalla prima finestra si può scegliere "per tutti gli utenti"), crea la voce nel menu Start e, a richiesta, l'icona sul desktop. Windows SmartScreen può mostrare un avviso perché l'installer non è firmato (*Ulteriori informazioni → Esegui comunque*). Il runtime C++ e `sqlite3.dll` sono già inclusi nell'installer. I dati delle note restano nel profilo utente anche dopo la disinstallazione. L'installer è generato da `tools/windows_installer.iss`.
 
 ### iOS — sideloading dell'IPA non firmato
 L'IPA **non è firmato** e non è pensato per l'App Store: va installato con uno strumento di sideloading che lo ri-firma con il *tuo* Apple ID.
@@ -174,8 +174,9 @@ bash tools/setup_platforms.sh all      # oppure: ios | macos | windows
 ```bash
 flutter build macos --release                    # macOS universale (solo su Mac)
 flutter build ios --release --no-codesign        # poi: mkdir Payload, copia build/ios/iphoneos/Runner.app, zip -> .ipa
-flutter build windows --release                  # Windows x64 (solo su Windows)
-flutter build windows --release --target-platform windows-arm64   # Windows ARM64
+flutter build windows --release                  # Windows (architettura dell'host; solo su Windows)
+# Windows ARM64: su un PC ARM64 con Flutter >= 3.44 lo stesso comando produce un exe ARM64 nativo
+# (la cross-compilazione `--target-platform windows-arm64` non è disponibile nel canale stable)
 ```
 Su Windows `sqlite3.dll` deve stare accanto all'eseguibile (se non è già inclusa nel bundle: vedi `tools/windows_sqlite_dll.ps1`). Al primo avvio, i font (Google Fonts) vengono scaricati e messi in cache: serve la rete, altrimenti l'app usa il font di sistema.
 
