@@ -125,6 +125,9 @@ unlinked_spec.ds
 **/linux/flutter/generated_plugins.cmake
 **/linux/flutter/ephemeral/
 
+# Output locale dei pacchetti di release (workflow/script)
+/dist/
+
 # Coverage
 coverage/
 

@@ -1,0 +1,175 @@
+name: Windows Release Builds
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Gruppo SEPARATO dagli altri workflow di release: vedi macos_release.yml.
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Build Windows ${{ matrix.name }}
+    runs-on: windows-latest
+    strategy:
+      # Un'architettura che fallisce non deve cancellare l'altra.
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64
+            build_dir: x64
+            msvc_arch: x64
+            extra_build_args: ''
+          # ARM64 in CROSS-COMPILAZIONE da un runner x64 (Flutter costruisce
+          # per Windows ARM64 con --target-platform windows-arm64 e la
+          # toolchain MSVC ARM64). ALTERNATIVA se la cross-compilazione non
+          # funziona: runner nativo 'windows-11-arm' (runner ARM di GitHub) +
+          # un Flutter SDK per Windows ARM64, ma subosito/flutter-action
+          # potrebbe non fornirlo: in tal caso installare Flutter a mano da git.
+          - name: arm64
+            build_dir: arm64
+            msvc_arch: amd64_arm64
+            extra_build_args: '--target-platform windows-arm64'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python (per lo script icone)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Installa Pillow
+        run: python -m pip install pillow
+
+      - name: Prepara la piattaforma Windows
+        shell: bash
+        run: bash tools/setup_platforms.sh windows
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Versione di sqlite3 risolta da pub
+        shell: bash
+        run: |
+          # Diagnostica: sqlite3 >= 3 (build hooks) include la libreria nel
+          # bundle, le versioni 2.x no (serve sqlite3.dll accanto all'exe).
+          grep -A4 -E '^  (sqlite3|sqlite3_flutter_libs|sqflite_common_ffi):' pubspec.lock || echo "pubspec.lock: pacchetti sqlite non trovati"
+
+      - name: Verifica che Flutter supporti il target ARM64
+        if: matrix.build_dir == 'arm64'
+        shell: bash
+        run: |
+          flutter --version
+          if ! flutter build windows --help | grep -q "windows-arm64"; then
+            echo "::error::Questa versione di Flutter non offre --target-platform windows-arm64. Serve una release stabile più recente."
+            exit 1
+          fi
+
+      - name: Build Windows (release)
+        run: flutter build windows --release ${{ matrix.extra_build_args }}
+
+      - name: Individua il bundle Release
+        shell: bash
+        run: |
+          BUNDLE="build/windows/${{ matrix.build_dir }}/runner/Release"
+          if [ ! -d "$BUNDLE" ]; then
+            echo "::error::Cartella $BUNDLE non trovata. Contenuto di build/windows:"
+            find build/windows -maxdepth 4 -type d | head -n 40
+            exit 1
+          fi
+          ls "$BUNDLE"
+          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+
+      - name: sqlite3.dll già nel bundle?
+        id: sqlite_check
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:BUNDLE\sqlite3.dll") {
+            "needed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "sqlite3.dll già presente nel bundle."
+          } else {
+            "needed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "sqlite3.dll assente: verrà compilata."
+          }
+
+      # L'ambiente MSVC viene caricato DOPO 'flutter build' per non influire
+      # sul rilevamento della toolchain da parte di Flutter/CMake.
+      - name: Ambiente MSVC (${{ matrix.msvc_arch }})
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Compila sqlite3.dll (${{ matrix.name }})
+        if: steps.sqlite_check.outputs.needed == 'true'
+        shell: pwsh
+        run: ./tools/windows_sqlite_dll.ps1 -OutDir "$env:BUNDLE"
+
+      # Best-effort: il runtime C++ (VC++) è richiesto dall'exe di Flutter e
+      # non è incluso nel bundle. Lo copiamo (app-local) se disponibile;
+      # altrimenti l'utente deve installare "Microsoft Visual C++ Redistributable".
+      - name: Copia il runtime VC++ nel bundle
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.build_dir }}"
+          $redist = $env:VCToolsRedistDir
+          if ($redist) {
+            $crt = Get-ChildItem -Path (Join-Path $redist $arch) -Directory -Filter "Microsoft.VC*.CRT" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($crt) {
+              Copy-Item "$($crt.FullName)\*.dll" -Destination $env:BUNDLE -Force
+              Write-Host "Runtime VC++ copiato da $($crt.FullName)"
+            } else { Write-Host "::warning::CRT $arch non trovato in $redist" }
+          } else { Write-Host "::warning::VCToolsRedistDir non impostato" }
+
+      - name: Crea l'archivio ZIP portabile
+        shell: pwsh
+        run: |
+          $name = "Scripta-windows-${{ matrix.name }}"
+          New-Item -ItemType Directory -Force -Path "dist\$name" | Out-Null
+          Copy-Item "$env:BUNDLE\*" -Destination "dist\$name" -Recurse -Force
+          Compress-Archive -Path "dist\$name" -DestinationPath "dist\$name.zip" -Force
+          Remove-Item "dist\$name" -Recurse -Force
+          Get-ChildItem dist
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scripta-windows-${{ matrix.name }}
+          path: dist/Scripta-windows-${{ matrix.name }}.zip
+
+      - name: Upload Artifacts to Release (tentativo 1)
+        id: release_attempt_1
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          files: dist/Scripta-windows-${{ matrix.name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attendi prima di ritentare la pubblicazione
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        shell: bash
+        run: sleep 15
+
+      - name: Upload Artifacts to Release (tentativo 2)
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Scripta-windows-${{ matrix.name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

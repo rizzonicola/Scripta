@@ -131,6 +131,56 @@ flutter run -d chrome   # Web Browser
 
 ---
 
+## 🖥️ Piattaforme supportate e download
+
+I workflow in `.github/workflows/` compilano e pubblicano automaticamente gli artefatti nella *Release* GitHub a ogni tag `v*.*.*` (oppure manualmente da *Actions → Run workflow*).
+
+| Piattaforma | Artefatto | Note |
+|---|---|---|
+| Android | `Scripta-*.apk` | APK per ABI + universale |
+| Linux | `Scripta.flatpak` | Flatpak |
+| macOS (Intel + Apple Silicon) | `Scripta-macos-universal.dmg` / `.zip` | Binario universale, firma ad-hoc, **non notarizzato** |
+| Windows x64 | `Scripta-windows-x64.zip` | Portabile, nessun installer |
+| Windows ARM64 | `Scripta-windows-arm64.zip` | Portabile, nessun installer |
+| iOS | `Scripta-ios-unsigned.ipa` | **Non firmato**: solo per sideloading |
+
+### macOS — avviso Gatekeeper
+L'app non è notarizzata da Apple, quindi al primo avvio macOS la blocca. Apri il `.dmg`, trascina *Scripta* in *Applicazioni*, poi:
+- **clic destro su Scripta → Apri → Apri**, oppure
+- *Impostazioni di Sistema → Privacy e sicurezza → "Apri comunque"*, oppure
+- da Terminale: `xattr -dr com.apple.quarantine /Applications/Scripta.app`
+
+### Windows
+Decomprimi lo `.zip` in una cartella qualsiasi ed esegui `scripta.exe`. Windows SmartScreen può mostrare un avviso perché l'eseguibile non è firmato (*Ulteriori informazioni → Esegui comunque*). Se all'avvio manca `VCRUNTIME140.dll`/`MSVCP140.dll`, installa il *Microsoft Visual C++ Redistributable* (versione della tua architettura). La cartella deve restare intera: `sqlite3.dll` e `data/` vanno tenuti accanto all'eseguibile.
+
+### iOS — sideloading dell'IPA non firmato
+L'IPA **non è firmato** e non è pensato per l'App Store: va installato con uno strumento di sideloading che lo ri-firma con il *tuo* Apple ID.
+1. Scarica `Scripta-ios-unsigned.ipa`.
+2. Installalo con [AltStore](https://altstore.io) o [Sideloadly](https://sideloadly.io) (o strumenti equivalenti), collegando l'iPhone e accedendo con il tuo Apple ID.
+3. Sull'iPhone: *Impostazioni → Generali → VPN e gestione dispositivo* → considera attendibile il tuo profilo sviluppatore. Con Apple ID gratuito può servire attivare la *Modalità sviluppatore* (*Privacy e sicurezza*).
+4. Con un Apple ID gratuito l'app scade dopo 7 giorni e va ri-firmata (AltStore lo fa in automatico se il computer è raggiungibile).
+
+> **Sicurezza delle credenziali di sync (iOS/macOS).** Le build non firmate/ad-hoc possono non avere accesso al Keychain. In quel caso Scripta salva le credenziali di sync in `SharedPreferences` (**non cifrate**, ma confinate nella sandbox dell'app) invece di far fallire la sync. Su Android, Linux e Windows il comportamento resta quello cifrato.
+
+### Generare/aggiornare le cartelle `ios/`, `macos/`, `windows/`
+Le cartelle di piattaforma vengono create da `tools/setup_platforms.sh` (che lancia `flutter create` senza toccare `lib/`, `pubspec.yaml`, `android/`, `linux/`, applica entitlement/nomi/target minimi e genera le icone). I workflow lo eseguono automaticamente; per generarle in locale (e poi committarle):
+
+```bash
+pip install pillow          # per le icone
+bash tools/setup_platforms.sh all      # oppure: ios | macos | windows
+```
+
+### Build in locale
+```bash
+flutter build macos --release                    # macOS universale (solo su Mac)
+flutter build ios --release --no-codesign        # poi: mkdir Payload, copia build/ios/iphoneos/Runner.app, zip -> .ipa
+flutter build windows --release                  # Windows x64 (solo su Windows)
+flutter build windows --release --target-platform windows-arm64   # Windows ARM64
+```
+Su Windows `sqlite3.dll` deve stare accanto all'eseguibile (se non è già inclusa nel bundle: vedi `tools/windows_sqlite_dll.ps1`). Al primo avvio, i font (Google Fonts) vengono scaricati e messi in cache: serve la rete, altrimenti l'app usa il font di sistema.
+
+---
+
 ## 📦 Linux Flatpak Packaging
 
 Inkflow includes Flatpak distribution configuration in `linux/packaging/`:

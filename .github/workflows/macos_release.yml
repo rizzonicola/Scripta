@@ -1,0 +1,122 @@
+name: macOS Release Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Gruppo SEPARATO dagli altri workflow di release (android, flatpak, ios,
+  # windows): girano in parallelo. Evita solo che DUE run di QUESTO stesso
+  # workflow sullo stesso ref si sovrappongano.
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    name: Build macOS universal (Intel + Apple Silicon)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python (per lo script icone)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Installa Pillow
+        run: python3 -m pip install pillow
+
+      # Crea macos/ se non è nel repository e applica entitlement, nome e
+      # icone (vedi tools/setup_platforms.sh). Con macos/ già committata lo
+      # step di generazione viene saltato, le patch restano idempotenti.
+      - name: Prepara la piattaforma macOS
+        run: bash tools/setup_platforms.sh macos
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build macOS (release)
+        run: flutter build macos --release
+
+      - name: Individua l'app e verifica le architetture
+        run: |
+          APP="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -n 1)"
+          if [ -z "$APP" ]; then echo "::error::Nessuna .app trovata"; exit 1; fi
+          EXEC_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          ARCHS="$(lipo -archs "$APP/Contents/MacOS/$EXEC_NAME")"
+          echo "App: $APP"
+          echo "Architetture: $ARCHS"
+          case "$ARCHS" in
+            *x86_64*arm64*|*arm64*x86_64*) ;;
+            *) echo "::error::Il binario NON è universale (trovato: $ARCHS)"; exit 1 ;;
+          esac
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      # Firma ad-hoc (nessun certificato): su Apple Silicon un binario senza
+      # alcuna firma non parte. NON è una firma dello sviluppatore né una
+      # notarizzazione: Gatekeeper mostrerà comunque l'avviso (vedi README).
+      - name: Firma ad-hoc con gli entitlement dell'app
+        run: |
+          codesign --force --deep --sign - \
+            --entitlements macos/Runner/Release.entitlements \
+            "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Crea DMG e ZIP
+        run: |
+          mkdir -p dist/dmg-staging
+          cp -R "$APP_PATH" dist/dmg-staging/
+          ln -s /Applications dist/dmg-staging/Applications
+          hdiutil create -volname "Scripta" -srcfolder dist/dmg-staging \
+            -ov -format UDZO dist/Scripta-macos-universal.dmg
+          # ditto preserva symlink e attributi (zip normale rovinerebbe il bundle)
+          ditto -c -k --keepParent "$APP_PATH" dist/Scripta-macos-universal.zip
+          rm -rf dist/dmg-staging
+          ls -lh dist
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scripta-macos-universal
+          path: |
+            dist/Scripta-macos-universal.dmg
+            dist/Scripta-macos-universal.zip
+
+      - name: Upload Artifacts to Release (tentativo 1)
+        id: release_attempt_1
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          files: |
+            dist/Scripta-macos-universal.dmg
+            dist/Scripta-macos-universal.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attendi prima di ritentare la pubblicazione
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        run: sleep 15
+
+      - name: Upload Artifacts to Release (tentativo 2)
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Scripta-macos-universal.dmg
+            dist/Scripta-macos-universal.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

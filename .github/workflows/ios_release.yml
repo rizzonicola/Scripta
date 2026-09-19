@@ -1,0 +1,90 @@
+name: iOS Unsigned IPA Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Gruppo SEPARATO dagli altri workflow di release: vedi macos_release.yml.
+  group: ios-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build IPA non firmato (sideloading)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python (per lo script icone)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Installa Pillow
+        run: python3 -m pip install pillow
+
+      - name: Prepara la piattaforma iOS
+        run: bash tools/setup_platforms.sh ios
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # Nessuna firma: l'IPA sarà ri-firmato dal sideloader (AltStore,
+      # Sideloadly, ...) con l'Apple ID dell'utente.
+      - name: Build iOS (release, senza firma)
+        run: flutter build ios --release --no-codesign
+
+      - name: Impacchetta l'IPA (Payload/Runner.app)
+        run: |
+          APP="build/ios/iphoneos/Runner.app"
+          if [ ! -d "$APP" ]; then echo "::error::$APP non trovato"; exit 1; fi
+          rm -rf dist && mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          # -y conserva i symlink, -r ricorsivo; la cartella Payload deve
+          # stare alla radice dello zip, come richiesto dal formato IPA.
+          (cd dist && zip -qry Scripta-ios-unsigned.ipa Payload)
+          rm -rf dist/Payload
+          unzip -l dist/Scripta-ios-unsigned.ipa | head -n 15
+          ls -lh dist
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scripta-ios-unsigned.ipa
+          path: dist/Scripta-ios-unsigned.ipa
+
+      - name: Upload IPA to Release (tentativo 1)
+        id: release_attempt_1
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          files: dist/Scripta-ios-unsigned.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attendi prima di ritentare la pubblicazione
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        run: sleep 15
+
+      - name: Upload IPA to Release (tentativo 2)
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Scripta-ios-unsigned.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
