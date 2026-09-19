@@ -8,15 +8,18 @@ import 'package:flutter_md/flutter_md.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/markdown_math.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../settings/providers/settings_provider.dart';
+import 'code_block_with_copy.dart';
+import 'display_math_block.dart';
 
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste più una modalità "testo grezzo" separata.
 ///
 /// Il rendering usa `flutter_md` (vedi pubspec.yaml): la nota resta divisa in
 /// blocchi dentro una `ListView.builder` virtualizzata (un blocco Markdown
-/// per item, vedi `_buildMarkdownBlock`) per continuare a beneficiare della
+/// per item, vedi `_buildItem`) per continuare a beneficiare della
 /// virtualizzazione su note molto lunghe, ma a differenza del vecchio motore
 /// (`flutter_markdown_plus`) la selezione di testo non richiede più alcun
 /// trucco di realizzazione forzata: `MarkdownSelectionController` ancora la
@@ -103,11 +106,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     }
   }
 
-  List<MD$Block>? _cachedBlocks;
+  // Elementi della lista: blocchi Markdown (uno per item, con il proprio
+  // `documentId` per la selezione) e formule a blocco `$$...$$`, che
+  // `flutter_md` non gestisce e sono quindi widget a sé (vedi
+  // `markdown_math.dart`). Le formule non sono registrate nella selezione
+  // ancorata al modello: restano fuori dal testo selezionato/copiato.
+  List<_ViewItem> _items = const [];
 
   (ThemeData, String, double, double)? _cachedThemeKey;
   late MarkdownThemeData _markdownTheme;
   late TextStyle _titleTextStyle;
+  late TextStyle _mathTextStyle;
+  late Color _codeSurfaceColor;
 
   @override
   void initState() {
@@ -140,23 +150,44 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   // in questo stesso frame.
   void _updateBlocks(String content) {
     final effectiveContent = content.isEmpty ? '*Nessun contenuto*' : content;
-    // `flutter_md` espone già i blocchi del documento tramite il proprio
-    // modello (`Markdown.fromString(...).blocks`): non serve più uno
-    // splitter manuale a righe/fence come nel vecchio
-    // `_splitMarkdownIntoBlocks`.
-    final blocks = Markdown.fromString(effectiveContent).blocks;
-    _cachedBlocks = blocks;
-    _selectionController.setDocuments([
-      for (var i = 0; i < blocks.length; i++)
-        MarkdownDocumentRef(
-          id: 'block-$i',
-          model: Markdown(
-            markdown: markdownBlockRenderedText(blocks[i]),
-            blocks: [blocks[i]],
-          ),
-          order: i,
-        ),
-    ]);
+    final items = <_ViewItem>[];
+    final documents = <MarkdownDocumentRef>[];
+
+    // 1) Le formule a blocco `$$...$$` vengono estratte prima del parsing
+    //    (fuori da code fence/blocchi indentati); 2) ogni tratto Markdown è
+    //    parsato con `inlineMath: true` (`$...$` -> Unicode), dopo una
+    //    normalizzazione dei costrutti LaTeX comuni non coperti dal
+    //    pacchetto (`\text{..}`, `\frac{..}{..}` semplici, ...).
+    // `flutter_md` espone già i blocchi tramite il proprio modello
+    // (`Markdown.fromString(...).blocks`): niente splitter manuale a righe.
+    for (final chunk in splitNoteChunks(effectiveContent)) {
+      switch (chunk) {
+        case MarkdownChunk(:final source):
+          final blocks = Markdown.fromString(
+            normalizeInlineMath(source),
+            inlineMath: true,
+          ).blocks;
+          for (final block in blocks) {
+            final id = 'block-${documents.length}';
+            items.add(_BlockItem(block, id));
+            documents.add(
+              MarkdownDocumentRef(
+                id: id,
+                model: Markdown(
+                  markdown: markdownBlockRenderedText(block),
+                  blocks: [block],
+                ),
+                order: documents.length,
+              ),
+            );
+          }
+        case DisplayMathChunk(:final tex):
+          items.add(_MathItem(tex));
+      }
+    }
+
+    _items = items;
+    _selectionController.setDocuments(documents);
   }
 
   void _ensureTheme(
@@ -208,6 +239,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
     // vicina a quella usata prima solo per il code inline.
     final monospaceBackgroundColor =
         isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEFEFEF);
+
+    _codeSurfaceColor = surfaceColor;
+    _mathTextStyle = TextStyle(
+      fontSize: fontSize * 1.15,
+      color: theme.colorScheme.onSurface,
+    );
 
     _markdownTheme = MarkdownThemeData.mergeTheme(
       theme,
@@ -261,9 +298,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   }
 
   Widget _buildFormattedView(ThemeData theme) {
-    final blocks = _cachedBlocks!;
+    final items = _items;
     final hasTitle = widget.title.trim().isNotEmpty;
-    final itemCount = (hasTitle ? 1 : 0) + blocks.length;
+    final itemCount = (hasTitle ? 1 : 0) + items.length;
     final selectionColor = theme.colorScheme.primary.withValues(alpha: 0.35);
 
     return MarkdownSelectionScope(
@@ -317,8 +354,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
                 if (hasTitle && index == 0) {
                   return _buildTitleWidget(theme, selectionColor);
                 }
-                final blockIndex = hasTitle ? index - 1 : index;
-                return _buildMarkdownBlock(blockIndex, blocks[blockIndex]);
+                final itemIndex = hasTitle ? index - 1 : index;
+                return _buildItem(itemIndex, items[itemIndex]);
               },
             ),
           ),
@@ -570,24 +607,41 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   // la tabella può calcolare la sua larghezza naturale (somma colonne)
   // esattamente come richiesto, invece di essere forzata/troncata nella
   // larghezza del blocco padre.
-  Widget _buildMarkdownBlock(int blockIndex, MD$Block block) {
-    final markdownWidget = MarkdownWidget(
-      markdown: Markdown(
-        markdown: markdownBlockRenderedText(block),
-        blocks: [block],
-      ),
-      documentId: 'block-$blockIndex',
-    );
-
-    final content = block is MD$Table
-        ? SingleChildScrollView(
+  Widget _buildItem(int index, _ViewItem item) {
+    final Widget content;
+    switch (item) {
+      case _MathItem(:final tex):
+        content = DisplayMathBlock(tex: tex, textStyle: _mathTextStyle);
+      case _BlockItem(:final block, :final documentId):
+        final markdownWidget = MarkdownWidget(
+          markdown: Markdown(
+            markdown: markdownBlockRenderedText(block),
+            blocks: [block],
+          ),
+          documentId: documentId,
+        );
+        if (block is MD$Table) {
+          content = SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: markdownWidget,
-          )
-        : SizedBox(width: double.infinity, child: markdownWidget);
+          );
+        } else if (block is MD$Code) {
+          // Barra con pulsante "Copia" in alto a destra, FUORI dal blocco
+          // disegnato da flutter_md: non copre il codice e non entra nella
+          // selezione (vedi `CodeBlockWithCopy`).
+          content = CodeBlockWithCopy(
+            code: block.text,
+            language: block.language,
+            surfaceColor: _codeSurfaceColor,
+            child: SizedBox(width: double.infinity, child: markdownWidget),
+          );
+        } else {
+          content = SizedBox(width: double.infinity, child: markdownWidget);
+        }
+    }
 
     return Align(
-      key: ValueKey('rendered-block-$blockIndex'),
+      key: ValueKey('rendered-block-$index'),
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 840),
@@ -624,4 +678,20 @@ class _PendingTap {
       maxDistanceFromOrigin = distance;
     }
   }
+}
+
+/// Elemento della lista di lettura: un blocco Markdown o una formula a blocco.
+sealed class _ViewItem {
+  const _ViewItem();
+}
+
+final class _BlockItem extends _ViewItem {
+  const _BlockItem(this.block, this.documentId);
+  final MD$Block block;
+  final String documentId;
+}
+
+final class _MathItem extends _ViewItem {
+  const _MathItem(this.tex);
+  final String tex;
 }

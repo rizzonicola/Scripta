@@ -48,7 +48,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # x64: azione standard.
       - name: Setup Flutter (x64)
@@ -184,7 +184,7 @@ jobs:
       # Il bundle passa al job di packaging (installer). Retention breve: è un
       # artefatto intermedio, non un prodotto finale.
       - name: Upload bundle (intermedio)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-bundle-${{ matrix.name }}
           path: ${{ env.BUNDLE }}
@@ -211,12 +211,12 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Scarica il bundle
         id: download
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: windows-bundle-${{ matrix.name }}
           path: bundle
@@ -262,7 +262,7 @@ jobs:
 
       - name: Upload Build Artifact
         if: steps.download.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Scripta-windows-${{ matrix.name }}-setup
           path: dist/Scripta-windows-${{ matrix.name }}-setup.exe

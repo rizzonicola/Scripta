@@ -34,6 +34,12 @@ dependencies:
   # selezione su blocchi fuori schermo.
   flutter_md: ^0.2.0
 
+  # Formule a blocco `$$...$$` con layout matematico 2D (frazioni, radici,
+  # matrici...). Le formule inline `$...$` sono invece gestite da flutter_md
+  # (`inlineMath: true`, conversione in Unicode): vedi
+  # lib/core/utils/markdown_math.dart.
+  flutter_math_fork: ^0.7.4
+
   # Persistence & Storage
   shared_preferences: ^2.2.3
   # Database locale (Local-First): sqflite su Android/iOS, sqflite_common_ffi

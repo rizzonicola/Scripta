@@ -42,6 +42,18 @@ void main() {
 }
 ```
 
+### 🧮 Formule Matematiche
+
+Formule inline con `$...$`: la CO$_2$ si scrive `$\text{CO}_2$`, l'acqua è $\text{H}_2\text{O}$ e l'energia è $E = mc^2$.
+
+Formule a blocco con `$$...$$`:
+
+$$
+x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+$$
+
+---
+
 > "La semplicità è la suprema sofisticazione."
 > — *Leonardo da Vinci*
 
