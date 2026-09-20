@@ -1,0 +1,39 @@
+name: Update releases.json
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"      # every 30 minutes
+  workflow_dispatch:             # manual run from the Actions tab
+  repository_dispatch:           # optional: triggered by the Scripta release workflow
+    types: [scripta-release]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-releases
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch releases from the Scripta repository
+        run: |
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/rizzonicola/Scripta/releases?per_page=30" \
+          | jq '[.[] | select(.draft == false and .prerelease == false)
+                 | {tag_name, name, published_at, html_url,
+                    assets: [.assets[] | {name, size, digest, browser_download_url}]}]' \
+          > releases.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases.json
+          git diff --cached --quiet || (git commit -m "chore: update releases.json" && git push)
