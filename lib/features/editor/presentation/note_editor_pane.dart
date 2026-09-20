@@ -73,31 +73,62 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     super.dispose();
   }
 
+  /// Scrive [text] nel [controller] solo se è davvero diverso: evita di
+  /// azzerare inutilmente selezione/composizione e di notificare i listener
+  /// (TextField, haptics, undo) quando titolo/contenuto sono già allineati.
+  void _setControllerText(TextEditingController controller, String text) {
+    if (controller.text != text) controller.text = text;
+  }
+
   /// Riallinea SOLO i controller di testo (titolo/contenuto) alla nota
-  /// indicata da [nextId], e aggiorna [_currentNoteId] di conseguenza.
+  /// indicata da [nextId].
   ///
   /// Deliberatamente priva di qualunque side-effect su provider (niente
   /// `flushPendingSaves`/`onNoteChangedOrClosed`): questo la rende sicura da
-  /// invocare anche sincronamente dentro `build()` (vedi sotto), dove
-  /// mutare un provider solleverebbe un errore Riverpod ("tried to modify a
-  /// provider while the widget tree was building").
+  /// invocare anche sincronamente dentro `build()`, dove mutare un provider
+  /// solleverebbe un errore Riverpod.
+  ///
+  /// IMPORTANTE: [_currentNoteId] viene aggiornato SOLO se i controller sono
+  /// stati effettivamente scritti con i dati di [nextId]. In passato veniva
+  /// aggiornato in ogni caso: se la lettura di `activeNoteProvider` non
+  /// corrispondeva (ancora) a [nextId], i controller restavano con il testo
+  /// della nota PRECEDENTE ma il pannello li considerava già allineati, e
+  /// nessun build successivo li correggeva più (sintomo: passando da "Sola
+  /// lettura" a "Modifica" appariva la nota A al posto della B, finché un
+  /// cambio di layout — es. schermo intero — ricreava il pannello da zero).
   void _syncControllersToNoteId(String? nextId) {
     if (nextId == null) {
-      _titleController.text = '';
-      _contentController.text = '';
-    } else {
-      final activeNote = ref.read(activeNoteProvider);
-      // Guardia extra: `activeNoteProvider` può in teoria ricadere su
-      // `notes.first` se l'id richiesto non è (ancora) presente in lista
-      // (vedi notes_provider.dart). Scriviamo i controller solo se la nota
-      // letta corrisponde DAVVERO a `nextId`, per non popolare titolo/
-      // contenuto con una nota sbagliata.
-      if (activeNote != null && activeNote.id == nextId) {
-        _titleController.text = activeNote.title;
-        _contentController.text = activeNote.content;
-      }
+      _setControllerText(_titleController, '');
+      _setControllerText(_contentController, '');
+      _currentNoteId = null;
+      return;
     }
+
+    final activeNote = ref.read(activeNoteProvider);
+    // `activeNoteProvider` può ricadere su `notes.first` se l'id richiesto
+    // non è (ancora) in lista: in quel caso NON si scrive nulla e si lascia
+    // `_currentNoteId` invariato, così il prossimo build riprova.
+    if (activeNote == null || activeNote.id != nextId) return;
+
+    _setControllerText(_titleController, activeNote.title);
+    _setControllerText(_contentController, activeNote.content);
     _currentNoteId = nextId;
+  }
+
+  /// Ultima difesa prima di mostrare il campo di modifica: i controller
+  /// devono contenere ESATTAMENTE titolo/contenuto della nota attiva.
+  ///
+  /// In modalità "Modifica" lo stato della nota è sempre uguale al testo dei
+  /// controller (ogni `onChanged` chiama `updateNote` in modo sincrono e
+  /// senza trasformazioni), quindi questo confronto è un no-op durante la
+  /// digitazione e diventa una vera correzione solo quando i controller sono
+  /// rimasti indietro (es. cambio nota avvenuto in "Sola lettura").
+  void _ensureControllersMatchNote(String noteId) {
+    final note = ref.read(activeNoteProvider);
+    if (note == null || note.id != noteId) return;
+    _setControllerText(_titleController, note.title);
+    _setControllerText(_contentController, note.content);
+    _currentNoteId = noteId;
   }
 
   void _onActiveNoteIdChanged(String? prevId, String? nextId) {
@@ -155,6 +186,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     }
 
     final editorMode = ref.watch(editorProvider.select((s) => s.mode));
+
+    // Entrando (o restando) in "Modifica" i controller devono combaciare con
+    // la nota attiva: vedi [_ensureControllersMatchNote].
+    if (editorMode == EditorMode.edit && activeNoteId != null) {
+      _ensureControllersMatchNote(activeNoteId);
+    }
     final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
     final isNoteSearchActive = ref.watch(noteSearchProvider.select((s) => s.isActive));
     final activeSearchMatch = ref.watch(activeNoteSearchMatchProvider);
@@ -235,6 +272,12 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                     : KeyedSubtree(
                         key: const ValueKey('editMode'),
                         child: MarkdownEditorField(
+                          // Un campo di modifica NUOVO per ogni nota: stack
+                          // di undo, scroll e stato interno non "sanguinano"
+                          // da una nota all'altra. La chiave sta dentro il
+                          // KeyedSubtree, quindi l'AnimatedSwitcher non fa
+                          // dissolvenza al cambio nota.
+                          key: ValueKey('editor-$activeNoteId'),
                           titleController: _titleController,
                           contentController: _contentController,
                           undoController: _undoController,
@@ -311,3 +354,4 @@ class _ReadOnlyNoteView extends ConsumerWidget {
     );
   }
 }
+
