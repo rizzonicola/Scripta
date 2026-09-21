@@ -30,14 +30,14 @@ Whether you're drafting quick thoughts on your phone or organizing complex proje
 
   ### Desktop Experience
   <p align="center">
-    <img src="assets/readme/screenshot-desktop.png" alt="Scripta Desktop Screenshot" width="88%" />
+    <img src="assets/readme/screenshot-desktop.webp" alt="Scripta Desktop Screenshot" width="88%" />
   </p>
 
   <br />
 
   ### Mobile Experience
   <p align="center">
-    <img src="assets/readme/screenshot-mobile.png" alt="Scripta Mobile Screenshot" width="38%" />
+    <img src="assets/readme/screenshot-mobile.webp" alt="Scripta Mobile Screenshot" width="38%" />
   </p>
 
 </div>
