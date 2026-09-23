@@ -16,6 +16,35 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
+/// Window attributes che permettono di colorare direttamente la caption
+/// nativa (disponibili solo da Windows 11 build 22000+).
+///
+/// Ridefiniti per lo stesso motivo di DWMWA_USE_IMMERSIVE_DARK_MODE sopra:
+/// l'SDK installato in fase di build potrebbe essere più vecchio del valore
+/// numerico dell'enum, che però è stabile e documentato da Microsoft.
+/// See: https://learn.microsoft.com/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
+
+// Converte una stringa "#rrggbb" (stesso formato usato lato Dart e nel
+// codice Linux) in un COLORREF. Ritorna nero su input malformato invece di
+// sollevare un'eccezione: qui non abbiamo un modo pulito di segnalare
+// l'errore al chiamante, e un colore "sbagliato ma visibile" è preferibile
+// a un crash del runner nativo.
+COLORREF HexStringToColorRef(const std::string& hex) {
+  if (hex.size() != 7 || hex[0] != '#') {
+    return RGB(0, 0, 0);
+  }
+  auto hex_byte = [&hex](size_t pos) -> BYTE {
+    return static_cast<BYTE>(std::stoul(hex.substr(pos, 2), nullptr, 16));
+  };
+  return RGB(hex_byte(1), hex_byte(3), hex_byte(5));
+}
+
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
 /// Registry key for app theme preference.
@@ -285,4 +314,71 @@ void Win32Window::UpdateTheme(HWND const window) {
     DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
                           &enable_dark_mode, sizeof(enable_dark_mode));
   }
+}
+
+void Win32Window::SetFullScreen(bool fullscreen) {
+  if (window_handle_ == nullptr || fullscreen == is_fullscreen_) return;
+
+  if (fullscreen) {
+    // Salviamo stile e bounds correnti prima di alterarli: sono l'unico modo
+    // per tornare esattamente alla finestra di prima (posizione, dimensione
+    // e stato massimizzato/normale) quando l'utente preme F11 di nuovo.
+    saved_window_style_ = GetWindowLongPtr(window_handle_, GWL_STYLE);
+    GetWindowRect(window_handle_, &saved_window_rect_);
+
+    HMONITOR monitor =
+        MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {};
+    monitor_info.cbSize = sizeof(MONITORINFO);
+    if (!GetMonitorInfo(monitor, &monitor_info)) {
+      return;
+    }
+
+    // Togliamo caption/bordo/sysmenu così la finestra copre l'intero
+    // monitor senza decorazioni residue (un semplice SW_MAXIMIZE lascerebbe
+    // la title bar visibile).
+    LONG_PTR fullscreen_style = saved_window_style_ &
+        ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX |
+          WS_SYSMENU);
+    SetWindowLongPtr(window_handle_, GWL_STYLE, fullscreen_style);
+
+    const RECT& bounds = monitor_info.rcMonitor;
+    SetWindowPos(window_handle_, HWND_TOP, bounds.left, bounds.top,
+                bounds.right - bounds.left, bounds.bottom - bounds.top,
+                SWP_NOZORDER | SWP_FRAMECHANGED);
+
+    is_fullscreen_ = true;
+  } else {
+    // Ripristina esattamente stile e bounds salvati all'ingresso in
+    // fullscreen.
+    SetWindowLongPtr(window_handle_, GWL_STYLE, saved_window_style_);
+    SetWindowPos(window_handle_, nullptr, saved_window_rect_.left,
+                saved_window_rect_.top,
+                saved_window_rect_.right - saved_window_rect_.left,
+                saved_window_rect_.bottom - saved_window_rect_.top,
+                SWP_NOZORDER | SWP_FRAMECHANGED);
+
+    is_fullscreen_ = false;
+  }
+}
+
+void Win32Window::SetTitleBarTheme(const std::string& bg_hex,
+                                   const std::string& text_hex,
+                                   bool is_dark) {
+  if (window_handle_ == nullptr) return;
+
+  COLORREF caption_color = HexStringToColorRef(bg_hex);
+  COLORREF text_color = HexStringToColorRef(text_hex);
+  BOOL enable_dark_mode = is_dark;
+
+  // Queste tre attribute esistono solo da Windows 11 build 22000 in poi:
+  // su versioni precedenti DwmSetWindowAttribute ritorna un HRESULT di
+  // errore, che ignoriamo volutamente (nessuna eccezione, nessun crash, la
+  // finestra resta semplicemente con la caption di sistema di default).
+  DwmSetWindowAttribute(window_handle_, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                        &enable_dark_mode, sizeof(enable_dark_mode));
+  DwmSetWindowAttribute(window_handle_, DWMWA_CAPTION_COLOR, &caption_color,
+                        sizeof(caption_color));
+  DwmSetWindowAttribute(window_handle_, DWMWA_TEXT_COLOR, &text_color,
+                        sizeof(text_color));
 }

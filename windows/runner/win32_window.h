@@ -55,6 +55,22 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Attiva/disattiva il fullscreen "di sistema" (equivalente nativo del
+  // vecchio F11 del browser): rimuove bordi/caption della finestra e la
+  // espande ai bound del monitor corrente, salvando stile e posizione
+  // precedenti per poterli ripristinare al toggle successivo. No-op se lo
+  // stato richiesto coincide con quello corrente.
+  void SetFullScreen(bool fullscreen);
+
+  // Applica alla title bar nativa (DWM) i colori della palette corrente
+  // dell'app. |bg_hex| e |text_hex| sono stringhe "#rrggbb". Richiede
+  // Windows 11 build 22000+: su versioni precedenti le DwmSetWindowAttribute
+  // coinvolte falliscono silenziosamente (HRESULT di errore ignorato), senza
+  // sollevare eccezioni.
+  void SetTitleBarTheme(const std::string& bg_hex,
+                        const std::string& text_hex,
+                        bool is_dark);
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -97,6 +113,14 @@ class Win32Window {
 
   // window handle for hosted content.
   HWND child_content_ = nullptr;
+
+  // Stato del fullscreen nativo e "istantanea" di stile/posizione/dimensione
+  // della finestra prima di entrarci, necessaria per ripristinarla esatta
+  // al toggle successivo (Windows non ha un concetto di "fullscreen
+  // borderless" nativo per una finestra WS_OVERLAPPEDWINDOW: va simulato).
+  bool is_fullscreen_ = false;
+  LONG_PTR saved_window_style_ = 0;
+  RECT saved_window_rect_ = {0, 0, 0, 0};
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_

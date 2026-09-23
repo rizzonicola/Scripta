@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
 import 'core/database/app_database.dart';
+import 'core/services/window_decoration_service.dart';
 import 'core/utils/haptic_gating_binding.dart';
 
 void main() async {
@@ -19,6 +20,11 @@ void main() async {
   // (folderProvider/notesProvider/syncProvider lo fanno nel loro
   // costruttore, eseguito alla prima lettura del provider).
   AppDatabase.ensureFactoryInitialized();
+
+  // Listener globale per il fullscreen "di sistema" (F11): registrato a
+  // livello di HardwareKeyboard, quindi prima di runApp, così funziona
+  // ovunque nell'app indipendentemente da quale widget ha il focus.
+  WindowDecorationService.initializeFullScreenShortcut();
 
   runApp(
     const ProviderScope(

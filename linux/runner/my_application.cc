@@ -22,6 +22,26 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
 static GtkCssProvider* titlebar_css_provider = nullptr;
 static FlView* global_fl_view = nullptr;
 
+// Finestra principale e stato del fullscreen "di sistema" (F11), tenuti
+// come variabili statiche di modulo con lo stesso pattern già usato sopra
+// per global_fl_view/titlebar_css_provider. Il window manager (GNOME/KDE...)
+// spesso intercetta già F11 prima che Flutter riceva l'evento, ma non è
+// garantito (WM a tiling, ambienti minimali senza binding di default):
+// gestirlo esplicitamente qui copre anche quei casi.
+static GtkWindow* global_gtk_window = nullptr;
+static gboolean is_fullscreen = FALSE;
+
+static void set_fullscreen(gboolean fullscreen) {
+  if (global_gtk_window == nullptr || fullscreen == is_fullscreen) return;
+
+  if (fullscreen) {
+    gtk_window_fullscreen(global_gtk_window);
+  } else {
+    gtk_window_unfullscreen(global_gtk_window);
+  }
+  is_fullscreen = fullscreen;
+}
+
 static void apply_titlebar_theme(const char* bg_hex, const char* text_hex, const char* border_hex, gboolean is_dark) {
   GtkSettings* gtk_settings = gtk_settings_get_default();
   if (gtk_settings != nullptr) {
@@ -133,6 +153,19 @@ static void window_method_call_cb(FlMethodChannel* channel,
     g_autoptr(FlMethodResponse) response = FL_METHOD_RESPONSE(
         fl_method_success_response_new(nullptr));
     fl_method_call_respond(method_call, response, nullptr);
+  } else if (g_strcmp0(method, "setFullScreen") == 0) {
+    FlValue* args = fl_method_call_get_args(method_call);
+    gboolean fullscreen = FALSE;
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      FlValue* fullscreen_val = fl_value_lookup_string(args, "fullscreen");
+      fullscreen = fullscreen_val ? fl_value_get_bool(fullscreen_val) : FALSE;
+    }
+
+    set_fullscreen(fullscreen);
+
+    g_autoptr(FlMethodResponse) response = FL_METHOD_RESPONSE(
+        fl_method_success_response_new(nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
   } else {
     g_autoptr(FlMethodResponse) response = FL_METHOD_RESPONSE(
         fl_method_not_implemented_response_new());
@@ -145,6 +178,7 @@ static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  global_gtk_window = window;
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
