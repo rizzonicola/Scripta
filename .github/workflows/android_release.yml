@@ -52,6 +52,7 @@ jobs:
         run: flutter test
 
       - name: Configure release signing
+        id: signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -59,9 +60,18 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "::error::Secret ANDROID_KEYSTORE_BASE64 mancante: impossibile firmare la release (la chiave di debug non è ammessa)."
-            exit 1
+            # Release VERE (tag vX.Y.Z): la firma è obbligatoria, mai la
+            # chiave di debug. Build di prova (avvio manuale): si prosegue
+            # con un APK di debug, che NON viene pubblicato tra le release.
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              echo "::error::Secret ANDROID_KEYSTORE_BASE64 mancante: impossibile firmare la release (la chiave di debug non è ammessa)."
+              exit 1
+            fi
+            echo "::warning::Nessun keystore configurato: build di PROVA con APK di debug (solo artifact del workflow, nessuna release)."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "signed=true" >> "$GITHUB_OUTPUT"
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
           {
             echo "storeFile=$RUNNER_TEMP/upload-keystore.jks"
@@ -71,20 +81,37 @@ jobs:
           } > android/key.properties
 
       - name: Build Split APKs
+        if: steps.signing.outputs.signed == 'true'
         run: flutter build apk --release --split-per-abi
 
       - name: Rename Split APKs
+        if: steps.signing.outputs.signed == 'true'
         run: |
           mv build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/app/outputs/flutter-apk/Scripta-armeabi-v7a.apk
           mv build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app/outputs/flutter-apk/Scripta-arm64-v8a.apk
           mv build/app/outputs/flutter-apk/app-x86_64-release.apk build/app/outputs/flutter-apk/Scripta-x86_64.apk
 
       - name: Build Universal APK
+        if: steps.signing.outputs.signed == 'true'
         run: flutter build apk --release
 
       - name: Rename Universal APK
+        if: steps.signing.outputs.signed == 'true'
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/Scripta-universal.apk
+
+      - name: Build Debug APKs (prova, senza firma di release)
+        if: steps.signing.outputs.signed == 'false'
+        run: flutter build apk --debug --split-per-abi
+
+      - name: Upload Debug APKs come artifact del workflow
+        if: steps.signing.outputs.signed == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scripta-debug-apks
+          path: build/app/outputs/flutter-apk/*-debug.apk
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Upload Artifacts to Release (tentativo 1)
         id: release_attempt_1
