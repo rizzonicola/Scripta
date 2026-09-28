@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
 // in questo import separato, non rimossi). NotesNotifier resta
@@ -135,6 +136,30 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// se un timer esiste ancora.
   Future<void>? _pendingWrite;
 
+  /// Tutte le scritture su SQLite avviate dallo stato locale e non ancora
+  /// completate. [refreshFromDb] le attende prima di rileggere il DB: senza
+  /// questo, una lettura avviata PRIMA di una scrittura locale (es. un
+  /// riordino fatto mentre una sync è in corso) restituiva la versione
+  /// vecchia e la sovrascriveva allo stato in memoria, facendo "tornare
+  /// indietro" la nota appena spostata.
+  final Set<Future<void>> _inflightWrites = <Future<void>>{};
+
+  /// Esegue [op] tracciandola in [_inflightWrites]. Il Future restituito non
+  /// fallisce mai: un errore di I/O viene loggato invece di diventare
+  /// un'eccezione asincrona non gestita.
+  Future<void> _persist(Future<void> Function() op) {
+    final Future<void> f = () async {
+      try {
+        await op();
+      } catch (e, st) {
+        debugPrint('NotesNotifier: scrittura su SQLite fallita: $e\n$st');
+      }
+    }();
+    _inflightWrites.add(f);
+    f.whenComplete(() => _inflightWrites.remove(f));
+    return f;
+  }
+
   NotesNotifier({NotesDao? dao})
       : _dao = dao ?? NotesDao(),
         super(const NotesState()) {
@@ -184,14 +209,45 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// riflettere le modifiche remote appena applicate al DB) e dopo una
   /// cascade di cancellazione di una cartella (vedi FolderNotifier.deleteFolder).
   Future<void> refreshFromDb() async {
-    final rows = await _dao.getActive();
-    if (!mounted) return;
-    final notes = _sortNotes(rows.map(NoteModel.fromRow).toList(), state.sortOrder);
-    final activeStillExists = notes.any((n) => n.id == state.activeNoteId);
-    state = state.copyWith(
-      notes: notes,
-      activeNoteId: () => activeStillExists ? state.activeNoteId : (notes.isNotEmpty ? notes.first.id : null),
-    );
+    // Fino a 3 tentativi: se durante la lettura l'utente ha modificato la
+    // lista (riordino, spostamento, pin...), il risultato letto è già
+    // obsoleto e applicarlo annullerebbe la modifica appena fatta.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (_inflightWrites.isNotEmpty) {
+        await Future.wait(List<Future<void>>.of(_inflightWrites));
+      }
+      if (!mounted) return;
+      final before = state.notes;
+      final rows = await _dao.getActive();
+      if (!mounted) return;
+      if (!identical(state.notes, before)) continue; // stato cambiato: rileggi
+
+      var notes = rows.map(NoteModel.fromRow).toList();
+
+      // Una nota con testo ancora in debounce esiste solo in memoria: il DB
+      // ha la versione precedente. Va preservata, altrimenti la sync in
+      // corso cancellerebbe dalla UI gli ultimi caratteri digitati.
+      final pending = _pendingNote;
+      if (pending != null) {
+        final i = notes.indexWhere((n) => n.id == pending.id);
+        if (i != -1 && !pending.updatedAt.isBefore(notes[i].updatedAt)) {
+          notes[i] = pending;
+        }
+      }
+
+      notes = _sortNotes(notes, state.sortOrder);
+      final activeStillExists = notes.any((n) => n.id == state.activeNoteId);
+      state = state.copyWith(
+        notes: notes,
+        activeNoteId: () => activeStillExists
+            ? state.activeNoteId
+            : (notes.isNotEmpty ? notes.first.id : null),
+      );
+      return;
+    }
+    // Stato modificato di continuo durante tutti i tentativi: non si applica
+    // nulla (le scritture locali sono già in coda); il prossimo refresh
+    // riallineerà la lista.
   }
 
   /// Cancella il debounce di autosave pendente e scrive IMMEDIATAMENTE (e in
@@ -226,7 +282,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final pending = _pendingNote;
     _pendingNote = null;
     if (pending != null) {
-      _pendingWrite = _dao.upsert(pending.toRow());
+      _pendingWrite = _persist(() => _dao.upsert(pending.toRow()));
     }
 
     // Attende anche una scrittura eventualmente già avviata (dal debounce
@@ -250,7 +306,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       final toWrite = _pendingNote;
       _pendingNote = null;
       if (toWrite != null) {
-        _pendingWrite = _dao.upsert(toWrite.toRow());
+        _pendingWrite = _persist(() => _dao.upsert(toWrite.toRow()));
       }
     });
   }
@@ -262,22 +318,27 @@ class NotesNotifier extends StateNotifier<NotesState> {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
       }
 
-      switch (order) {
-        case NoteSortOrder.updatedDesc:
-          return b.updatedAt.compareTo(a.updatedAt);
-        case NoteSortOrder.updatedAsc:
-          return a.updatedAt.compareTo(b.updatedAt);
-        case NoteSortOrder.createdDesc:
-          return b.createdAt.compareTo(a.createdAt);
-        case NoteSortOrder.createdAsc:
-          return a.createdAt.compareTo(b.createdAt);
-        case NoteSortOrder.titleAsc:
-          return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-        case NoteSortOrder.titleDesc:
-          return b.title.toLowerCase().compareTo(a.title.toLowerCase());
-        case NoteSortOrder.custom:
-          return a.orderIndex.compareTo(b.orderIndex);
+      final int primary = switch (order) {
+        NoteSortOrder.updatedDesc => b.updatedAt.compareTo(a.updatedAt),
+        NoteSortOrder.updatedAsc => a.updatedAt.compareTo(b.updatedAt),
+        NoteSortOrder.createdDesc => b.createdAt.compareTo(a.createdAt),
+        NoteSortOrder.createdAsc => a.createdAt.compareTo(b.createdAt),
+        NoteSortOrder.titleAsc => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        NoteSortOrder.titleDesc => b.title.toLowerCase().compareTo(a.title.toLowerCase()),
+        NoteSortOrder.custom => a.orderIndex.compareTo(b.orderIndex),
+      };
+      if (primary != 0) return primary;
+
+      // Spareggio DETERMINISTICO. `List.sort` di Dart non è stabile: con
+      // `order_index` duplicati (note create prima di questa correzione, o
+      // arrivate da altri dispositivi) l'ordine visualizzato cambiava da un
+      // avvio all'altro, dando l'impressione che il riordino "tornasse
+      // indietro".
+      if (order == NoteSortOrder.custom) {
+        final byUpdated = b.updatedAt.compareTo(a.updatedAt);
+        if (byUpdated != 0) return byUpdated;
       }
+      return a.id.compareTo(b.id);
     });
     return sorted;
   }
@@ -307,36 +368,104 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
   Future<void> setSortOrder(NoteSortOrder order) async {
     unawaited(flushPendingSaves());
-    final sorted = _sortNotes(state.notes, order);
-    state = state.copyWith(notes: sorted, sortOrder: order);
+    var notes = state.notes;
+
+    if (order == NoteSortOrder.custom && state.sortOrder != NoteSortOrder.custom) {
+      // Passando all'ordine manuale si parte dall'ordine che l'utente sta
+      // VEDENDO ora, e lo si rende esplicito e senza duplicati in
+      // `order_index` (persistendo solo le note che cambiano). Prima si
+      // usavano i vecchi `order_index`, spesso tutti 0 o duplicati, quindi
+      // la lista appariva rimescolata e ogni trascinamento partiva da una
+      // base incoerente.
+      final current = _sortNotes(state.notes, state.sortOrder);
+      final now = DateTime.now();
+      final changed = <NoteModel>[];
+      notes = <NoteModel>[];
+      for (var i = 0; i < current.length; i++) {
+        final n = current[i];
+        if (n.orderIndex != i) {
+          final u = n.copyWith(orderIndex: i, updatedAt: now);
+          changed.add(u);
+          notes.add(u);
+        } else {
+          notes.add(n);
+        }
+      }
+      if (changed.isNotEmpty) {
+        unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+      }
+    }
+
+    state = state.copyWith(notes: _sortNotes(notes, order), sortOrder: order);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(AppConstants.prefSortMode, order.name);
   }
 
-  void reorderNotes(int oldIndex, int newIndex) {
+  /// Riordina manualmente le note (trascina e rilascia).
+  ///
+  /// [oldIndex]/[newIndex] sono indici nella lista MOSTRATA all'utente, che
+  /// con una cartella selezionata è solo un sottoinsieme di `state.notes`
+  /// (vedi `filteredNotesProvider`). [visibleIds] è quindi l'elenco degli id
+  /// mostrati, nello stesso ordine: le note visibili vengono ridisposte
+  /// negli STESSI slot che già occupavano nella lista globale, mentre le
+  /// note non visibili restano dove sono.
+  ///
+  /// BUG CORRETTO: prima gli indici della lista filtrata venivano applicati
+  /// direttamente alla lista globale, quindi con una cartella selezionata si
+  /// spostava una nota SBAGLIATA e quella trascinata "tornava indietro".
+  ///
+  /// Solo le note il cui `order_index` cambia davvero vengono riscritte (e
+  /// hanno `updated_at` aggiornato): un riordino non genera più un push di
+  /// tutte le note dell'archivio.
+  void reorderNotes(int oldIndex, int newIndex, {List<String>? visibleIds}) {
     unawaited(flushPendingSaves());
     if (oldIndex < newIndex) {
       newIndex -= 1;
     }
 
-    final updated = List<NoteModel>.from(state.notes);
-    final item = updated.removeAt(oldIndex);
-    updated.insert(newIndex, item);
+    final global = _sortNotes(state.notes, NoteSortOrder.custom);
+    final visible = visibleIds ?? global.map((n) => n.id).toList();
+    if (oldIndex < 0 || oldIndex >= visible.length) return;
+    newIndex = newIndex.clamp(0, visible.length - 1);
+    if (oldIndex == newIndex) return;
 
-    final now = DateTime.now();
-    final reindexed = <NoteModel>[];
-    for (var i = 0; i < updated.length; i++) {
-      reindexed.add(updated[i].copyWith(orderIndex: i, updatedAt: now));
+    final reorderedVisible = List<String>.from(visible);
+    reorderedVisible.insert(newIndex, reorderedVisible.removeAt(oldIndex));
+
+    final visibleSet = visible.toSet();
+    final byId = <String, NoteModel>{for (final n in global) n.id: n};
+    final slots = <int>[
+      for (var i = 0; i < global.length; i++)
+        if (visibleSet.contains(global[i].id)) i,
+    ];
+    // Lista mostrata ormai obsoleta (nota cancellata/sincronizzata nel
+    // frattempo): meglio ignorare il gesto che spostare la nota sbagliata.
+    if (slots.length != reorderedVisible.length) return;
+    if (reorderedVisible.any((id) => !byId.containsKey(id))) return;
+
+    final arranged = List<NoteModel>.from(global);
+    for (var k = 0; k < slots.length; k++) {
+      arranged[slots[k]] = byId[reorderedVisible[k]]!;
     }
 
-    state = state.copyWith(notes: reindexed, sortOrder: NoteSortOrder.custom);
-    unawaited(_persistAll(reindexed));
-  }
+    final now = DateTime.now();
+    final changed = <NoteModel>[];
+    final result = <NoteModel>[];
+    for (var i = 0; i < arranged.length; i++) {
+      final n = arranged[i];
+      if (n.orderIndex != i) {
+        final u = n.copyWith(orderIndex: i, updatedAt: now);
+        changed.add(u);
+        result.add(u);
+      } else {
+        result.add(n);
+      }
+    }
 
-  Future<void> _persistAll(List<NoteModel> notes) async {
-    // Scrittura in un'unica transazione (vedi NotesDao.upsertBatch) invece
-    // di N upsert sequenziali: un riordino può coinvolgere l'intera lista.
-    await _dao.upsertBatch(notes.map((n) => n.toRow()).toList());
+    state = state.copyWith(notes: result, sortOrder: NoteSortOrder.custom);
+    if (changed.isNotEmpty) {
+      unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+    }
   }
 
   /// Inserisce in blocco un elenco di note nuove (usato dall'importazione,
@@ -368,7 +497,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
     if (items.isEmpty) return 0;
 
     final now = DateTime.now();
-    final baseIndex = state.notes.length;
+    // Dopo il massimo esistente (non `length`): gli indici possono avere
+    // buchi o valori negativi (vedi createNote).
+    final baseIndex = state.notes.isEmpty
+        ? 0
+        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a > b ? a : b) + 1;
     final newNotes = <NoteModel>[
       for (var i = 0; i < items.length; i++)
         NoteModel(
@@ -386,9 +519,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       notes: _sortNotes([...state.notes, ...newNotes], state.sortOrder),
     );
 
-    for (final note in newNotes) {
-      unawaited(_dao.upsert(note.toRow()));
-    }
+    unawaited(_persist(() => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList())));
 
     return newNotes.length;
   }
@@ -396,6 +527,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
   NoteModel createNote({String? folderId}) {
     unawaited(flushPendingSaves());
     final now = DateTime.now();
+    // La nuova nota va in cima all'ordine manuale con un indice INFERIORE al
+    // minimo esistente, invece di incrementare in memoria l'indice di tutte
+    // le altre: quell'incremento non veniva mai scritto su SQLite, quindi
+    // in DB restavano molte note con lo stesso `order_index` e, al riavvio,
+    // l'ordine manuale risultava scombinato.
+    final newOrderIndex = state.notes.isEmpty
+        ? 0
+        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a < b ? a : b) - 1;
     final newNote = NoteModel(
       id: _uuid.v4(),
       title: '',
@@ -403,19 +542,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
       folderId: folderId,
       createdAt: now,
       updatedAt: now,
-      orderIndex: 0,
+      orderIndex: newOrderIndex,
     );
-
-    final updated = [
-      newNote,
-      ...state.notes.map((n) => n.copyWith(orderIndex: n.orderIndex + 1)),
-    ];
 
     state = state.copyWith(
-      notes: _sortNotes(updated, state.sortOrder),
+      notes: _sortNotes([newNote, ...state.notes], state.sortOrder),
       activeNoteId: () => newNote.id,
     );
-    unawaited(_dao.upsert(newNote.toRow()));
+    unawaited(_persist(() => _dao.upsert(newNote.toRow())));
     return newNote;
   }
 
@@ -442,6 +576,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// "vecchio percorso / nuovo percorso" da tenere in giro per la sync, a
   /// differenza della generazione precedente basata su file.
   void moveNote(String id, String? targetFolderId) {
+    // Scrive PRIMA l'eventuale testo ancora in debounce: altrimenti il timer
+    // (che tiene una copia VECCHIA della nota, con il vecchio `folder_id`)
+    // scatterebbe dopo lo spostamento e, con `ConflictAlgorithm.replace`,
+    // riporterebbe la nota nella cartella di origine.
+    unawaited(flushPendingSaves());
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;
 
@@ -457,10 +596,13 @@ class NotesNotifier extends StateNotifier<NotesState> {
     updatedList[index] = updatedNote;
 
     state = state.copyWith(notes: _sortNotes(updatedList, state.sortOrder));
-    unawaited(_dao.upsert(updatedNote.toRow()));
+    unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
   }
 
   void deleteNote(String id) {
+    // Stessa causa di moveNote: una scrittura in debounce non ancora
+    // eseguita sovrascriverebbe il tombstone e la nota "risorgerebbe".
+    unawaited(flushPendingSaves());
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;
 
@@ -478,10 +620,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
     }
 
     state = state.copyWith(notes: updatedList, activeNoteId: () => nextActiveId);
-    unawaited(_dao.upsert(tombstoneRow));
+    unawaited(_persist(() => _dao.upsert(tombstoneRow)));
   }
 
   void togglePin(String id) {
+    unawaited(flushPendingSaves()); // vedi moveNote
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;
 
@@ -492,7 +635,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     updatedList[index] = updatedNote;
 
     state = state.copyWith(notes: _sortNotes(updatedList, state.sortOrder));
-    unawaited(_dao.upsert(updatedNote.toRow()));
+    unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
   }
 
 }

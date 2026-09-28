@@ -311,9 +311,14 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         itemCount: notes.length,
                         onReorder: (oldIndex, newIndex) {
-                          ref
-                              .read(notesProvider.notifier)
-                              .reorderNotes(oldIndex, newIndex);
+                          // Gli indici si riferiscono alla lista MOSTRATA
+                          // (filtrata per cartella): si passano anche gli id
+                          // visibili, così il provider sposta la nota giusta.
+                          ref.read(notesProvider.notifier).reorderNotes(
+                                oldIndex,
+                                newIndex,
+                                visibleIds: notes.map((n) => n.id).toList(),
+                              );
                         },
                         itemBuilder: (context, index) {
                           final note = notes[index];
