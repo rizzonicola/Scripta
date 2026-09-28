@@ -6,12 +6,28 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:scripta/app.dart';
 import 'package:scripta/core/database/app_database.dart';
+import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/core/utils/markdown_toolbar_actions.dart';
 import 'package:scripta/core/utils/syntax_highlighter.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:flutter/material.dart';
+
+/// Attende (con polling e timeout) che [condition] diventi vera. Sostituisce i
+/// ritardi fissi (150/200 ms): su runner CI lenti la scrittura asincrona su
+/// SQLite può impiegare più del previsto e il test diventava intermittente.
+Future<void> waitUntil(
+  Future<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+  Duration interval = const Duration(milliseconds: 25),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (await condition()) return;
+    await Future<void>.delayed(interval);
+  }
+}
 
 void main() {
   setUp(() async {
@@ -154,8 +170,12 @@ void main() {
     final noteInParent = notesNotifier.createNote(folderId: parent.id);
     final noteInChild = notesNotifier.createNote(folderId: child.id);
 
-    // Attendere che le creazioni asincrone abbiano persistito su SQLite prima di lanciare la cancellazione
-    await Future<void>.delayed(const Duration(milliseconds: 150));
+    // Attendere che le creazioni asincrone abbiano persistito su SQLite prima
+    // di lanciare la cancellazione (polling sul DB, non un ritardo fisso).
+    final dao = NotesDao();
+    await waitUntil(() async =>
+        await dao.getById(noteInParent.id) != null &&
+        await dao.getById(noteInChild.id) != null);
 
     folderNotifier.deleteFolder(parent.id);
 
@@ -165,7 +185,10 @@ void main() {
 
     // Attendiamo il completamento della cascade asincrona sul DB locale e il
     // conseguente refresh di notesProvider (vedi FolderNotifier.deleteFolder).
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await waitUntil(() async {
+      final ids = container.read(notesProvider).notes.map((n) => n.id).toSet();
+      return !ids.contains(noteInParent.id) && !ids.contains(noteInChild.id);
+    });
 
     final activeNoteIds = container.read(notesProvider).notes.map((n) => n.id).toSet();
     expect(activeNoteIds.contains(noteInParent.id), isFalse);
