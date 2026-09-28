@@ -1,4 +1,3 @@
-import '../../../core/constants/app_constants.dart';
 
 class SyncConfig {
   final bool syncOnAppLaunch;
@@ -21,7 +20,7 @@ class SyncConfig {
     this.syncOnNoteSwitch = true,
     this.syncOnInactivity = false,
     this.inactivitySeconds = 30,
-    this.serverUrl = AppConstants.defaultServerUrl,
+    this.serverUrl = '',
     this.username,
     this.isAuthenticated = false,
     this.isOnline = false,

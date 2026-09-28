@@ -253,7 +253,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 controller: _serverUrlController,
                 decoration: InputDecoration(
                   labelText: l10n.serverUrlLabel,
-                  hintText: AppConstants.defaultServerUrl,
+                  hintText: AppConstants.serverUrlPlaceholder,
                   prefixIcon: const Icon(Icons.dns_outlined, size: 20),
                   border: const OutlineInputBorder(),
                   contentPadding:

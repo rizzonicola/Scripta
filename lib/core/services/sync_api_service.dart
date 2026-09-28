@@ -6,7 +6,11 @@ class SyncApiException implements Exception {
   final int? statusCode;
   final String message;
 
-  const SyncApiException(this.message, [this.statusCode]);
+  /// Valorizzato solo per HTTP 422: i record rifiutati dal server. Il batch è
+  /// stato annullato per intero e il cursore NON deve avanzare.
+  final List<SyncRejectedItem> rejected;
+
+  const SyncApiException(this.message, [this.statusCode, this.rejected = const []]);
 
   @override
   String toString() =>
@@ -24,13 +28,18 @@ class SyncApiService {
     while (url.endsWith('/')) {
       url = url.substring(0, url.length - 1);
     }
+    // Solo http/https: nessun altro schema (file:, ftp:, ...) è un server valido.
+    final uri = Uri.tryParse(url);
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https') || uri.host.isEmpty) {
+      throw const SyncApiException('URL del server non valido: usa http:// o https://', 400);
+    }
     return url;
   }
 
   /// Pings the server health endpoint
   Future<bool> checkHealth(String baseUrl) async {
     try {
-      final clean = _cleanUrl(baseUrl);
+      final clean = _cleanUrl(baseUrl); // URL non valido -> catch -> false
       final uri = Uri.parse('$clean/healthz');
       final response = await _client.get(uri).timeout(const Duration(seconds: 4));
       return response.statusCode == 200;
@@ -66,6 +75,23 @@ class SyncApiService {
       throw const SyncApiException('Credenziali non valide', 401);
     } else {
       throw SyncApiException(_extractError(response.body, 'Errore durante l\'autenticazione'), response.statusCode);
+    }
+  }
+
+  /// Revoca lato server il token corrente (POST /api/v1/auth/logout). Best
+  /// effort: un errore di rete non deve impedire il logout locale, quindi non
+  /// lancia mai.
+  Future<void> logout({required String baseUrl, required String token}) async {
+    try {
+      final clean = _cleanUrl(baseUrl);
+      await _client
+          .post(
+            Uri.parse('$clean/api/v1/auth/logout'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Ignorato: il token verrà comunque scartato localmente.
     }
   }
 
@@ -163,6 +189,16 @@ class SyncApiService {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else if (response.statusCode == 503) {
       throw const SyncApiException('Server temporaneamente occupato, riprovare a breve', 503);
+    } else if (response.statusCode == 422) {
+      // Record rifiutati: il server ha annullato l'intero batch.
+      var rejected = <SyncRejectedItem>[];
+      try {
+        final decoded = json.decode(response.body) as Map<String, dynamic>;
+        rejected = (decoded['rejected'] as List<dynamic>? ?? const [])
+            .map((e) => SyncRejectedItem.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (_) {}
+      throw SyncApiException('Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)', 422, rejected);
     } else {
       throw SyncApiException(_extractError(response.body, 'Errore durante la sincronizzazione'), response.statusCode);
     }

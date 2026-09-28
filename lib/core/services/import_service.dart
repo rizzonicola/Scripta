@@ -52,6 +52,20 @@ class ImportService {
 
   static const _supportedExtensions = ['.md', '.markdown', '.txt'];
 
+  // ---- Limiti anti "zip bomb" / import fuori scala -------------------------
+  // Uno ZIP (o una cartella) scelto dall'utente può essere malevolo o
+  // semplicemente enorme: senza limiti un archivio piccolo che si espande a
+  // gigabyte, o con milioni di voci, esaurirebbe memoria/CPU e bloccherebbe
+  // l'app. Tutti i limiti sono verificati PRIMA di decomprimere/leggere il
+  // contenuto (dimensioni dichiarate) e, dove possibile, anche dopo.
+  static const int maxZipBytes = 100 * 1024 * 1024; // ZIP compresso: 100 MiB
+  static const int maxZipEntries = 20000; // voci totali nell'archivio
+  static const int maxImportedFiles = 5000; // file .md/.markdown/.txt importabili
+  static const int maxEntryBytes = 10 * 1024 * 1024; // singola nota: 10 MiB
+  static const int maxTotalUncompressedBytes = 200 * 1024 * 1024; // somma: 200 MiB
+
+  static String _mb(int bytes) => '${bytes ~/ (1024 * 1024)} MiB';
+
   /// Mostra un piccolo selettore con le due modalità di importazione
   /// supportate (file ZIP o cartella), richiamato dalla voce "Importa" nel
   /// menu principale (tre punti) della sidebar delle cartelle.
@@ -124,6 +138,13 @@ class ImportService {
       if (result.isEmpty) return;
 
       final picked = result.single;
+      if (picked.size > maxZipBytes) {
+        if (context.mounted) {
+          _showSnack(context, 'File ZIP troppo grande (massimo ${_mb(maxZipBytes)}).',
+              isError: true);
+        }
+        return;
+      }
       final Uint8List bytes;
       try {
         bytes = await picked.readAsBytes();
@@ -266,22 +287,50 @@ class ImportService {
   }
 
   static List<_RawImportEntry> _decodeZipEntriesSync(Uint8List bytes) {
+    if (bytes.length > maxZipBytes) {
+      throw FormatException('ZIP troppo grande (massimo ${_mb(maxZipBytes)}).');
+    }
     final archive = ZipDecoder().decodeBytes(bytes);
+    if (archive.files.length > maxZipEntries) {
+      throw FormatException('ZIP con troppe voci (massimo $maxZipEntries).');
+    }
     final entries = <_RawImportEntry>[];
+    var totalBytes = 0;
 
     for (final file in archive.files) {
       if (!file.isFile) continue;
       final normalized = file.name.replaceAll('\\', '/');
       if (!_hasSupportedExtension(normalized)) continue;
       // Difesa in profondità: uno ZIP malformato/malevolo non deve poter
-      // referenziare percorsi fuori dalla gerarchia che stiamo costruendo.
+      // referenziare percorsi fuori dalla gerarchia che stiamo costruendo
+      // (path traversal "..", percorsi assoluti, lettere di unità Windows).
       if (normalized.split('/').contains('..')) continue;
+      if (normalized.startsWith('/') || RegExp(r'^[A-Za-z]:').hasMatch(normalized)) continue;
 
       final segments = normalized.split('/').where((s) => s.isNotEmpty).toList();
       if (segments.isEmpty) continue;
       final fileName = segments.removeLast();
 
+      // Limiti verificati sulla dimensione DICHIARATA, prima di accedere a
+      // `file.content` (che è ciò che decomprime davvero il contenuto).
+      if (entries.length >= maxImportedFiles) {
+        throw FormatException('Troppi file da importare (massimo $maxImportedFiles).');
+      }
+      if (file.size > maxEntryBytes) {
+        throw FormatException('Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+      }
+      totalBytes += file.size;
+      if (totalBytes > maxTotalUncompressedBytes) {
+        throw FormatException(
+            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
+      }
+
       final contentBytes = file.content as List<int>;
+      // La dimensione dichiarata nell'header può mentire: si ricontrolla
+      // quella effettiva.
+      if (contentBytes.length > maxEntryBytes) {
+        throw FormatException('Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+      }
       final rawContent = utf8.decode(contentBytes, allowMalformed: true);
 
       entries.add(_RawImportEntry(
@@ -303,6 +352,7 @@ class ImportService {
   ) async {
     final entries = <_RawImportEntry>[];
     final rootPath = root.path.replaceAll('\\', '/');
+    var totalBytes = 0;
 
     // Directory.list (async) invece di listSync: evita di bloccare
     // l'isolate principale mentre si attraversano cartelle potenzialmente
@@ -320,6 +370,20 @@ class ImportService {
       final segments = relative.split('/').where((s) => s.isNotEmpty).toList();
       if (segments.isEmpty) continue;
       final fileName = segments.removeLast();
+
+      // Stessi limiti dello ZIP, controllati sulla dimensione su disco PRIMA
+      // di leggere il file.
+      if (entries.length >= maxImportedFiles) {
+        throw FormatException('Troppi file da importare (massimo $maxImportedFiles).');
+      }
+      final size = await entity.length();
+      if (size > maxEntryBytes) {
+        throw FormatException('Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+      }
+      totalBytes += size;
+      if (totalBytes > maxTotalUncompressedBytes) {
+        throw FormatException('Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).');
+      }
 
       String rawContent;
       try {

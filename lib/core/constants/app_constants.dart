@@ -4,8 +4,11 @@ class AppConstants {
   static const String appTagline = 'Minimal & Markdown-First Note Taking';
   static const String githubUrl = 'https://github.com/rizzonicola/Scripta';
 
-  // Default backend server URL used when the user has never configured one.
-  static const String defaultServerUrl = 'https://scripta.poppi.cc';
+  // NESSUN server di default: l'app non deve mai inviare credenziali o dati
+  // a un server di terzi senza che l'utente ne abbia indicato uno. Il campo
+  // "Server" parte vuoto; questo è solo il segnaposto (dominio riservato
+  // example.com, RFC 2606) mostrato come suggerimento di formato.
+  static const String serverUrlPlaceholder = 'https://notes.example.com';
 
   // Breakpoints
   static const double mobileBreakpoint = 600.0;

@@ -462,7 +462,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
       }
     }
 
+    final wasCustom = state.sortOrder == NoteSortOrder.custom;
     state = state.copyWith(notes: result, sortOrder: NoteSortOrder.custom);
+    if (!wasCustom) {
+      // Il riordino attiva l'ordine manuale: va ricordato anche dopo il
+      // riavvio, altrimenti `order_index` è persistito ma non usato.
+      unawaited(SharedPreferences.getInstance()
+          .then((p) => p.setString(AppConstants.prefSortMode, NoteSortOrder.custom.name)));
+    }
     if (changed.isNotEmpty) {
       unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
     }

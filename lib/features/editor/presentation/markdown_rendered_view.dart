@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/markdown_math.dart';
 import '../../../core/utils/haptics_helper.dart';
+import '../../../core/utils/link_safety.dart';
 import '../../settings/providers/settings_provider.dart';
 import 'package:flutter_math_fork/flutter_math.dart' show ParseException;
 import 'package:flutter_math_fork/tex.dart'
@@ -280,10 +281,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
       monospaceBackgroundColor: monospaceBackgroundColor,
       dividerColor: theme.colorScheme.outline.withValues(alpha: 0.4),
       onLinkTap: (title, url) async {
-        if (url.isEmpty) return;
-        final uri = Uri.tryParse(url);
-        if (uri != null && await canLaunchUrl(uri)) {
+        // Solo http, https e mailto (vedi safeExternalUri): qualunque altro
+        // schema (file:, intent:, javascript:, content:, ...) viene ignorato.
+        final uri = safeExternalUri(url);
+        if (uri == null) return;
+        try {
           await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (_) {
+          // Nessuna app in grado di gestire il link: nessuna azione.
         }
       },
     );

@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // toccata in questa modernizzazione, solo l'import necessario a compilare.
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../../core/constants/app_constants.dart';
 import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
@@ -35,10 +34,9 @@ final syncApiServiceProvider = Provider<SyncApiService>((ref) {
 /// di percorso: non c'è `_resolveRelativePath`, non c'è
 /// `_collectAllFolderPaths`, non c'è `pendingOldRelativePath`, non c'è un
 /// meccanismo di tombstone separato basato sul nome file. Tutto ruota
-/// attorno a un singolo cursore intero (`last_synced_at`, salvato in
-/// [SyncMetaDao]) e a due query dirette sul database locale ("dammi tutto
-/// ciò che ho modificato dopo il cursore"), esattamente come fa il server
-/// con la propria colonna `updated_at`.
+/// attorno a un cursore intero (`last_synced_at`, stamp del SERVER salvato in
+/// [SyncMetaDao], usato solo per la pull) e al flag locale `dirty` (cosa
+/// inviare). `updated_at` (orologio del client) serve solo alla risoluzione LWW.
 class SyncNotifier extends StateNotifier<SyncConfig> {
   static const _prefLaunchSync = 'scripta_sync_on_launch';
   static const _prefLifecycleSync = 'scripta_sync_on_lifecycle';
@@ -107,7 +105,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     final lastSyncTime =
         lastSyncMillis != null ? DateTime.fromMillisecondsSinceEpoch(lastSyncMillis) : null;
 
-    final savedServerUrl = await _secureStorage.getServerUrl() ?? AppConstants.defaultServerUrl;
+    final savedServerUrl = await _secureStorage.getServerUrl() ?? '';
     final savedUsername = await _secureStorage.getUsername();
     final savedToken = await _secureStorage.getAuthToken();
 
@@ -289,7 +287,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
     _stopConnectivityWatchdog();
+
+    // Revoca il token anche lato server (best effort, non lancia): senza
+    // questo il JWT resterebbe valido fino a scadenza anche dopo il logout.
+    final token = await _secureStorage.getAuthToken();
+    final url = state.serverUrl;
+    if (token != null && token.isNotEmpty && url.isNotEmpty) {
+      await _apiService.logout(baseUrl: url, token: token);
+    }
+
     await _secureStorage.clearAuth();
+    if (!mounted) return;
     state = state.copyWith(
       isAuthenticated: false,
       username: () => null,
@@ -454,58 +462,26 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// (Last-Write-Wins), interamente ID-based.
   ///
   /// Protocollo (speculare a SyncHandler.Sync nel backend):
-  ///  1. Legge dal DB locale tutte le cartelle/note con `updated_at` >
-  ///     cursore locale ([SyncMetaDao]) — è l'intero "da inviare", senza
-  ///     bisogno di alcuna coda/outbox separata.
-  ///  2. Le invia al server in un'unica richiesta POST /api/v1/sync insieme
-  ///     al cursore stesso.
-  ///  3. Applica localmente (con la stessa logica LWW) tutte le entità che
-  ///     il server restituisce nella risposta: sono sia le modifiche remote
-  ///     di altri dispositivi sia l'esito (accettato o "server wins") di
-  ///     quanto appena inviato.
-  ///  4. Salva `server_time` come nuovo cursore.
+  ///  1. Legge dal DB locale le righe `dirty = 1` (modifiche locali non
+  ///     ancora confermate). NON confronta più `updated_at` col cursore:
+  ///     erano due orologi diversi (client vs server) e con clock skew si
+  ///     perdevano modifiche o si rispedivano righe inutilmente.
+  ///  2. Le invia con POST /api/v1/sync insieme al cursore (`server_time`
+  ///     dell'ultima sync riuscita, usato dal server solo per la pull).
+  ///  3. Segna pulite le righe inviate, ma solo se non modificate di nuovo
+  ///     nel frattempo (`markSynced`), poi applica la risposta del server.
+  ///  4. Con `full_resync` elimina le righe pulite sconosciute al server;
+  ///     elimina sempre i tombstone locali già confermati.
+  ///  5. Salva `server_time` come nuovo cursore SOLO a sync completata: su
+  ///     qualunque errore (incluso il 422 con record rifiutati) il cursore
+  ///     resta invariato.
   Future<bool> triggerSync({bool force = false}) async {
+    // GUARDIA ATOMICA: controllo e impostazione di `isSyncing` avvengono nello
+    // stesso blocco sincrono, PRIMA di qualunque `await`. Prima il flag veniva
+    // impostato dopo flush + letture DB + lettura del token: due trigger quasi
+    // simultanei (es. cambio nota + lifecycle) passavano entrambi la guardia e
+    // avviavano due sync concorrenti sugli stessi dati.
     if (!state.isAuthenticated || state.isSyncing) return false;
-
-    // Flush di eventuali modifiche testo ancora in debounce, così anche
-    // l'ultima battitura rientra in questo giro di sync.
-    //
-    // CRITICO: questo `await` è OBBLIGATORIO, MA da solo non basta più a
-    // garantire la correttezza. La vera causa radice del bug (pulsante
-    // manuale, avvio app, inattività e lifecycle che non inviavano mai i
-    // dati pur mostrando "successo") era in NotesNotifier.flushPendingSaves:
-    // scriveva `activeNote` (derivato da `state.activeNoteId`, uno stato
-    // mutabile su cui questo provider non ha alcun controllo) invece della
-    // nota che aveva DAVVERO una modifica in sospeso. È stata corretta lì
-    // (vedi il commento su `NotesNotifier._pendingNote`): ora
-    // `flushPendingSaves()` scrive sempre la modifica realmente pendente,
-    // indipendentemente da chi lo chiama e da cosa sia `activeNoteId` in
-    // questo istante.
-    await _ref.read(notesProvider.notifier).flushPendingSaves();
-
-    final cursor = await _syncMetaDao.getSyncCursor();
-    final dirtyFolders = await _foldersDao.listDirtySince(cursor);
-    final dirtyNotes = await _notesDao.listDirtySince(cursor);
-
-    // NOTA: qui esisteva un "fast-path" che, quando dirtyFolders/dirtyNotes
-    // risultavano vuoti, si limitava a un checkConnection() e restituiva
-    // `true` ("successo") SENZA MAI contattare l'endpoint di sync. Finché
-    // il flush sopra poteva mancare la modifica realmente pendente (vedi
-    // causa radice), questo fast-path trasformava quel bug silenzioso in un
-    // falso "Sincronizzazione avvenuta con successo" mostrato in UI, pur
-    // non avendo mai inviato nulla al server: esattamente il sintomo
-    // riportato sul pulsante manuale. Va rimosso: un trigger di sync deve
-    // sempre tradursi in una vera richiesta al server (anche con liste
-    // vuote, per effettuare comunque il pull di eventuali modifiche remote
-    // da altri dispositivi) quando l'utente è autenticato, mai in un
-    // "successo" dedotto solo dalla connettività. `force` resta nella firma
-    // per compatibilità, ma non serve più per garantire un giro reale.
-    final token = await _secureStorage.getAuthToken();
-    if (token == null || token.isEmpty) {
-      state = state.copyWith(isAuthenticated: false);
-      return false;
-    }
-
     state = state.copyWith(
       isSyncing: true,
       lastError: () => null,
@@ -513,78 +489,145 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     );
 
     try {
-      final response = await _withNetworkRetry(
-        () => _apiService.sync(
-          baseUrl: state.serverUrl,
-          token: token,
-          lastSyncedAt: cursor,
-          folders: dirtyFolders.map(_toFolderDto).toList(),
-          notes: dirtyNotes.map(_toNoteDto).toList(),
-        ),
-      );
-
-      // Applica le entità restituite dal server (già risolte LWW lato
-      // server) al database locale, con LWW anche qui come difesa in
-      // profondità contro modifiche fatte durante il round-trip di rete.
-      // Applicazione in batch (un'unica transazione per tabella) invece di
-      // un `await` sequenziale per entità: stessa identica logica LWW,
-      // molto meno overhead di I/O per sync con molte entità (es. prima
-      // sync dopo una reinstallazione, o dopo un lungo periodo offline).
-      await _foldersDao.applyRemoteLWWBatch(response.folders.map(_fromFolderDto).toList());
-      await _notesDao.applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
-
-      // Purge locale dei tombstone appena confermati dal server: una volta
-      // che il server li ha ricevuti, non serve più tenerli anche
-      // localmente (gli altri dispositivi li riceveranno dal server stesso
-      // alla propria prossima pull).
-      final pushedDeletedFolderIds =
-          dirtyFolders.where((f) => f.deletedAt != null).map((f) => f.id).toList();
-      final pushedDeletedNoteIds =
-          dirtyNotes.where((n) => n.deletedAt != null).map((n) => n.id).toList();
-      if (pushedDeletedFolderIds.isNotEmpty) {
-        await _foldersDao.hardDeleteIds(pushedDeletedFolderIds);
+      return await _runSync();
+    } finally {
+      // Rete di sicurezza: qualunque uscita (anche eccezione inattesa) deve
+      // riportare isSyncing a false, altrimenti la sync resterebbe bloccata.
+      if (mounted && state.isSyncing) {
+        state = state.copyWith(isSyncing: false);
       }
-      if (pushedDeletedNoteIds.isNotEmpty) {
-        await _notesDao.hardDeleteIds(pushedDeletedNoteIds);
+    }
+  }
+
+  Future<bool> _runSync() async {
+    // Scrive il testo ancora in debounce (500 ms) prima di leggere le righe
+    // dirty, così anche l'ultima battitura rientra in questo giro.
+    await _ref.read(notesProvider.notifier).flushPendingSaves();
+
+    final token = await _secureStorage.getAuthToken();
+    if (token == null || token.isEmpty) {
+      if (mounted) state = state.copyWith(isAuthenticated: false, isSyncing: false);
+      return false;
+    }
+
+    try {
+      // Massimo 2 tentativi: il secondo solo dopo aver riparato i record
+      // rifiutati dal server con 422.
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final cursor = await _syncMetaDao.getSyncCursor();
+        final dirtyFolders = await _foldersDao.listDirty();
+        final dirtyNotes = await _notesDao.listDirty();
+
+        final SyncResponse response;
+        try {
+          response = await _withNetworkRetry(
+            () => _apiService.sync(
+              baseUrl: state.serverUrl,
+              token: token,
+              lastSyncedAt: cursor,
+              folders: dirtyFolders.map(_toFolderDto).toList(),
+              notes: dirtyNotes.map(_toNoteDto).toList(),
+            ),
+          );
+        } on SyncApiException catch (e) {
+          if (e.statusCode == 422 && e.rejected.isNotEmpty && attempt == 0) {
+            // Il server ha annullato l'intero batch e NON ha restituito un
+            // cursore: il nostro resta invariato. Si ripara il riferimento
+            // non valido (cartella inesistente sul server) e si riprova.
+            await _repairRejected(e.rejected);
+            continue;
+          }
+          rethrow;
+        }
+
+        // 1) Righe inviate -> pulite (solo se non ri-modificate durante il
+        //    round-trip). 2) Applica la risposta (che include anche la
+        //    versione del server per i conflitti persi). Ordine importante:
+        //    markSynced prima, così l'eco del server sostituisce le righe.
+        await _foldersDao.markSynced({for (final f in dirtyFolders) f.id: f.updatedAt});
+        await _notesDao.markSynced({for (final n in dirtyNotes) n.id: n.updatedAt});
+
+        await _foldersDao.applyRemoteLWWBatch(response.folders.map(_fromFolderDto).toList());
+        await _notesDao.applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
+
+        if (response.fullResync) {
+          // Cursore più vecchio della retention dei tombstone del server:
+          // la risposta è lo stato completo. Le righe pulite che il server non
+          // elenca sono state eliminate mentre eravamo offline.
+          await _foldersDao.deleteCleanNotIn({for (final f in response.folders) f.id});
+          await _notesDao.deleteCleanNotIn({for (final n in response.notes) n.id});
+        }
+
+        // Tombstone locali ormai inutili (confermati dal server o ricevuti da
+        // lui): eliminati fisicamente, non si accumulano nel DB locale.
+        await _foldersDao.purgeCleanTombstones();
+        await _notesDao.purgeCleanTombstones();
+
+        await _syncMetaDao.setSyncCursor(response.serverTime);
+
+        await _ref.read(folderProvider.notifier).refreshFromDb();
+        await _ref.read(notesProvider.notifier).refreshFromDb();
+
+        final syncedAt = DateTime.now();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(_prefLastSyncTime, syncedAt.millisecondsSinceEpoch);
+
+        if (!mounted) return true;
+        state = state.copyWith(
+          isOnline: true,
+          isSyncing: false,
+          lastSyncTime: () => syncedAt,
+          lastSyncMessage: () =>
+              'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
+          lastError: () => null,
+        );
+        return true;
       }
-
-      await _syncMetaDao.setSyncCursor(response.serverTime);
-
-      // Rilegge lo stato in memoria dai DAO: la UI resta reattiva
-      // esclusivamente al database locale, mai a questa risposta HTTP
-      // direttamente.
-      await _ref.read(folderProvider.notifier).refreshFromDb();
-      await _ref.read(notesProvider.notifier).refreshFromDb();
-
-      final syncedAt = DateTime.now();
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt(_prefLastSyncTime, syncedAt.millisecondsSinceEpoch);
-
-      state = state.copyWith(
-        isOnline: true,
-        isSyncing: false,
-        lastSyncTime: () => syncedAt,
-        lastSyncMessage: () =>
-            'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
-        lastError: () => null,
-      );
-
-      return true;
+      return false; // irraggiungibile: il ciclo ritorna o lancia
     } catch (e) {
+      if (!mounted) return false;
       final isAuthError = e is SyncApiException && e.statusCode == 401;
+      final isRejected = e is SyncApiException && e.statusCode == 422;
       state = state.copyWith(
         isAuthenticated: isAuthError ? false : state.isAuthenticated,
-        isOnline: isAuthError ? state.isOnline : false,
+        // Un 422 è una risposta del server (quindi è online): non va mostrato Offline.
+        isOnline: (isAuthError || isRejected) ? state.isOnline : false,
         isSyncing: false,
         lastError: () => e is SyncApiException ? e.message : e.toString(),
-        lastSyncMessage: () =>
-            isAuthError ? 'Sessione scaduta: effettua nuovamente l\'accesso' : 'Sincronizzazione non riuscita: server non raggiungibile',
+        lastSyncMessage: () => isAuthError
+            ? 'Sessione scaduta: effettua nuovamente l\'accesso'
+            : isRejected
+                ? 'Sincronizzazione non riuscita: alcuni elementi non sono validi per il server'
+                : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       if (isAuthError) {
         await _secureStorage.clearAuth();
         _stopConnectivityWatchdog();
       }
       return false;
+    }
+  }
+
+  /// Ripara i record rifiutati dal server (422) portandoli in uno stato
+  /// valido: una nota con `folder_id` sconosciuto al server viene spostata
+  /// fuori da ogni cartella, una cartella con `parent_id` sconosciuto diventa
+  /// radice. Le righe riparate risultano modificate (`dirty`, `updated_at`
+  /// nuovo) e verranno inviate al tentativo successivo. Nessun dato di
+  /// contenuto va perso.
+  Future<void> _repairRejected(List<SyncRejectedItem> rejected) async {
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    for (final r in rejected) {
+      if (r.kind == 'note') {
+        final row = await _notesDao.getById(r.id);
+        if (row != null && row.folderId != null) {
+          await _notesDao.upsert(row.copyWith(folderId: null, updatedAt: now));
+        }
+      } else if (r.kind == 'folder') {
+        final row = await _foldersDao.getById(r.id);
+        if (row != null && row.parentId != null) {
+          await _foldersDao.upsert(row.copyWith(parentId: null, updatedAt: now));
+        }
+      }
     }
   }
 

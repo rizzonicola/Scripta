@@ -128,13 +128,35 @@ class SyncRequest {
 /// cursore inviato nella richiesta: include sia le modifiche remote di altri
 /// dispositivi sia l'esito (accettato o "server wins") di quanto appena
 /// inviato. Non esistono più liste separate "accepted"/"server_wins".
+/// Record che il server ha rifiutato (HTTP 422) perché fa riferimento a una
+/// cartella (`folder_id` / `parent_id`) inesistente o non dell'utente.
+class SyncRejectedItem {
+  final String kind; // "folder" | "note"
+  final String id;
+  final String reason; // es. "invalid_folder_id", "invalid_parent_id"
+
+  const SyncRejectedItem({required this.kind, required this.id, required this.reason});
+
+  factory SyncRejectedItem.fromJson(Map<String, dynamic> json) => SyncRejectedItem(
+        kind: json['kind']?.toString() ?? '',
+        id: json['id']?.toString() ?? '',
+        reason: json['reason']?.toString() ?? '',
+      );
+}
+
 class SyncResponse {
   final int serverTime;
+
+  /// true se il server ha risposto con lo stato COMPLETO dell'utente (cursore
+  /// troppo vecchio rispetto alla retention dei tombstone): il client deve
+  /// eliminare le righe locali pulite che non compaiono nella risposta.
+  final bool fullResync;
   final List<FolderChangeDto> folders;
   final List<NoteChangeDto> notes;
 
   const SyncResponse({
     required this.serverTime,
+    this.fullResync = false,
     this.folders = const [],
     this.notes = const [],
   });
@@ -142,6 +164,7 @@ class SyncResponse {
   factory SyncResponse.fromJson(Map<String, dynamic> json) {
     return SyncResponse(
       serverTime: (json['server_time'] as num?)?.toInt() ?? 0,
+      fullResync: json['full_resync'] == true,
       folders: (json['folders'] as List<dynamic>?)
               ?.map((e) => FolderChangeDto.fromJson(e as Map<String, dynamic>))
               .toList() ??

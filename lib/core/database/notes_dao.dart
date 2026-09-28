@@ -86,9 +86,9 @@ class NoteRow {
 
 const Object _unset = Object();
 
-/// Data Access Object per le note. Come [FoldersDao], ogni mutazione imposta
-/// sempre `updated_at`: è il segnale unico che la sync usa per decidere cosa
-/// spingere al server, senza bisogno di una coda/outbox separata.
+/// Data Access Object per le note. Ogni mutazione locale imposta `updated_at`
+/// (per la risoluzione LWW) e `dirty = 1` (per decidere cosa spingere al
+/// server); le righe applicate dalla pull sono scritte con `dirty = 0`.
 class NotesDao {
   Future<Database> get _db => AppDatabase.instance.db;
 
@@ -109,47 +109,34 @@ class NotesDao {
     return NoteRow.fromMap(rows.first);
   }
 
+  /// Scrittura LOCALE (mutazione dell'utente): la riga viene marcata
+  /// `dirty = 1`, cioè "da inviare al server". Il flag è la sola fonte di
+  /// verità per la selezione del push: NON si confronta più `updated_at`
+  /// (orologio del client) con il cursore di sync (orologio del server),
+  /// perché con clock skew si perdevano modifiche o si rispedivano righe
+  /// inutilmente.
   Future<void> upsert(NoteRow row) async {
     final db = await _db;
-    await db.insert('notes', row.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('notes', {...row.toMap(), 'dirty': 1}, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// Applica una riga ricevuta dal server con semantica Last-Write-Wins
-  /// (vedi il commento analogo in FoldersDao.applyRemoteLWW).
-  Future<void> applyRemoteLWW(NoteRow remote) async {
-    final local = await getById(remote.id);
-    if (local == null) {
-      await upsert(remote);
-      return;
-    }
-    if (remote.updatedAt >= local.updatedAt) {
-      // createdAt è puramente locale: il server non lo conosce (il suo
-      // NoteDTO non ha questo campo), quindi lo preserviamo dalla copia
-      // locale invece di perderlo nell'overwrite.
-      final merged = NoteRow(
-        id: remote.id,
-        title: remote.title,
-        content: remote.content,
-        folderId: remote.folderId,
-        isFavorite: remote.isFavorite,
-        isPinned: remote.isPinned,
-        orderIndex: remote.orderIndex,
-        createdAt: local.createdAt,
-        updatedAt: remote.updatedAt,
-        deletedAt: remote.deletedAt,
-      );
-      await upsert(merged);
-    }
-  }
+  /// Applica una riga ricevuta dal server (vedi [applyRemoteLWWBatch]).
+  Future<void> applyRemoteLWW(NoteRow remote) => applyRemoteLWWBatch([remote]);
 
-  /// Equivalente "batch" di [applyRemoteLWW]: applica una lista di righe
-  /// remote in un'UNICA transazione invece di una sequenza di operazioni
-  /// separate (ciascuna delle quali, fuori da una transazione esplicita, è
-  /// un round-trip/commit a sé). Stessa identica logica LWW riga per riga
-  /// di [applyRemoteLWW] (non duplicata concettualmente, solo eseguita
-  /// dentro `db.transaction` per ridurre drasticamente l'overhead su batch
-  /// di sync numerosi), quindi nessun cambio di comportamento osservabile:
-  /// solo meno round-trip al plugin sqflite.
+  /// Applica righe ricevute dal server in un'UNICA transazione.
+  ///
+  /// Regola: la copia remota sostituisce quella locale se
+  ///  - la riga locale non esiste, oppure
+  ///  - la riga locale è PULITA (`dirty = 0`, nessuna modifica in attesa di
+  ///    invio): il server è autoritativo (include il caso in cui il server
+  ///    ha corretto un timestamp con clock skew o ha risolto un conflitto), oppure
+  ///  - la copia remota è più recente o uguale (`updated_at`, LWW).
+  /// Una riga locale SPORCA e più recente resta intatta (e dirty): la
+  /// modifica non ancora inviata non viene mai cancellata da una pull.
+  /// Le righe applicate diventano pulite (`dirty = 0`).
+  ///
+  /// `createdAt` è puramente locale (il server non lo conosce): viene
+  /// preservato dalla copia locale.
   Future<void> applyRemoteLWWBatch(List<NoteRow> remotes) async {
     if (remotes.isEmpty) return;
     final db = await _db;
@@ -157,11 +144,12 @@ class NotesDao {
       for (final remote in remotes) {
         final rows = await txn.query('notes', where: 'id = ?', whereArgs: [remote.id], limit: 1);
         if (rows.isEmpty) {
-          await txn.insert('notes', remote.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert('notes', {...remote.toMap(), 'dirty': 0}, conflictAlgorithm: ConflictAlgorithm.replace);
           continue;
         }
         final local = NoteRow.fromMap(rows.first);
-        if (remote.updatedAt >= local.updatedAt) {
+        final localIsDirty = (rows.first['dirty'] as int? ?? 1) != 0;
+        if (!localIsDirty || remote.updatedAt >= local.updatedAt) {
           final merged = NoteRow(
             id: remote.id,
             title: remote.title,
@@ -174,7 +162,7 @@ class NotesDao {
             updatedAt: remote.updatedAt,
             deletedAt: remote.deletedAt,
           );
-          await txn.insert('notes', merged.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert('notes', {...merged.toMap(), 'dirty': 0}, conflictAlgorithm: ConflictAlgorithm.replace);
         }
       }
     });
@@ -188,15 +176,48 @@ class NotesDao {
     final db = await _db;
     await db.transaction((txn) async {
       for (final row in rows) {
-        await txn.insert('notes', row.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('notes', {...row.toMap(), 'dirty': 1}, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
 
-  Future<List<NoteRow>> listDirtySince(int sinceMillis) async {
+  /// Righe con modifiche locali non ancora confermate dal server.
+  Future<List<NoteRow>> listDirty() async {
     final db = await _db;
-    final rows = await db.query('notes', where: 'updated_at > ?', whereArgs: [sinceMillis]);
+    final rows = await db.query('notes', where: 'dirty = 1');
     return rows.map(NoteRow.fromMap).toList();
+  }
+
+  /// Segna come pulite le righe appena inviate, MA solo se non sono state
+  /// modificate di nuovo durante il round-trip di rete: la condizione su
+  /// `updated_at` (valore che era stato inviato) evita di perdere una
+  /// modifica fatta mentre la sync era in corso.
+  Future<void> markSynced(Map<String, int> idToPushedUpdatedAt) async {
+    if (idToPushedUpdatedAt.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final e in idToPushedUpdatedAt.entries) {
+        await txn.update('notes', {'dirty': 0}, where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
+      }
+    });
+  }
+
+  /// Elimina fisicamente i tombstone già confermati dal server
+  /// (`deleted_at` valorizzato e `dirty = 0`): non servono più a nessuno,
+  /// gli altri dispositivi li ricevono dal server.
+  Future<void> purgeCleanTombstones() async {
+    final db = await _db;
+    await db.delete('notes', where: 'deleted_at IS NOT NULL AND dirty = 0');
+  }
+
+  /// Dopo un `full_resync` (il server ha risposto con lo stato completo):
+  /// elimina le righe PULITE che il server non conosce più (es. tombstone
+  /// purgati mentre il dispositivo era offline). Le righe sporche restano.
+  Future<void> deleteCleanNotIn(Set<String> serverIds) async {
+    final db = await _db;
+    final rows = await db.query('notes', columns: ['id'], where: 'dirty = 0');
+    final stale = [for (final r in rows) r['id'] as String]..removeWhere(serverIds.contains);
+    await hardDeleteIds(stale);
   }
 
   /// Soft-delete di tutte le note attive di una cartella, usata dalla
@@ -205,7 +226,7 @@ class NotesDao {
     final db = await _db;
     await db.update(
       'notes',
-      {'updated_at': now, 'deleted_at': now},
+      {'updated_at': now, 'deleted_at': now, 'dirty': 1},
       where: 'folder_id = ? AND deleted_at IS NULL',
       whereArgs: [folderId],
     );
@@ -214,8 +235,12 @@ class NotesDao {
   Future<void> hardDeleteIds(List<String> ids) async {
     if (ids.isEmpty) return;
     final db = await _db;
-    final placeholders = List.filled(ids.length, '?').join(',');
-    await db.delete('notes', where: 'id IN ($placeholders)', whereArgs: ids);
+    // A blocchi: SQLite limita il numero di variabili per statement (999).
+    for (var i = 0; i < ids.length; i += 500) {
+      final chunk = ids.sublist(i, i + 500 > ids.length ? ids.length : i + 500);
+      final placeholders = List.filled(chunk.length, '?').join(',');
+      await db.delete('notes', where: 'id IN ($placeholders)', whereArgs: chunk);
+    }
   }
 
   Future<void> hardDeleteAll() async {

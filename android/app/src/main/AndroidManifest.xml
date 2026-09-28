@@ -1,9 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.scripta">
    <uses-permission android:name="android.permission.INTERNET"/>
+   <!--
+     Backup disattivato: con allowBackup=true (default) i dati dell'app
+     (database delle note, preferenze) finirebbero nei backup cloud Google /
+     nei trasferimenti tra dispositivi, fuori dal controllo dell'utente e
+     dalla cifratura dell'app. Le due risorse XML coprono anche Android 12+
+     (dataExtractionRules) oltre al vecchio fullBackupContent.
+   -->
    <application
         android:label="Scripta"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

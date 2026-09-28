@@ -45,8 +45,16 @@ class _FakeDao implements NotesDao {
   }
 
   @override
-  Future<List<NoteRow>> listDirtySince(int sinceMillis) async =>
-      rows.values.where((r) => r.updatedAt > sinceMillis).toList();
+  Future<List<NoteRow>> listDirty() async => rows.values.toList();
+
+  @override
+  Future<void> markSynced(Map<String, int> idToPushedUpdatedAt) async {}
+
+  @override
+  Future<void> purgeCleanTombstones() async {}
+
+  @override
+  Future<void> deleteCleanNotIn(Set<String> serverIds) async {}
 
   @override
   Future<void> softDeleteByFolder(String folderId, int now) async {}

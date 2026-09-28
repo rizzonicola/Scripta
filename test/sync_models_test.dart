@@ -166,6 +166,7 @@ void main() {
 
     test('SyncResponse defaults to empty lists when fields are absent', () {
       final response = SyncResponse.fromJson({'server_time': 42});
+      expect(response.fullResync, isFalse);
       expect(response.serverTime, 42);
       expect(response.folders, isEmpty);
       expect(response.notes, isEmpty);

@@ -25,6 +25,14 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// una volta che la sync ha confermato che il server lo ha ricevuto.
 class AppDatabase {
   AppDatabase._();
+
+  /// Versione dello schema locale. OGNI modifica allo schema richiede di
+  /// incrementarla e di aggiungere il relativo blocco in `_onUpgrade`
+  /// (sqflite chiama `onUpgrade` solo se la versione salvata è minore).
+  ///   1 -> schema iniziale
+  ///   2 -> colonna `dirty` su folders/notes (selezione del push indipendente
+  ///        dall'orologio del client, vedi NotesDao.upsert)
+  static const int _schemaVersion = 2;
   static final AppDatabase instance = AppDatabase._();
 
   Database? _db;
@@ -66,7 +74,7 @@ class AppDatabase {
 
     return openDatabase(
       path,
-      version: 1,
+      version: _schemaVersion,
       onConfigure: (db) async {
         // Integrità referenziale non necessaria lato client (nessuna FK
         // dichiarata nello schema locale), ma WAL migliora sensibilmente la
@@ -96,7 +104,8 @@ class AppDatabase {
             parent_id   TEXT,
             is_expanded INTEGER NOT NULL DEFAULT 1,
             updated_at  INTEGER NOT NULL,
-            deleted_at  INTEGER
+            deleted_at  INTEGER,
+            dirty       INTEGER NOT NULL DEFAULT 1
           )
         ''');
         await db.execute('CREATE INDEX idx_folders_parent ON folders(parent_id)');
@@ -113,11 +122,14 @@ class AppDatabase {
             order_index INTEGER NOT NULL DEFAULT 0,
             created_at  INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL,
-            deleted_at  INTEGER
+            deleted_at  INTEGER,
+            dirty       INTEGER NOT NULL DEFAULT 1
           )
         ''');
         await db.execute('CREATE INDEX idx_notes_folder ON notes(folder_id)');
         await db.execute('CREATE INDEX idx_notes_updated ON notes(updated_at)');
+        await db.execute('CREATE INDEX idx_notes_dirty ON notes(dirty)');
+        await db.execute('CREATE INDEX idx_folders_dirty ON folders(dirty)');
 
         // Coppia chiave/valore per lo stato della sync (cursore
         // last_synced_at, ecc.). Le preferenze utente "generiche" restano su
@@ -131,7 +143,29 @@ class AppDatabase {
           )
         ''');
       },
+      onUpgrade: _onUpgrade,
     );
+  }
+
+  /// Migrazioni incrementali: ogni blocco `if (oldVersion < N)` porta lo
+  /// schema dalla versione N-1 alla N, in ordine, dentro la transazione di
+  /// upgrade di sqflite (se un blocco lancia, l'upgrade viene annullato).
+  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE folders ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1');
+      await db.execute('ALTER TABLE notes ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1');
+
+      // Stessa semantica della versione precedente: era "da inviare" ciò che
+      // aveva updated_at > cursore. Le righe più vecchie del cursore sono già
+      // sul server: pulite. Nessun re-upload di massa.
+      final cursorRows = await db.query('sync_meta', where: 'key = ?', whereArgs: ['last_synced_at'], limit: 1);
+      final cursor = cursorRows.isEmpty ? 0 : (int.tryParse(cursorRows.first['value'] as String) ?? 0);
+      await db.rawUpdate('UPDATE folders SET dirty = CASE WHEN updated_at > ? THEN 1 ELSE 0 END', [cursor]);
+      await db.rawUpdate('UPDATE notes SET dirty = CASE WHEN updated_at > ? THEN 1 ELSE 0 END', [cursor]);
+
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_notes_dirty ON notes(dirty)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_folders_dirty ON folders(dirty)');
+    }
   }
 
   /// Chiude la connessione (usato solo nei test, per garantire isolamento

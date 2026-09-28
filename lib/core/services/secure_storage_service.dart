@@ -15,8 +15,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// senza rete di sicurezza l'accesso alla sync fallirebbe ad ogni avvio.
 /// Se — e SOLO se — il Keychain solleva un errore su iOS/macOS, i valori
 /// vengono quindi salvati in SharedPreferences (NON cifrato, ma comunque
-/// confinato nella sandbox dell'app). Su tutte le altre piattaforme il
-/// comportamento è invariato: nessun degrado silenzioso della sicurezza.
+/// confinato nella sandbox dell'app) — MA SOLO i valori non segreti (URL del
+/// server, username, id utente). Il TOKEN di autenticazione non viene MAI
+/// scritto in chiaro: se il Keychain non è disponibile resta solo in memoria
+/// per la durata della sessione (all'avvio successivo serve un nuovo login).
+/// Su tutte le altre piattaforme il comportamento è invariato: nessun
+/// degrado silenzioso della sicurezza.
 class SecureStorageService {
   static const _tokenKey = 'inkflow_jwt_token';
   static const _serverUrlKey = 'inkflow_server_url';
@@ -82,9 +86,36 @@ class SecureStorageService {
     }
   }
 
-  Future<void> saveAuthToken(String token) => _write(_tokenKey, token);
+  /// Token tenuto SOLO in memoria quando il Keychain iOS/macOS rifiuta la
+  /// scrittura (build non firmate). Mai persistito.
+  static String? _memoryOnlyToken;
 
-  Future<String?> getAuthToken() => _read(_tokenKey);
+  Future<void> saveAuthToken(String token) async {
+    try {
+      await _storage.write(key: _tokenKey, value: token);
+      _memoryOnlyToken = null;
+    } catch (e) {
+      if (!_fallbackEnabled) rethrow;
+      debugPrint('SecureStorage: Keychain non disponibile ($e): token solo in memoria.');
+      _memoryOnlyToken = token;
+    }
+  }
+
+  Future<String?> getAuthToken() async {
+    // Versioni precedenti, in fallback, salvavano il token in chiaro in
+    // SharedPreferences: se ne trovi uno lo elimina (login da rifare).
+    if (_fallbackEnabled) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('$_fallbackPrefix$_tokenKey');
+    }
+    try {
+      final value = await _storage.read(key: _tokenKey);
+      if (value != null) return value;
+    } catch (e) {
+      if (!_fallbackEnabled) rethrow;
+    }
+    return _fallbackEnabled ? _memoryOnlyToken : null;
+  }
 
   Future<void> saveServerUrl(String url) => _write(_serverUrlKey, url.trim());
 
@@ -97,6 +128,7 @@ class SecureStorageService {
   Future<void> saveUserId(String userId) => _write(_userIdKey, userId);
 
   Future<void> clearAuth() async {
+    _memoryOnlyToken = null;
     await _delete(_tokenKey);
     await _delete(_usernameKey);
     await _delete(_userIdKey);

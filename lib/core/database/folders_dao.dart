@@ -62,11 +62,9 @@ class FolderRow {
 
 const Object _unset = Object();
 
-/// Data Access Object per le cartelle. Tutte le scritture aggiornano sempre
-/// `updated_at`: è quello il segnale che la sync userà per capire cosa
-/// inviare al server (vedi SyncNotifier._collectDirtyFolders), quindi ogni
-/// singolo metodo di mutazione qui sotto lo imposta esplicitamente, non c'è
-/// bisogno di una coda/outbox separata.
+/// Data Access Object per le cartelle. Ogni mutazione locale imposta
+/// `updated_at` (LWW) e `dirty = 1` (cosa inviare al server); le righe
+/// applicate dalla pull sono scritte con `dirty = 0`.
 class FoldersDao {
   Future<Database> get _db => AppDatabase.instance.db;
 
@@ -99,38 +97,20 @@ class FoldersDao {
 
   /// Inserisce o sovrascrive integralmente una riga (usato sia per le
   /// mutazioni locali sia per applicare le entità ricevute dal server).
+  /// Scrittura LOCALE: marca la riga `dirty = 1` (da inviare al server).
   Future<void> upsert(FolderRow row) async {
     final db = await _db;
-    await db.insert('folders', row.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('folders', {...row.toMap(), 'dirty': 1}, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// Applica una riga ricevuta dal server con la stessa semantica
-  /// Last-Write-Wins del backend: sovrascrive la copia locale solo se
-  /// l'updated_at remoto è >= di quello locale (il server, per come è
-  /// costruito il protocollo di sync, ha già risolto i conflitti: qui è solo
-  /// una difesa in profondità contro modifiche locali fatte durante il
-  /// round-trip di rete della sync stessa).
-  ///
-  /// `isExpanded` è puramente locale (il server non lo conosce: il suo
-  /// FolderDTO non ha questo campo, vedi sync_models.dart), quindi viene
-  /// sempre preservato dalla copia locale invece di essere perso
-  /// nell'overwrite (altrimenti ogni cartella arrivata da un altro
-  /// dispositivo ricomparirebbe forzatamente espansa).
-  Future<void> applyRemoteLWW(FolderRow remote) async {
-    final local = await getById(remote.id);
-    if (local == null) {
-      await upsert(remote);
-      return;
-    }
-    if (remote.updatedAt >= local.updatedAt) {
-      await upsert(remote.copyWith(isExpanded: local.isExpanded));
-    }
-  }
+  /// Applica una riga ricevuta dal server (vedi [applyRemoteLWWBatch]).
+  Future<void> applyRemoteLWW(FolderRow remote) => applyRemoteLWWBatch([remote]);
 
-  /// Equivalente "batch" di [applyRemoteLWW] (vedi commento analogo in
-  /// `NotesDao.applyRemoteLWWBatch`): stessa logica LWW, ma tutte le righe
-  /// remote vengono applicate dentro un'UNICA transazione invece di N
-  /// round-trip separati al plugin sqflite.
+  /// Applica righe remote in un'unica transazione. Stessa regola di
+  /// `NotesDao.applyRemoteLWWBatch`: la copia remota vince se la riga locale
+  /// non esiste, è pulita (`dirty = 0`) o è meno recente; una modifica locale
+  /// sporca e più recente non viene mai sovrascritta. Le righe applicate
+  /// diventano pulite. `isExpanded` è solo locale e viene sempre preservato.
   Future<void> applyRemoteLWWBatch(List<FolderRow> remotes) async {
     if (remotes.isEmpty) return;
     final db = await _db;
@@ -138,22 +118,49 @@ class FoldersDao {
       for (final remote in remotes) {
         final rows = await txn.query('folders', where: 'id = ?', whereArgs: [remote.id], limit: 1);
         if (rows.isEmpty) {
-          await txn.insert('folders', remote.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert('folders', {...remote.toMap(), 'dirty': 0}, conflictAlgorithm: ConflictAlgorithm.replace);
           continue;
         }
         final local = FolderRow.fromMap(rows.first);
-        if (remote.updatedAt >= local.updatedAt) {
+        final localIsDirty = (rows.first['dirty'] as int? ?? 1) != 0;
+        if (!localIsDirty || remote.updatedAt >= local.updatedAt) {
           final merged = remote.copyWith(isExpanded: local.isExpanded);
-          await txn.insert('folders', merged.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+          await txn.insert('folders', {...merged.toMap(), 'dirty': 0}, conflictAlgorithm: ConflictAlgorithm.replace);
         }
       }
     });
   }
 
-  Future<List<FolderRow>> listDirtySince(int sinceMillis) async {
+  /// Righe con modifiche locali non ancora confermate dal server.
+  Future<List<FolderRow>> listDirty() async {
     final db = await _db;
-    final rows = await db.query('folders', where: 'updated_at > ?', whereArgs: [sinceMillis]);
+    final rows = await db.query('folders', where: 'dirty = 1');
     return rows.map(FolderRow.fromMap).toList();
+  }
+
+  /// Vedi `NotesDao.markSynced`.
+  Future<void> markSynced(Map<String, int> idToPushedUpdatedAt) async {
+    if (idToPushedUpdatedAt.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final e in idToPushedUpdatedAt.entries) {
+        await txn.update('folders', {'dirty': 0}, where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
+      }
+    });
+  }
+
+  /// Elimina i tombstone già confermati dal server (`dirty = 0`).
+  Future<void> purgeCleanTombstones() async {
+    final db = await _db;
+    await db.delete('folders', where: 'deleted_at IS NOT NULL AND dirty = 0');
+  }
+
+  /// Dopo un `full_resync`: elimina le righe pulite sconosciute al server.
+  Future<void> deleteCleanNotIn(Set<String> serverIds) async {
+    final db = await _db;
+    final rows = await db.query('folders', columns: ['id'], where: 'dirty = 0');
+    final stale = [for (final r in rows) r['id'] as String]..removeWhere(serverIds.contains);
+    await hardDeleteIds(stale);
   }
 
   Future<List<String>> listActiveChildIds(String parentId) async {
@@ -187,7 +194,7 @@ class FoldersDao {
     // sono stati correttamente cancellati.
     await db.update(
       'folders',
-      {'updated_at': now, 'deleted_at': now},
+      {'updated_at': now, 'deleted_at': now, 'dirty': 1},
       where: 'id = ?',
       whereArgs: [rootFolderId],
     );
@@ -205,7 +212,7 @@ class FoldersDao {
         for (final id in childIds) {
           batch.update(
             'folders',
-            {'updated_at': now, 'deleted_at': now},
+            {'updated_at': now, 'deleted_at': now, 'dirty': 1},
             where: 'id = ?',
             whereArgs: [id],
           );
@@ -219,8 +226,11 @@ class FoldersDao {
   Future<void> hardDeleteIds(List<String> ids) async {
     if (ids.isEmpty) return;
     final db = await _db;
-    final placeholders = List.filled(ids.length, '?').join(',');
-    await db.delete('folders', where: 'id IN ($placeholders)', whereArgs: ids);
+    for (var i = 0; i < ids.length; i += 500) {
+      final chunk = ids.sublist(i, i + 500 > ids.length ? ids.length : i + 500);
+      final placeholders = List.filled(chunk.length, '?').join(',');
+      await db.delete('folders', where: 'id IN ($placeholders)', whereArgs: chunk);
+    }
   }
 
   Future<void> hardDeleteAll() async {
