@@ -310,13 +310,19 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                         },
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         itemCount: notes.length,
-                        onReorder: (oldIndex, newIndex) {
+                        onReorderItem: (oldIndex, newIndex) {
+                          // onReorderItem fornisce newIndex già corretto per
+                          // la rimozione dell'elemento; reorderNotes usa la
+                          // semantica classica di onReorder (la correzione
+                          // avviene al suo interno), quindi la si ripristina.
+                          final legacyNewIndex =
+                              newIndex > oldIndex ? newIndex + 1 : newIndex;
                           // Gli indici si riferiscono alla lista MOSTRATA
                           // (filtrata per cartella): si passano anche gli id
                           // visibili, così il provider sposta la nota giusta.
                           ref.read(notesProvider.notifier).reorderNotes(
                                 oldIndex,
-                                newIndex,
+                                legacyNewIndex,
                                 visibleIds: notes.map((n) => n.id).toList(),
                               );
                         },

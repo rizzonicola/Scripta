@@ -138,7 +138,14 @@ class ImportService {
       if (result.isEmpty) return;
 
       final picked = result.single;
-      if (picked.size > maxZipBytes) {
+      // PlatformFile.size non esiste più in file_picker v12: la dimensione
+      // si ricava dal file su disco (se disponibile) prima di caricarlo in
+      // memoria; in assenza di path si applica comunque il controllo sui
+      // byte letti (ripetuto in _extractFromZipBytes).
+      final pickedPath = picked.path;
+      final pickedSize =
+          pickedPath != null ? await File(pickedPath).length() : null;
+      if (pickedSize != null && pickedSize > maxZipBytes) {
         if (context.mounted) {
           _showSnack(context, 'File ZIP troppo grande (massimo ${_mb(maxZipBytes)}).',
               isError: true);
@@ -292,7 +299,7 @@ class ImportService {
     }
     final archive = ZipDecoder().decodeBytes(bytes);
     if (archive.files.length > maxZipEntries) {
-      throw FormatException('ZIP con troppe voci (massimo $maxZipEntries).');
+      throw const FormatException('ZIP con troppe voci (massimo $maxZipEntries).');
     }
     final entries = <_RawImportEntry>[];
     var totalBytes = 0;
@@ -314,7 +321,7 @@ class ImportService {
       // Limiti verificati sulla dimensione DICHIARATA, prima di accedere a
       // `file.content` (che è ciò che decomprime davvero il contenuto).
       if (entries.length >= maxImportedFiles) {
-        throw FormatException('Troppi file da importare (massimo $maxImportedFiles).');
+        throw const FormatException('Troppi file da importare (massimo $maxImportedFiles).');
       }
       if (file.size > maxEntryBytes) {
         throw FormatException('Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
@@ -374,7 +381,7 @@ class ImportService {
       // Stessi limiti dello ZIP, controllati sulla dimensione su disco PRIMA
       // di leggere il file.
       if (entries.length >= maxImportedFiles) {
-        throw FormatException('Troppi file da importare (massimo $maxImportedFiles).');
+        throw const FormatException('Troppi file da importare (massimo $maxImportedFiles).');
       }
       final size = await entity.length();
       if (size > maxEntryBytes) {
