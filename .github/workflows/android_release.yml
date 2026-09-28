@@ -60,16 +60,31 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            # Nessun keystore (account sviluppatore non ancora creato):
-            # si costruiscono APK di debug, utili per provare l'app ma NON
-            # adatti alla distribuzione su store. Quando esisterà un
-            # keystore basterà aggiungere i 4 secret: il workflow tornerà
-            # automaticamente alla build firmata di release.
-            echo "::warning::Nessun keystore configurato: build con APK di debug (non firmati per lo store)."
-            echo "signed=false" >> "$GITHUB_OUTPUT"
+            # Nessun keystore (account sviluppatore non ancora creato).
+            # Si genera una chiave USA-E-GETTA solo per questa build: l'APK
+            # resta una vera build RELEASE (ottimizzata AOT, dimensioni e
+            # prestazioni normali), non di debug. Limite: la firma cambia a
+            # ogni esecuzione, quindi per installare una versione nuova sopra
+            # una precedente bisogna prima disinstallare la vecchia.
+            echo "::warning::Nessun keystore configurato: firma con chiave temporanea (build release ottimizzata, ma non aggiornabile in-place tra versioni)."
+            EPHEMERAL_PASS="$(openssl rand -hex 16)"
+            keytool -genkeypair -v \
+              -keystore "$RUNNER_TEMP/upload-keystore.jks" \
+              -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias ephemeral -storepass "$EPHEMERAL_PASS" -keypass "$EPHEMERAL_PASS" \
+              -dname "CN=Scripta CI temporary key" > /dev/null
+            {
+              echo "storeFile=$RUNNER_TEMP/upload-keystore.jks"
+              echo "storePassword=$EPHEMERAL_PASS"
+              echo "keyAlias=ephemeral"
+              echo "keyPassword=$EPHEMERAL_PASS"
+            } > android/key.properties
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "ephemeral=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "signed=true" >> "$GITHUB_OUTPUT"
+          echo "ephemeral=false" >> "$GITHUB_OUTPUT"
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
           {
             echo "storeFile=$RUNNER_TEMP/upload-keystore.jks"
@@ -79,60 +94,25 @@ jobs:
           } > android/key.properties
 
       - name: Build Split APKs
-        if: steps.signing.outputs.signed == 'true'
         run: flutter build apk --release --split-per-abi
 
       - name: Rename Split APKs
-        if: steps.signing.outputs.signed == 'true'
         run: |
           mv build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/app/outputs/flutter-apk/Scripta-armeabi-v7a.apk
           mv build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app/outputs/flutter-apk/Scripta-arm64-v8a.apk
           mv build/app/outputs/flutter-apk/app-x86_64-release.apk build/app/outputs/flutter-apk/Scripta-x86_64.apk
 
       - name: Build Universal APK
-        if: steps.signing.outputs.signed == 'true'
         run: flutter build apk --release
 
       - name: Rename Universal APK
-        if: steps.signing.outputs.signed == 'true'
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/Scripta-universal.apk
-
-      - name: Build Debug APKs (prova, senza firma di release)
-        if: steps.signing.outputs.signed == 'false'
-        run: flutter build apk --debug --split-per-abi
-
-      - name: Rename Debug APKs
-        if: steps.signing.outputs.signed == 'false'
-        run: |
-          cd build/app/outputs/flutter-apk
-          for f in app-*-debug.apk; do
-            abi="${f#app-}"; abi="${abi%-debug.apk}"
-            mv "$f" "Scripta-${abi}-debug.apk"
-          done
-          ls -la
-
-      - name: Upload Debug APKs come artifact del workflow
-        if: steps.signing.outputs.signed == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Scripta-debug-apks
-          path: build/app/outputs/flutter-apk/Scripta-*-debug.apk
-          retention-days: 14
-          if-no-files-found: error
-
-      - name: Upload Debug APKs to Release
-        if: steps.signing.outputs.signed == 'false' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/app/outputs/flutter-apk/Scripta-*-debug.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Artifacts to Release (tentativo 1)
         id: release_attempt_1
         uses: softprops/action-gh-release@v2
-        if: steps.signing.outputs.signed == 'true' && startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
         with:
           files: |
@@ -144,11 +124,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attendi prima di ritentare la pubblicazione
-        if: steps.signing.outputs.signed == 'true' && startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
         run: sleep 15
 
       - name: Upload Artifacts to Release (tentativo 2)
-        if: steps.signing.outputs.signed == 'true' && startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
         uses: softprops/action-gh-release@v2
         with:
           files: |
