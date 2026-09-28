@@ -60,14 +60,12 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            # Release VERE (tag vX.Y.Z): la firma è obbligatoria, mai la
-            # chiave di debug. Build di prova (avvio manuale): si prosegue
-            # con un APK di debug, che NON viene pubblicato tra le release.
-            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-              echo "::error::Secret ANDROID_KEYSTORE_BASE64 mancante: impossibile firmare la release (la chiave di debug non è ammessa)."
-              exit 1
-            fi
-            echo "::warning::Nessun keystore configurato: build di PROVA con APK di debug (solo artifact del workflow, nessuna release)."
+            # Nessun keystore (account sviluppatore non ancora creato):
+            # si costruiscono APK di debug, utili per provare l'app ma NON
+            # adatti alla distribuzione su store. Quando esisterà un
+            # keystore basterà aggiungere i 4 secret: il workflow tornerà
+            # automaticamente alla build firmata di release.
+            echo "::warning::Nessun keystore configurato: build con APK di debug (non firmati per lo store)."
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -104,19 +102,37 @@ jobs:
         if: steps.signing.outputs.signed == 'false'
         run: flutter build apk --debug --split-per-abi
 
+      - name: Rename Debug APKs
+        if: steps.signing.outputs.signed == 'false'
+        run: |
+          cd build/app/outputs/flutter-apk
+          for f in app-*-debug.apk; do
+            abi="${f#app-}"; abi="${abi%-debug.apk}"
+            mv "$f" "Scripta-${abi}-debug.apk"
+          done
+          ls -la
+
       - name: Upload Debug APKs come artifact del workflow
         if: steps.signing.outputs.signed == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: Scripta-debug-apks
-          path: build/app/outputs/flutter-apk/*-debug.apk
+          path: build/app/outputs/flutter-apk/Scripta-*-debug.apk
           retention-days: 14
           if-no-files-found: error
+
+      - name: Upload Debug APKs to Release
+        if: steps.signing.outputs.signed == 'false' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/app/outputs/flutter-apk/Scripta-*-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Artifacts to Release (tentativo 1)
         id: release_attempt_1
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.signing.outputs.signed == 'true' && startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
         with:
           files: |
@@ -128,11 +144,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attendi prima di ritentare la pubblicazione
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        if: steps.signing.outputs.signed == 'true' && startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
         run: sleep 15
 
       - name: Upload Artifacts to Release (tentativo 2)
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        if: steps.signing.outputs.signed == 'true' && startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
         uses: softprops/action-gh-release@v2
         with:
           files: |
