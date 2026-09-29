@@ -162,23 +162,36 @@ class ContextMenuRegion extends StatelessWidget {
     this.onOpen,
   });
 
+  /// Ultimo puntatore già gestito da una regione. I `Listener` ricevono
+  /// l'evento dal più interno al più esterno: la prima regione lo consuma e
+  /// quelle che la contengono lo ignorano (altrimenti si aprirebbero più
+  /// menu sovrapposti, es. nota + lista o cartella + albero).
+  static int? _handledPointer;
+
   @override
   Widget build(BuildContext context) {
     if (!enabled) return child;
-    return GestureDetector(
+    return Listener(
       behavior: behavior,
-      onSecondaryTapDown: (details) {
-        onOpen?.call();
-        showContextMenu(context, details.globalPosition, entriesBuilder(context));
+      onPointerDown: (event) {
+        if ((event.buttons & kSecondaryMouseButton) != 0) {
+          if (_handledPointer == event.pointer) return;
+          _handledPointer = event.pointer;
+          onOpen?.call();
+          showContextMenu(context, event.position, entriesBuilder(context));
+        }
       },
-      onLongPressStart: enableLongPress
-          ? (details) {
-              onOpen?.call();
-              showContextMenu(
-                  context, details.globalPosition, entriesBuilder(context));
-            }
-          : null,
-      child: child,
+      child: enableLongPress
+          ? GestureDetector(
+              behavior: behavior,
+              onLongPressStart: (details) {
+                onOpen?.call();
+                showContextMenu(
+                    context, details.globalPosition, entriesBuilder(context));
+              },
+              child: child,
+            )
+          : child,
     );
   }
 }
