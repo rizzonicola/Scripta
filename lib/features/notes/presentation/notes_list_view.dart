@@ -275,7 +275,17 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           ),
 
           // Header action bar with Note count, Sort menu, and New Note button
-          Padding(
+          // (tasto destro: stesso menu dello spazio vuoto della lista)
+          ContextMenuRegion(
+            enabled: isDesktopPlatform,
+            behavior: HitTestBehavior.opaque,
+            entriesBuilder: (ctx) => _listMenuEntries(
+              ctx,
+              l10n,
+              sortOrder,
+              selectedFolderId,
+            ),
+            child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 12, 8),
             child: Row(
               children: [
@@ -308,6 +318,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                 ),
               ],
             ),
+          ),
           ),
 
           const Divider(height: 1),

@@ -43,8 +43,12 @@ class FolderTreeView extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header
-          Padding(
+          // Header (tasto destro: stesso menu di "Tutte le note")
+          ContextMenuRegion(
+            enabled: isDesktopPlatform,
+            behavior: HitTestBehavior.opaque,
+            entriesBuilder: (ctx) => _workspaceMenuEntries(ctx, ref),
+            child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 8, 12),
             child: Row(
               children: [
@@ -117,14 +121,16 @@ class FolderTreeView extends ConsumerWidget {
               ],
             ),
           ),
+          ),
           const Divider(height: 1),
 
-          // "All Notes" item
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: ContextMenuRegion(
-              enabled: isDesktopPlatform,
-              entriesBuilder: (ctx) => _workspaceMenuEntries(ctx, ref),
+          // "All Notes" item (l'intera riga, margini compresi, risponde)
+          ContextMenuRegion(
+            enabled: isDesktopPlatform,
+            behavior: HitTestBehavior.opaque,
+            entriesBuilder: (ctx) => _workspaceMenuEntries(ctx, ref),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: _FolderItemTile(
                 title: l10n.allNotes,
                 icon: Icons.notes_rounded,
@@ -135,9 +141,14 @@ class FolderTreeView extends ConsumerWidget {
             ),
           ),
 
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Divider(height: 1),
+          ContextMenuRegion(
+            enabled: isDesktopPlatform,
+            behavior: HitTestBehavior.opaque,
+            entriesBuilder: (ctx) => _workspaceMenuEntries(ctx, ref),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Divider(height: 1),
+            ),
           ),
 
           // Folders Tree
