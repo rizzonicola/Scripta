@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 /// Voce di un menu contestuale (tasto destro / pulsante "...").
