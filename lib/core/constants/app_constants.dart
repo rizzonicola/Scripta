@@ -26,6 +26,12 @@ class AppConstants {
   static const String prefFontSize = 'scripta_font_size';
   static const String prefLineHeight = 'scripta_line_height';
   static const String prefSortMode = 'scripta_sort_mode';
+  // Ordinamento PER VISTA ("Tutte le note" e ogni cartella): mappa JSON
+  // scope -> nome del NoteSortOrder, e (solo per le cartelle) mappa JSON
+  // scope -> elenco ordinato di id per l'ordine manuale. `prefSortMode` resta
+  // solo come valore iniziale di ripiego (compatibilità con versioni precedenti).
+  static const String prefSortModeByScope = 'scripta_sort_mode_by_scope';
+  static const String prefCustomOrderByScope = 'scripta_custom_order_by_scope';
   static const String prefOnboardingCompleted = 'scripta_onboarding_completed';
   static const String prefHapticIntensity = 'scripta_haptic_intensity';
 }

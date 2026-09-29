@@ -158,7 +158,12 @@ class NotesDao {
             isFavorite: remote.isFavorite,
             isPinned: remote.isPinned,
             orderIndex: remote.orderIndex,
-            createdAt: local.createdAt,
+            // La creazione non può essere posteriore a una modifica
+            // conosciuta: se la copia remota è più vecchia della data di
+            // creazione locale (clock skew, o data di ripiego), si usa la
+            // stima migliore invece di mostrare una nota "creata dopo
+            // l'ultima modifica".
+            createdAt: local.createdAt <= remote.updatedAt ? local.createdAt : remote.updatedAt,
             updatedAt: remote.updatedAt,
             deletedAt: remote.deletedAt,
           );

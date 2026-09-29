@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -94,6 +95,68 @@ class NotesNotifier extends StateNotifier<NotesState> {
   final _uuid = const Uuid();
   Timer? _saveDebounceTimer;
 
+  // ---------------------------------------------------------------------
+  // Ordinamento PER VISTA
+  // ---------------------------------------------------------------------
+  // Ogni vista ("Tutte le note" e ciascuna cartella) ha il PROPRIO criterio
+  // di ordinamento e, per le cartelle, il proprio ordine manuale. `state.notes`
+  // e `state.sortOrder` rispecchiano sempre la vista corrente ([_scope]);
+  // cambiando cartella si ricalcolano con le impostazioni di quella vista
+  // (vedi [setScope]).
+  //
+  //  - "Tutte le note": l'ordine manuale usa `order_index` (sincronizzato).
+  //  - Cartella: l'ordine manuale è un elenco di id locale a quella cartella
+  //    (SharedPreferences), quindi riordinare lì NON tocca le altre viste né
+  //    `updated_at`. Le note non presenti nell'elenco (nuove, spostate o
+  //    importate) compaiono in cima.
+  static const String _allScope = 'all';
+  String _scope = _allScope;
+  NoteSortOrder _defaultSort = NoteSortOrder.updatedDesc;
+  final Map<String, NoteSortOrder> _sortModes = <String, NoteSortOrder>{};
+  final Map<String, List<String>> _folderCustomOrders = <String, List<String>>{};
+
+  NoteSortOrder _sortFor(String scope) => _sortModes[scope] ?? _defaultSort;
+
+  static NoteSortOrder? _parseSort(String? name) {
+    if (name == null) return null;
+    for (final v in NoteSortOrder.values) {
+      if (v.name == name) return v;
+    }
+    return null;
+  }
+
+  /// Cambia la vista corrente (null = "Tutte le note", altrimenti l'id della
+  /// cartella selezionata) e riordina la lista secondo le impostazioni PROPRIE
+  /// di quella vista.
+  void setScope(String? folderId) {
+    final key = folderId ?? _allScope;
+    if (key == _scope) return;
+    unawaited(flushPendingSaves());
+    _scope = key;
+    final order = _sortFor(key);
+    state = state.copyWith(notes: _sort(state.notes, order), sortOrder: order);
+  }
+
+  Future<void> _persistSortModes() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      AppConstants.prefSortModeByScope,
+      jsonEncode({for (final e in _sortModes.entries) e.key: e.value.name}),
+    );
+  }
+
+  Future<void> _persistFolderOrders() async {
+    final alive = state.notes.map((n) => n.id).toSet();
+    // Si scartano gli id di note non più esistenti, così l'elenco non cresce
+    // indefinitamente.
+    final cleaned = <String, List<String>>{
+      for (final e in _folderCustomOrders.entries)
+        e.key: e.value.where(alive.contains).toList(),
+    };
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(AppConstants.prefCustomOrderByScope, jsonEncode(cleaned));
+  }
+
   /// La nota con modifiche testuali non ancora scritte su SQLite, catturata
   /// ESPLICITAMENTE al momento della battitura (vedi [_debouncedPersist]).
   ///
@@ -182,24 +245,54 @@ class NotesNotifier extends StateNotifier<NotesState> {
   Future<void> _loadFromDb() async {
     final rows = await _dao.getActive();
     if (!mounted) return;
-    final notes = _sortNotes(rows.map(NoteModel.fromRow).toList(), state.sortOrder);
+    final loaded = rows.map(NoteModel.fromRow).toList();
 
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-    final sortStr = prefs.getString(AppConstants.prefSortMode);
-    var sortOrder = state.sortOrder;
-    if (sortStr != null) {
-      for (final val in NoteSortOrder.values) {
-        if (val.name == sortStr) {
-          sortOrder = val;
-          break;
+
+    // Valore globale delle versioni precedenti: resta solo come ripiego per le
+    // viste che non hanno ancora un ordinamento proprio.
+    _defaultSort = _parseSort(prefs.getString(AppConstants.prefSortMode)) ?? NoteSortOrder.updatedDesc;
+
+    final rawModes = prefs.getString(AppConstants.prefSortModeByScope);
+    if (rawModes != null) {
+      try {
+        final decoded = jsonDecode(rawModes);
+        if (decoded is Map) {
+          decoded.forEach((k, v) {
+            final parsed = _parseSort(v is String ? v : null);
+            // Non sovrascrive scelte fatte mentre il caricamento era in corso.
+            if (parsed != null) _sortModes.putIfAbsent(k as String, () => parsed);
+          });
         }
+      } catch (e) {
+        debugPrint('NotesNotifier: ordinamenti per vista non leggibili: $e');
+      }
+    }
+    final rawOrders = prefs.getString(AppConstants.prefCustomOrderByScope);
+    if (rawOrders != null) {
+      try {
+        final decoded = jsonDecode(rawOrders);
+        if (decoded is Map) {
+          decoded.forEach((k, v) {
+            if (v is List) {
+              _folderCustomOrders.putIfAbsent(k as String, () => v.whereType<String>().toList());
+            }
+          });
+        }
+      } catch (e) {
+        debugPrint('NotesNotifier: ordini manuali per cartella non leggibili: $e');
       }
     }
 
+    final sortOrder = _sortFor(_scope);
+    // Si ordina UNA sola volta, con l'ordinamento della vista corrente. BUG
+    // CORRETTO: la nota attiva iniziale veniva presa dalla lista ordinata con
+    // l'ordine di DEFAULT (ultima modifica) invece che da quella mostrata.
+    final sorted = _sort(loaded, sortOrder);
     state = state.copyWith(
-      notes: _sortNotes(notes, sortOrder),
-      activeNoteId: () => notes.isNotEmpty ? notes.first.id : null,
+      notes: sorted,
+      activeNoteId: () => sorted.isNotEmpty ? sorted.first.id : null,
       sortOrder: sortOrder,
     );
   }
@@ -235,7 +328,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
         }
       }
 
-      notes = _sortNotes(notes, state.sortOrder);
+      notes = _sort(notes, state.sortOrder);
       final activeStillExists = notes.any((n) => n.id == state.activeNoteId);
       state = state.copyWith(
         notes: notes,
@@ -311,8 +404,26 @@ class NotesNotifier extends StateNotifier<NotesState> {
     });
   }
 
-  static List<NoteModel> _sortNotes(List<NoteModel> list, NoteSortOrder order) {
+  /// Confronto per l'ordine manuale di una cartella: le note presenti
+  /// nell'elenco seguono la posizione salvata; quelle assenti (nuove, spostate
+  /// o importate) vanno in cima, tra loro per `order_index`.
+  static int _compareByFolderPosition(NoteModel a, NoteModel b, Map<String, int> pos) {
+    final pa = pos[a.id];
+    final pb = pos[b.id];
+    if (pa != null && pb != null) return pa.compareTo(pb);
+    if (pa == null && pb == null) return a.orderIndex.compareTo(b.orderIndex);
+    return pa == null ? -1 : 1;
+  }
+
+  List<NoteModel> _sort(List<NoteModel> list, NoteSortOrder order) {
     final sorted = List<NoteModel>.from(list);
+    // Posizioni dell'ordine manuale della cartella corrente (null per "Tutte
+    // le note", che usa `order_index`, e per gli altri criteri).
+    Map<String, int>? folderPos;
+    if (order == NoteSortOrder.custom && _scope != _allScope) {
+      final ids = _folderCustomOrders[_scope] ?? const <String>[];
+      folderPos = <String, int>{for (var i = 0; i < ids.length; i++) ids[i]: i};
+    }
     sorted.sort((a, b) {
       if (order != NoteSortOrder.custom) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
@@ -325,7 +436,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
         NoteSortOrder.createdAsc => a.createdAt.compareTo(b.createdAt),
         NoteSortOrder.titleAsc => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         NoteSortOrder.titleDesc => b.title.toLowerCase().compareTo(a.title.toLowerCase()),
-        NoteSortOrder.custom => a.orderIndex.compareTo(b.orderIndex),
+        NoteSortOrder.custom => folderPos == null
+            ? a.orderIndex.compareTo(b.orderIndex)
+            : _compareByFolderPosition(a, b, folderPos),
       };
       if (primary != 0) return primary;
 
@@ -334,9 +447,24 @@ class NotesNotifier extends StateNotifier<NotesState> {
       // arrivate da altri dispositivi) l'ordine visualizzato cambiava da un
       // avvio all'altro, dando l'impressione che il riordino "tornasse
       // indietro".
-      if (order == NoteSortOrder.custom) {
-        final byUpdated = b.updatedAt.compareTo(a.updatedAt);
-        if (byUpdated != 0) return byUpdated;
+      switch (order) {
+        case NoteSortOrder.custom:
+          final byUpdatedCustom = b.updatedAt.compareTo(a.updatedAt);
+          if (byUpdatedCustom != 0) return byUpdatedCustom;
+        case NoteSortOrder.createdDesc:
+        case NoteSortOrder.createdAsc:
+          // Note con la stessa data di creazione (import in blocco, note
+          // arrivate da un altro dispositivo con data di ripiego): si usa
+          // l'altra data come spareggio, nello stesso verso, prima dell'id.
+          final byUpdatedCreated = order == NoteSortOrder.createdDesc
+              ? b.updatedAt.compareTo(a.updatedAt)
+              : a.updatedAt.compareTo(b.updatedAt);
+          if (byUpdatedCreated != 0) return byUpdatedCreated;
+        case NoteSortOrder.updatedDesc:
+        case NoteSortOrder.updatedAsc:
+        case NoteSortOrder.titleAsc:
+        case NoteSortOrder.titleDesc:
+          break;
       }
       return a.id.compareTo(b.id);
     });
@@ -357,7 +485,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       // attiva in UI, non si sta per interrogare "cosa è dirty" subito dopo
       // (a differenza di SyncNotifier.triggerSync, che invece DEVE attendere).
       unawaited(flushPendingSaves());
-      final sorted = _sortNotes(state.notes, state.sortOrder);
+      final sorted = _sort(state.notes, state.sortOrder);
       state = state.copyWith(notes: sorted, activeNoteId: () => id);
     }
   }
@@ -366,39 +494,47 @@ class NotesNotifier extends StateNotifier<NotesState> {
     state = state.copyWith(searchQuery: query);
   }
 
+  /// Imposta l'ordinamento della vista CORRENTE ("Tutte le note" o la cartella
+  /// selezionata): le altre viste mantengono il proprio.
   Future<void> setSortOrder(NoteSortOrder order) async {
     unawaited(flushPendingSaves());
     var notes = state.notes;
 
     if (order == NoteSortOrder.custom && state.sortOrder != NoteSortOrder.custom) {
       // Passando all'ordine manuale si parte dall'ordine che l'utente sta
-      // VEDENDO ora, e lo si rende esplicito e senza duplicati in
-      // `order_index` (persistendo solo le note che cambiano). Prima si
-      // usavano i vecchi `order_index`, spesso tutti 0 o duplicati, quindi
-      // la lista appariva rimescolata e ogni trascinamento partiva da una
-      // base incoerente.
-      final current = _sortNotes(state.notes, state.sortOrder);
-      final now = DateTime.now();
-      final changed = <NoteModel>[];
-      notes = <NoteModel>[];
-      for (var i = 0; i < current.length; i++) {
-        final n = current[i];
-        if (n.orderIndex != i) {
-          final u = n.copyWith(orderIndex: i, updatedAt: now);
-          changed.add(u);
-          notes.add(u);
-        } else {
-          notes.add(n);
+      // VEDENDO ora, e lo si rende esplicito e senza duplicati.
+      final current = _sort(state.notes, state.sortOrder);
+      if (_scope == _allScope) {
+        // "Tutte le note": `order_index` sincronizzato (persistendo solo le
+        // note che cambiano).
+        final now = DateTime.now();
+        final changed = <NoteModel>[];
+        notes = <NoteModel>[];
+        for (var i = 0; i < current.length; i++) {
+          final n = current[i];
+          if (n.orderIndex != i) {
+            final u = n.copyWith(orderIndex: i, updatedAt: now);
+            changed.add(u);
+            notes.add(u);
+          } else {
+            notes.add(n);
+          }
         }
-      }
-      if (changed.isNotEmpty) {
-        unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+        if (changed.isNotEmpty) {
+          unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+        }
+      } else if ((_folderCustomOrders[_scope] ?? const <String>[]).isEmpty) {
+        // Cartella senza ordine manuale salvato: lo si inizializza dall'ordine
+        // visibile. Se esiste già, viene RICORDATO e riusato (l'ordine manuale
+        // di una cartella sopravvive al passaggio ad altri criteri).
+        _folderCustomOrders[_scope] = current.map((n) => n.id).toList();
+        unawaited(_persistFolderOrders());
       }
     }
 
-    state = state.copyWith(notes: _sortNotes(notes, order), sortOrder: order);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(AppConstants.prefSortMode, order.name);
+    _sortModes[_scope] = order;
+    state = state.copyWith(notes: _sort(notes, order), sortOrder: order);
+    await _persistSortModes();
   }
 
   /// Riordina manualmente le note (trascina e rilascia).
@@ -423,7 +559,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       newIndex -= 1;
     }
 
-    final global = _sortNotes(state.notes, NoteSortOrder.custom);
+    final global = _sort(state.notes, NoteSortOrder.custom);
     final visible = visibleIds ?? global.map((n) => n.id).toList();
     if (oldIndex < 0 || oldIndex >= visible.length) return;
     newIndex = newIndex.clamp(0, visible.length - 1);
@@ -448,6 +584,20 @@ class NotesNotifier extends StateNotifier<NotesState> {
       arranged[slots[k]] = byId[reorderedVisible[k]]!;
     }
 
+    final wasCustom = state.sortOrder == NoteSortOrder.custom;
+
+    if (_scope != _allScope) {
+      // Vista di una CARTELLA: l'ordine manuale è un elenco di id locale a
+      // questa cartella. Nessuna scrittura su SQLite, nessun `updated_at`
+      // modificato e nessun effetto sulle altre viste.
+      _folderCustomOrders[_scope] = arranged.map((n) => n.id).toList();
+      _sortModes[_scope] = NoteSortOrder.custom;
+      state = state.copyWith(notes: arranged, sortOrder: NoteSortOrder.custom);
+      unawaited(_persistFolderOrders());
+      if (!wasCustom) unawaited(_persistSortModes());
+      return;
+    }
+
     final now = DateTime.now();
     final changed = <NoteModel>[];
     final result = <NoteModel>[];
@@ -462,13 +612,12 @@ class NotesNotifier extends StateNotifier<NotesState> {
       }
     }
 
-    final wasCustom = state.sortOrder == NoteSortOrder.custom;
     state = state.copyWith(notes: result, sortOrder: NoteSortOrder.custom);
     if (!wasCustom) {
       // Il riordino attiva l'ordine manuale: va ricordato anche dopo il
       // riavvio, altrimenti `order_index` è persistito ma non usato.
-      unawaited(SharedPreferences.getInstance()
-          .then((p) => p.setString(AppConstants.prefSortMode, NoteSortOrder.custom.name)));
+      _sortModes[_scope] = NoteSortOrder.custom;
+      unawaited(_persistSortModes());
     }
     if (changed.isNotEmpty) {
       unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
@@ -516,14 +665,19 @@ class NotesNotifier extends StateNotifier<NotesState> {
           title: items[i].title,
           content: items[i].content,
           folderId: items[i].folderId,
-          createdAt: now,
-          updatedAt: now,
+          // Istanti DISTINTI (1 ms l'uno dall'altro, l'ultimo = now): con
+          // un unico `now` tutte le note importate avevano la stessa data
+          // di creazione/modifica e il loro ordine reciproco era deciso
+          // dall'UUID casuale, cioè diverso a ogni avvio. Così l'ordine di
+          // importazione resta stabile e le note non finiscono nel futuro.
+          createdAt: now.subtract(Duration(milliseconds: items.length - 1 - i)),
+          updatedAt: now.subtract(Duration(milliseconds: items.length - 1 - i)),
           orderIndex: baseIndex + i,
         ),
     ];
 
     state = state.copyWith(
-      notes: _sortNotes([...state.notes, ...newNotes], state.sortOrder),
+      notes: _sort([...state.notes, ...newNotes], state.sortOrder),
     );
 
     unawaited(_persist(() => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList())));
@@ -553,7 +707,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     );
 
     state = state.copyWith(
-      notes: _sortNotes([newNote, ...state.notes], state.sortOrder),
+      notes: _sort([newNote, ...state.notes], state.sortOrder),
       activeNoteId: () => newNote.id,
     );
     unawaited(_persist(() => _dao.upsert(newNote.toRow())));
@@ -565,9 +719,18 @@ class NotesNotifier extends StateNotifier<NotesState> {
     if (index == -1) return;
 
     final existing = state.notes[index];
+    // BUG CORRETTO: ogni chiamata aggiornava `updatedAt` e marcava la nota
+    // "dirty" anche se testo e titolo erano identici (es. callback
+    // dell'editor/toolbar senza modifica reale): la nota saliva in cima
+    // all'ordinamento per "ultima modifica" e veniva rispedita al server
+    // senza motivo.
+    final newTitle = title ?? existing.title;
+    final newContent = content ?? existing.content;
+    if (newTitle == existing.title && newContent == existing.content) return;
+
     final updatedNote = existing.copyWith(
-      title: title ?? existing.title,
-      content: content ?? existing.content,
+      title: newTitle,
+      content: newContent,
       updatedAt: DateTime.now(),
     );
 
@@ -602,7 +765,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final updatedList = List<NoteModel>.from(state.notes);
     updatedList[index] = updatedNote;
 
-    state = state.copyWith(notes: _sortNotes(updatedList, state.sortOrder));
+    state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
     unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
   }
 
@@ -641,14 +804,23 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final updatedList = List<NoteModel>.from(state.notes);
     updatedList[index] = updatedNote;
 
-    state = state.copyWith(notes: _sortNotes(updatedList, state.sortOrder));
+    state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
     unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
   }
 
 }
 
 final notesProvider = StateNotifierProvider<NotesNotifier, NotesState>((ref) {
-  return NotesNotifier();
+  final notifier = NotesNotifier();
+  // Ogni vista ("Tutte le note" / cartella) ha il proprio ordinamento: il
+  // notifier deve sapere quale cartella è selezionata. `fireImmediately`
+  // copre l'eventuale selezione già presente alla creazione.
+  ref.listen<String?>(
+    folderProvider.select((s) => s.selectedFolderId),
+    (previous, next) => notifier.setScope(next),
+    fireImmediately: true,
+  );
+  return notifier;
 });
 
 /// Provider for the currently active note

@@ -26,12 +26,17 @@ class NoteCard extends ConsumerWidget {
     this.dragIndex,
   });
 
-  String _formatDate(DateTime dt) {
+  String _formatDate(DateTime dt, String locale) {
     final now = DateTime.now();
     if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
-      return DateFormat.Hm().format(dt);
+      return DateFormat.Hm(locale).format(dt);
     }
-    return DateFormat('d MMM').format(dt);
+    // Anno esplicito per le note di anni precedenti: "12 mar" da solo è
+    // ambiguo quando si ordina per data di creazione.
+    if (dt.year != now.year) {
+      return DateFormat.yMMMd(locale).format(dt);
+    }
+    return DateFormat.MMMd(locale).format(dt);
   }
 
   void _showMoveNoteDialog(BuildContext context, WidgetRef ref, NoteModel note) {
@@ -201,6 +206,7 @@ class NoteCard extends ConsumerWidget {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
 
     final handleBorderColor = isSelected
         ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.35 : 0.22)
@@ -270,7 +276,17 @@ class NoteCard extends ConsumerWidget {
                             ),
                           ),
                           Text(
-                            _formatDate(note.updatedAt),
+                            _formatDate(
+                              // La data mostrata è quella per cui la lista è
+                              // ordinata: prima con "data creazione" si vedeva
+                              // sempre la data di modifica, quindi l'ordine
+                              // sembrava sbagliato.
+                              (sortOrder == NoteSortOrder.createdDesc ||
+                                      sortOrder == NoteSortOrder.createdAsc)
+                                  ? note.createdAt
+                                  : note.updatedAt,
+                              Localizations.localeOf(context).toString(),
+                            ),
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                               fontSize: 11,
