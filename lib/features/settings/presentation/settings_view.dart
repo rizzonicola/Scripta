@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/l10n/desktop_strings.dart';
+import '../../../core/utils/app_commands.dart';
+import '../../../core/utils/platform_utils.dart';
+import '../../../core/widgets/shortcuts_help_dialog.dart';
 import '../../../core/theme/color_schemes.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../providers/settings_provider.dart';
@@ -382,13 +386,28 @@ class SettingsView extends ConsumerWidget {
           // Section: About
           _buildSectionHeader(theme, l10n.about),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.info_outline_rounded),
-              title: Text(l10n.about),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () {
-                AboutCreditsDialog.show(context);
-              },
+            child: Column(
+              children: [
+                // Solo desktop: su mobile non c'è tastiera fisica.
+                if (isDesktopPlatform) ...[
+                  ListTile(
+                    leading: const Icon(Icons.keyboard_alt_outlined),
+                    title: Text(DesktopStrings.of(context).keyboardShortcuts),
+                    subtitle: Text(commandShortcutLabel(AppCommand.help)),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => ShortcutsHelpDialog.show(context),
+                  ),
+                  const Divider(height: 1),
+                ],
+                ListTile(
+                  leading: const Icon(Icons.info_outline_rounded),
+                  title: Text(l10n.about),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () {
+                    AboutCreditsDialog.show(context);
+                  },
+                ),
+              ],
             ),
           ),
 

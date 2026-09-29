@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/utils/app_commands.dart';
+import '../../../core/utils/markdown_toolbar_actions.dart';
 import '../../notes/providers/notes_provider.dart';
 import '../models/editor_state_model.dart';
 import '../models/search_highlighting_text_controller.dart';
@@ -34,6 +36,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   // [SearchHighlightingTextEditingController] per il razionale completo).
   late final SearchHighlightingTextEditingController _contentController;
   late final UndoHistoryController _undoController;
+  final FocusNode _contentFocusNode = FocusNode();
 
   String? _currentNoteId;
 
@@ -70,6 +73,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _titleController.dispose();
     _contentController.dispose();
     _undoController.dispose();
+    _contentFocusNode.dispose();
     super.dispose();
   }
 
@@ -241,7 +245,54 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       ref.read(syncProvider.notifier).notifyEditorActivity();
     }
 
-    return Stack(
+    // Formattazione da tastiera (Ctrl/Cmd + B, I, K, 1-3): stessa logica e
+    // stesso salvataggio dei pulsanti della toolbar (`handleContentChanged`).
+    // Legata al focus del campo di testo, quindi attiva solo mentre si
+    // scrive nell'editor in modalità Modifica.
+    void formatShortcut(VoidCallback action) {
+      // Solo se si sta scrivendo nel corpo: nel titolo non ha senso
+      // inserire markup nel contenuto.
+      if (!_contentFocusNode.hasFocus) return;
+      action();
+      handleContentChanged(_contentController.text);
+    }
+
+    final formattingBindings = <ShortcutActivator, VoidCallback>{
+      if (editorMode == EditorMode.edit) ...{
+        editorActivatorFor(EditorCommand.bold): () => formatShortcut(
+              () => MarkdownToolbarActions.wrapSelection(
+                _contentController,
+                '**',
+                '**',
+                defaultText: 'bold text',
+              ),
+            ),
+        editorActivatorFor(EditorCommand.italic): () => formatShortcut(
+              () => MarkdownToolbarActions.wrapSelection(
+                _contentController,
+                '*',
+                '*',
+                defaultText: 'italic text',
+              ),
+            ),
+        editorActivatorFor(EditorCommand.link): () => formatShortcut(
+              () => MarkdownToolbarActions.insertLink(_contentController),
+            ),
+        editorActivatorFor(EditorCommand.heading1): () => formatShortcut(
+              () => MarkdownToolbarActions.prependLine(_contentController, '# '),
+            ),
+        editorActivatorFor(EditorCommand.heading2): () => formatShortcut(
+              () => MarkdownToolbarActions.prependLine(_contentController, '## '),
+            ),
+        editorActivatorFor(EditorCommand.heading3): () => formatShortcut(
+              () => MarkdownToolbarActions.prependLine(_contentController, '### '),
+            ),
+      },
+    };
+
+    return CallbackShortcuts(
+      bindings: formattingBindings,
+      child: Stack(
       children: [
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -281,6 +332,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                           titleController: _titleController,
                           contentController: _contentController,
                           undoController: _undoController,
+                          contentFocusNode: _contentFocusNode,
                           activeSearchMatch: activeSearchMatch,
                           onTitleChanged: (val) {
                             ref.read(notesProvider.notifier).updateNote(
@@ -307,6 +359,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
             child: FocusModeExitButton(),
           ),
       ],
+      ),
     );
   }
 }

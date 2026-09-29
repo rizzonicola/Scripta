@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/l10n/desktop_strings.dart';
 import '../../../core/services/export_service.dart';
 import '../../../core/services/import_service.dart';
+import '../../../core/utils/app_commands.dart';
+import '../../../core/utils/platform_utils.dart';
+import '../../../core/widgets/context_menu.dart';
+import '../../../core/widgets/shortcuts_help_dialog.dart';
+import '../../notes/providers/notes_provider.dart';
 import '../../settings/presentation/settings_view.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/folder_node.dart';
@@ -60,7 +66,7 @@ class FolderTreeView extends ConsumerWidget {
                 IconButton(
                   icon: const Icon(Icons.create_new_folder_outlined, size: 20),
                   tooltip: l10n.newFolder,
-                  onPressed: () => _showAddFolderDialog(context, ref),
+                  onPressed: () => showAddFolderDialog(context, ref),
                 ),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert_rounded, size: 20),
@@ -70,6 +76,8 @@ class FolderTreeView extends ConsumerWidget {
                       ExportService.exportAllAsZip(context, ref);
                     } else if (val == 'import') {
                       ImportService.showImportOptions(context, ref);
+                    } else if (val == 'shortcuts') {
+                      ShortcutsHelpDialog.show(context);
                     }
                   },
                   itemBuilder: (ctx) => [
@@ -93,6 +101,17 @@ class FolderTreeView extends ConsumerWidget {
                         ],
                       ),
                     ),
+                    if (isDesktopPlatform)
+                      PopupMenuItem(
+                        value: 'shortcuts',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.keyboard_alt_outlined, size: 18),
+                            const SizedBox(width: 8),
+                            Text(DesktopStrings.of(ctx).keyboardShortcuts),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ],
@@ -103,12 +122,16 @@ class FolderTreeView extends ConsumerWidget {
           // "All Notes" item
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: _FolderItemTile(
-              title: l10n.allNotes,
-              icon: Icons.notes_rounded,
-              isSelected: isAllNotesSelected,
-              onTap: () =>
-                  ref.read(folderProvider.notifier).selectFolder(null),
+            child: ContextMenuRegion(
+              enabled: isDesktopPlatform,
+              entriesBuilder: (ctx) => _workspaceMenuEntries(ctx, ref),
+              child: _FolderItemTile(
+                title: l10n.allNotes,
+                icon: Icons.notes_rounded,
+                isSelected: isAllNotesSelected,
+                onTap: () =>
+                    ref.read(folderProvider.notifier).selectFolder(null),
+              ),
             ),
           ),
 
@@ -119,15 +142,24 @@ class FolderTreeView extends ConsumerWidget {
 
           // Folders Tree
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              children: rootFolders
-                  .map((node) => _FolderNodeView(
-                        key: ValueKey(node.id),
-                        node: node,
-                        depth: 0,
-                      ))
-                  .toList(),
+            // Tasto destro sullo spazio vuoto sotto/tra le cartelle: stesso
+            // menu di "Tutte le note". Le cartelle hanno il proprio menu
+            // (regione più interna, ha la precedenza).
+            child: ContextMenuRegion(
+              enabled: isDesktopPlatform,
+              behavior: HitTestBehavior.opaque,
+              entriesBuilder: (ctx) => _workspaceMenuEntries(ctx, ref),
+              child: ListView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                children: rootFolders
+                    .map((node) => _FolderNodeView(
+                          key: ValueKey(node.id),
+                          node: node,
+                          depth: 0,
+                        ))
+                    .toList(),
+              ),
             ),
           ),
 
@@ -149,7 +181,106 @@ class FolderTreeView extends ConsumerWidget {
   }
 }
 
-void _showAddFolderDialog(
+/// Menu di "Tutte le note" / spazio vuoto della barra laterale.
+List<ContextMenuEntry> _workspaceMenuEntries(BuildContext context, WidgetRef ref) {
+  final l10n = AppLocalizations.of(context);
+  final ds = DesktopStrings.of(context);
+  return [
+    ContextMenuEntry(
+      label: l10n.newNote,
+      icon: Icons.note_add_outlined,
+      shortcut: commandShortcutLabel(AppCommand.newNote),
+      onSelected: () {
+        ref.read(folderProvider.notifier).selectFolder(null);
+        ref.read(notesProvider.notifier).createNote();
+      },
+    ),
+    ContextMenuEntry(
+      label: l10n.newFolder,
+      icon: Icons.create_new_folder_outlined,
+      shortcut: commandShortcutLabel(AppCommand.newFolder),
+      onSelected: () => showAddFolderDialog(context, ref),
+    ),
+    const ContextMenuEntry.divider(),
+    ContextMenuEntry(
+      label: ds.exportAllZip,
+      icon: Icons.archive_outlined,
+      onSelected: () => ExportService.exportAllAsZip(context, ref),
+    ),
+    ContextMenuEntry(
+      label: ds.importNotes,
+      icon: Icons.file_upload_outlined,
+      onSelected: () => ImportService.showImportOptions(context, ref),
+    ),
+    const ContextMenuEntry.divider(),
+    ContextMenuEntry(
+      label: ds.keyboardShortcuts,
+      icon: Icons.keyboard_alt_outlined,
+      shortcut: commandShortcutLabel(AppCommand.help),
+      onSelected: () => ShortcutsHelpDialog.show(context),
+    ),
+  ];
+}
+
+/// Voci del menu di una cartella: le stesse del bottom sheet mobile ("..."),
+/// più "Nuova nota qui" ed "Espandi/Comprimi".
+List<ContextMenuEntry> _folderMenuEntries(
+  BuildContext context,
+  WidgetRef ref,
+  FolderNode node,
+) {
+  final l10n = AppLocalizations.of(context);
+  final ds = DesktopStrings.of(context);
+  return [
+    ContextMenuEntry(
+      label: ds.newNoteHere,
+      icon: Icons.note_add_outlined,
+      onSelected: () {
+        ref.read(folderProvider.notifier).selectFolder(node.id);
+        ref.read(notesProvider.notifier).createNote(folderId: node.id);
+      },
+    ),
+    ContextMenuEntry(
+      label: l10n.newSubfolder,
+      icon: Icons.create_new_folder_outlined,
+      onSelected: () => showAddFolderDialog(context, ref, parentId: node.id),
+    ),
+    if (node.children.isNotEmpty)
+      ContextMenuEntry(
+        label: node.isExpanded ? ds.collapse : ds.expand,
+        icon: node.isExpanded
+            ? Icons.unfold_less_rounded
+            : Icons.unfold_more_rounded,
+        onSelected: () =>
+            ref.read(folderProvider.notifier).toggleExpand(node.id),
+      ),
+    const ContextMenuEntry.divider(),
+    ContextMenuEntry(
+      label: l10n.renameFolder,
+      icon: Icons.edit_outlined,
+      onSelected: () => _showRenameFolderDialog(context, ref, node),
+    ),
+    ContextMenuEntry(
+      label: ds.moveFolder,
+      icon: Icons.drive_file_move_outlined,
+      onSelected: () => _showMoveFolderDialog(context, ref, node),
+    ),
+    ContextMenuEntry(
+      label: ds.exportFolderZip,
+      icon: Icons.folder_zip_outlined,
+      onSelected: () => ExportService.exportFolderAsZip(context, ref, node),
+    ),
+    const ContextMenuEntry.divider(),
+    ContextMenuEntry(
+      label: l10n.deleteFolder,
+      icon: Icons.delete_outline,
+      isDestructive: true,
+      onSelected: () => _showDeleteConfirmDialog(context, ref, node),
+    ),
+  ];
+}
+
+void showAddFolderDialog(
     BuildContext context,
     WidgetRef ref, {
     String? parentId,
@@ -224,7 +355,7 @@ void _showAddFolderDialog(
                 title: Text(l10n.newSubfolder),
                 onTap: () {
                   Navigator.of(sheetCtx).pop();
-                  _showAddFolderDialog(context, ref, parentId: node.id);
+                  showAddFolderDialog(context, ref, parentId: node.id);
                 },
               ),
               ListTile(
@@ -526,20 +657,36 @@ class _FolderNodeView extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _FolderItemTile(
-          title: node.name,
-          icon: node.isExpanded
-              ? Icons.folder_open_outlined
-              : Icons.folder_outlined,
-          depth: depth,
-          isSelected: isSelected,
-          hasChildren: hasChildren,
-          isExpanded: node.isExpanded,
-          onToggleExpand: () =>
-              ref.read(folderProvider.notifier).toggleExpand(node.id),
-          onTap: () =>
-              ref.read(folderProvider.notifier).selectFolder(node.id),
-          onMoreOptions: () => _showFolderOptions(context, ref, node),
+        ContextMenuRegion(
+          enabled: isDesktopPlatform,
+          entriesBuilder: (ctx) => _folderMenuEntries(ctx, ref, node),
+          child: _FolderItemTile(
+            title: node.name,
+            icon: node.isExpanded
+                ? Icons.folder_open_outlined
+                : Icons.folder_outlined,
+            depth: depth,
+            isSelected: isSelected,
+            hasChildren: hasChildren,
+            isExpanded: node.isExpanded,
+            onToggleExpand: () =>
+                ref.read(folderProvider.notifier).toggleExpand(node.id),
+            onTap: () =>
+                ref.read(folderProvider.notifier).selectFolder(node.id),
+            // Desktop: menu a comparsa ancorato al pulsante "..." (identico
+            // al tasto destro). Mobile/tablet: bottom sheet come prima.
+            onMoreOptions: (buttonPosition) {
+              if (isDesktopPlatform) {
+                showContextMenu(
+                  context,
+                  buttonPosition,
+                  _folderMenuEntries(context, ref, node),
+                );
+              } else {
+                _showFolderOptions(context, ref, node);
+              }
+            },
+          ),
         ),
         if (hasChildren && node.isExpanded)
           ...node.children.map(
@@ -563,7 +710,9 @@ class _FolderItemTile extends StatelessWidget {
   final bool isExpanded;
   final VoidCallback onTap;
   final VoidCallback? onToggleExpand;
-  final VoidCallback? onMoreOptions;
+  /// Riceve la posizione globale (angolo in basso a sinistra del pulsante
+  /// "...") a cui ancorare un menu a comparsa.
+  final ValueChanged<Offset>? onMoreOptions;
 
   const _FolderItemTile({
     required this.title,
@@ -635,13 +784,20 @@ class _FolderItemTile extends StatelessWidget {
               ),
             ),
             if (onMoreOptions != null)
-              IconButton(
-                icon: const Icon(Icons.more_horiz, size: 16),
-                visualDensity: VisualDensity.compact,
-                splashRadius: 16,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                onPressed: onMoreOptions,
+              Builder(
+                builder: (buttonContext) => IconButton(
+                  icon: const Icon(Icons.more_horiz, size: 16),
+                  visualDensity: VisualDensity.compact,
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  onPressed: () {
+                    final box = buttonContext.findRenderObject() as RenderBox;
+                    onMoreOptions!(
+                      box.localToGlobal(Offset(0, box.size.height)),
+                    );
+                  },
+                ),
               ),
           ],
         ),

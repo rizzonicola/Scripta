@@ -3,6 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/utils/app_commands.dart';
+import '../../../core/utils/focus_requests.dart';
+import '../../../core/utils/platform_utils.dart';
+import '../../../core/widgets/context_menu.dart';
+import '../../folders/presentation/folder_tree_view.dart' show showAddFolderDialog;
 import '../../../core/theme/color_schemes.dart';
 import '../../editor/providers/note_search_provider.dart';
 import '../../folders/providers/folder_provider.dart';
@@ -24,6 +29,7 @@ class NotesListView extends ConsumerStatefulWidget {
 
 class _NotesListViewState extends ConsumerState<NotesListView> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
 
   // Debounce della ricerca: il filtro (filteredNotesProvider) è in-memory e
   // quindi economico anche per singolo carattere, ma su liste di note molto
@@ -37,6 +43,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
   void dispose() {
     _searchDebounceTimer?.cancel();
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -193,6 +200,16 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
 
+    // Ctrl+Shift+F: porta il focus sul campo di ricerca e seleziona il testo
+    // già presente, così si può riscrivere subito.
+    ref.listen<int>(globalSearchFocusRequestProvider, (_, __) {
+      _searchFocusNode.requestFocus();
+      _searchController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _searchController.text.length,
+      );
+    });
+
     // Fine-grained Riverpod selectors
     final notes = ref.watch(filteredNotesProvider);
     final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
@@ -220,6 +237,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: TextField(
               controller: _searchController,
+              focusNode: _searchFocusNode,
               onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: l10n.searchNotes,
@@ -296,7 +314,19 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
 
           // Notes List: ReorderableListView in custom mode, regular ListView otherwise
           Expanded(
-            child: notes.isEmpty
+            // Tasto destro sullo spazio vuoto della lista (o sullo stato
+            // "nessuna nota"): nuova nota / nuova cartella / ordinamento.
+            // Ogni NoteCard ha il proprio menu (regione più interna).
+            child: ContextMenuRegion(
+              enabled: isDesktopPlatform,
+              behavior: HitTestBehavior.opaque,
+              entriesBuilder: (ctx) => _listMenuEntries(
+                ctx,
+                l10n,
+                sortOrder,
+                selectedFolderId,
+              ),
+              child: notes.isEmpty
                 ? _buildEmptyState(context, l10n, theme)
                 : isCustomReorderActive
                     ? ReorderableListView.builder(
@@ -356,10 +386,63 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                           );
                         },
                       ),
+            ),
           ),
         ],
       ),
     );
+  }
+
+  /// Menu contestuale dello spazio vuoto della lista note.
+  List<ContextMenuEntry> _listMenuEntries(
+    BuildContext context,
+    AppLocalizations l10n,
+    NoteSortOrder activeSort,
+    String? selectedFolderId,
+  ) {
+    ContextMenuEntry sortEntry(String label, NoteSortOrder order) {
+      return ContextMenuEntry(
+        label: label,
+        isChecked: activeSort == order,
+        onSelected: () =>
+            ref.read(notesProvider.notifier).setSortOrder(order),
+      );
+    }
+
+    return [
+      ContextMenuEntry(
+        label: l10n.newNote,
+        icon: Icons.note_add_outlined,
+        shortcut: commandShortcutLabel(AppCommand.newNote),
+        onSelected: () {
+          final newNote = ref
+              .read(notesProvider.notifier)
+              .createNote(folderId: selectedFolderId);
+          widget.onNoteSelected?.call(newNote);
+        },
+      ),
+      ContextMenuEntry(
+        // Con una cartella selezionata la nuova cartella nasce al suo
+        // interno, come sottocartella.
+        label: selectedFolderId == null ? l10n.newFolder : l10n.newSubfolder,
+        icon: Icons.create_new_folder_outlined,
+        // La scorciatoia crea sempre una cartella al livello principale.
+        shortcut: selectedFolderId == null
+            ? commandShortcutLabel(AppCommand.newFolder)
+            : null,
+        onSelected: () =>
+            showAddFolderDialog(context, ref, parentId: selectedFolderId),
+      ),
+      const ContextMenuEntry.divider(),
+      ContextMenuEntry.header(l10n.sortBy),
+      sortEntry(l10n.sortUpdatedDesc, NoteSortOrder.updatedDesc),
+      sortEntry(l10n.sortUpdatedAsc, NoteSortOrder.updatedAsc),
+      sortEntry(l10n.sortCreatedDesc, NoteSortOrder.createdDesc),
+      sortEntry(l10n.sortCreatedAsc, NoteSortOrder.createdAsc),
+      sortEntry(l10n.sortTitleAsc, NoteSortOrder.titleAsc),
+      sortEntry(l10n.sortTitleDesc, NoteSortOrder.titleDesc),
+      sortEntry(l10n.sortCustom, NoteSortOrder.custom),
+    ];
   }
 
   Widget _buildEmptyState(

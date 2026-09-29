@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/color_schemes.dart';
+import '../../../core/utils/focus_requests.dart';
 import '../providers/note_search_provider.dart';
 
 /// Barra di ricerca INTERNA alla nota ("Trova nel documento"), mostrata in
@@ -67,6 +68,16 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
+
+    // Ctrl+F con la barra già aperta: riporta il focus qui e seleziona il
+    // termine, come nei "Trova" di ogni editor.
+    ref.listen<int>(noteSearchFocusRequestProvider, (_, __) {
+      _focusNode.requestFocus();
+      _queryController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _queryController.text.length,
+      );
+    });
 
     final matches = ref.watch(noteSearchMatchesProvider);
     final activeIndex = ref.watch(noteSearchActiveMatchIndexProvider);

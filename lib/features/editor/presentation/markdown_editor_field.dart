@@ -9,6 +9,11 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
   final TextEditingController titleController;
   final TextEditingController contentController;
   final UndoHistoryController? undoController;
+
+  /// Focus del campo di contenuto (opzionale): permette al pannello editor
+  /// di sapere se si sta scrivendo nel corpo o nel titolo (scorciatoie di
+  /// formattazione Markdown).
+  final FocusNode? contentFocusNode;
   final ValueChanged<String>? onTitleChanged;
   final ValueChanged<String>? onContentChanged;
 
@@ -27,6 +32,7 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
     required this.titleController,
     required this.contentController,
     this.undoController,
+    this.contentFocusNode,
     this.onTitleChanged,
     this.onContentChanged,
     this.activeSearchMatch,
@@ -327,6 +333,7 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
                 key: _contentFieldKey,
                 child: TextField(
                   controller: widget.contentController,
+                  focusNode: widget.contentFocusNode,
                   undoController: widget.undoController,
                   onChanged: widget.onContentChanged,
                   style: contentStyle,

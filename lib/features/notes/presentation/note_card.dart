@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/l10n/desktop_strings.dart';
+import '../../../core/utils/app_commands.dart';
+import '../../../core/utils/platform_utils.dart';
+import '../../../core/widgets/context_menu.dart';
 import '../../../core/services/export_service.dart';
 import '../../../core/theme/color_schemes.dart';
 import '../../folders/models/folder_node.dart';
@@ -39,7 +43,9 @@ class NoteCard extends ConsumerWidget {
     return DateFormat.MMMd(locale).format(dt);
   }
 
-  void _showMoveNoteDialog(BuildContext context, WidgetRef ref, NoteModel note) {
+  /// Dialog "Sposta in cartella": pubblico perché usato anche dal menu
+  /// contestuale e dalla scorciatoia Ctrl+Shift+M.
+  static void showMoveNoteDialog(BuildContext context, WidgetRef ref, NoteModel note) {
     final folderState = ref.read(folderProvider);
     final theme = Theme.of(context);
 
@@ -168,10 +174,11 @@ class NoteCard extends ConsumerWidget {
     );
   }
 
-  void _confirmDelete(
+  static void confirmDelete(
     BuildContext context,
     WidgetRef ref,
     AppLocalizations l10n,
+    NoteModel note,
   ) {
     showDialog<bool>(
       context: context,
@@ -201,8 +208,64 @@ class NoteCard extends ConsumerWidget {
     });
   }
 
+  /// Voci del menu contestuale di una nota (tasto destro).
+  static List<ContextMenuEntry> contextMenuEntries(
+    BuildContext context,
+    WidgetRef ref,
+    NoteModel note,
+  ) {
+    final l10n = AppLocalizations.of(context);
+    final ds = DesktopStrings.of(context);
+    final notifier = ref.read(notesProvider.notifier);
+    return [
+      ContextMenuEntry(
+        label: note.isPinned ? ds.unpin : ds.pin,
+        icon: note.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+        shortcut: commandShortcutLabel(AppCommand.pinNote),
+        onSelected: () => notifier.togglePin(note.id),
+      ),
+      ContextMenuEntry(
+        label: ds.moveTo,
+        icon: Icons.drive_file_move_outlined,
+        shortcut: commandShortcutLabel(AppCommand.moveNote),
+        onSelected: () => showMoveNoteDialog(context, ref, note),
+      ),
+      ContextMenuEntry(
+        label: ds.duplicate,
+        icon: Icons.copy_rounded,
+        shortcut: commandShortcutLabel(AppCommand.duplicateNote),
+        onSelected: () =>
+            notifier.duplicateNote(note.id, copySuffix: ds.copySuffix),
+      ),
+      ContextMenuEntry(
+        label: ds.exportMarkdown,
+        icon: Icons.file_download_outlined,
+        shortcut: commandShortcutLabel(AppCommand.exportNote),
+        onSelected: () => ExportService.exportNoteAsMarkdown(context, note),
+      ),
+      const ContextMenuEntry.divider(),
+      ContextMenuEntry(
+        label: l10n.delete,
+        icon: Icons.delete_outline_rounded,
+        isDestructive: true,
+        shortcut: commandShortcutLabel(AppCommand.deleteNote),
+        onSelected: () => confirmDelete(context, ref, l10n, note),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    return ContextMenuRegion(
+      enabled: isDesktopPlatform,
+      // Il tasto destro apre il menu della nota e NON quello dello spazio
+      // vuoto della lista (regione più esterna).
+      entriesBuilder: (ctx) => contextMenuEntries(ctx, ref, note),
+      child: _buildCard(context, ref),
+    );
+  }
+
+  Widget _buildCard(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -352,7 +415,7 @@ class NoteCard extends ConsumerWidget {
                                 splashRadius: 12,
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
-                                onPressed: () => _showMoveNoteDialog(context, ref, note),
+                                onPressed: () => showMoveNoteDialog(context, ref, note),
                               ),
                               IconButton(
                                 icon: Icon(
@@ -379,7 +442,7 @@ class NoteCard extends ConsumerWidget {
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
                                 onPressed: () =>
-                                    _confirmDelete(context, ref, l10n),
+                                    confirmDelete(context, ref, l10n, note),
                               ),
                             ],
                           ),

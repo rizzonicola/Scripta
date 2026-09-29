@@ -11,6 +11,7 @@ import '../features/notes/providers/notes_provider.dart';
 import '../features/onboarding/presentation/onboarding_dialog.dart';
 import '../features/onboarding/providers/onboarding_provider.dart';
 import '../features/sync/providers/sync_provider.dart';
+import 'app_shortcuts_scope.dart';
 import 'top_app_bar.dart';
 
 enum MobileActiveView {
@@ -205,7 +206,18 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: systemOverlay,
-      child: shellContent,
+      // Scorciatoie da tastiera globali (Ctrl/Cmd+N, +F, F1...): vedi
+      // core/utils/app_commands.dart per l'elenco completo.
+      child: AppShortcutsScope(
+        onEditorRequested: () {
+          // Layout mobile a pannello singolo: mostra l'editor quando un
+          // comando crea o duplica una nota.
+          if (_mobileActiveView != MobileActiveView.editor) {
+            setState(() => _mobileActiveView = MobileActiveView.editor);
+          }
+        },
+        child: shellContent,
+      ),
     );
   }
 }

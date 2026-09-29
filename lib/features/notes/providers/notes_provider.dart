@@ -793,6 +793,21 @@ class NotesNotifier extends StateNotifier<NotesState> {
     unawaited(_persist(() => _dao.upsert(tombstoneRow)));
   }
 
+  /// Crea una copia della nota [id] (stessa cartella, stesso contenuto) e la
+  /// rende attiva. Il titolo riceve [copySuffix] se non è vuoto. Restituisce
+  /// la nuova nota, o `null` se [id] non esiste.
+  NoteModel? duplicateNote(String id, {String copySuffix = ' (copy)'}) {
+    final index = state.notes.indexWhere((n) => n.id == id);
+    if (index == -1) return null;
+    final source = state.notes[index];
+
+    final copy = createNote(folderId: source.folderId);
+    final newTitle =
+        source.title.trim().isEmpty ? source.title : '${source.title}$copySuffix';
+    updateNote(copy.id, title: newTitle, content: source.content);
+    return state.notes.firstWhere((n) => n.id == copy.id, orElse: () => copy);
+  }
+
   void togglePin(String id) {
     unawaited(flushPendingSaves()); // vedi moveNote
     final index = state.notes.indexWhere((n) => n.id == id);
