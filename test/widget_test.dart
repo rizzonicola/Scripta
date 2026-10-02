@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:scripta/app.dart';
 import 'package:scripta/core/database/app_database.dart';
+import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/core/utils/markdown_toolbar_actions.dart';
@@ -86,6 +87,15 @@ void main() {
 
     // Scripta title should be present
     expect(find.text('Scripta'), findsWidgets);
+
+    // I provider caricano da SQLite fuori dal FakeAsync del test: li si lascia
+    // finire (runAsync = tempo reale) prima che il tearDown chiuda il DB.
+    await tester.runAsync(() async {
+      await FoldersDao().getActive();
+      await NotesDao().getById('__drain__');
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    });
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   test('ScriptaCodeHighlighter highlights Dart code into styled tokens', () {
@@ -131,6 +141,14 @@ void main() {
     notesNotifier.moveNote(note.id, null);
     final rootNote = container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
     expect(rootNote.folderId, isNull);
+
+    // Le scritture sono fire-and-forget: attendere l'ultima (folderId null)
+    // prima che il tearDown chiuda il database.
+    final dao = NotesDao();
+    await waitUntil(() async {
+      final row = await dao.getById(note.id);
+      return row != null && row.folderId == null;
+    });
   });
 
   test('moveFolder moves folder and prevents cyclic moves', () async {
@@ -156,6 +174,14 @@ void main() {
 
     final roots = container.read(folderProvider).rootFolders;
     expect(roots.any((f) => f.id == child.id), isTrue);
+
+    // Attendere che l'ultimo UPDATE (parent_id = NULL) sia su disco prima
+    // che il tearDown chiuda il database.
+    final dao = FoldersDao();
+    await waitUntil(() async {
+      final row = await dao.getById(child.id);
+      return row != null && row.parentId == null;
+    });
   });
 
   test('deleteFolder cascades to subfolders and notes inside them', () async {

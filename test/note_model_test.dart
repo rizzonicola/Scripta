@@ -19,7 +19,7 @@ void main() {
     test('conta sequenze di caratteri non-spazio', () {
       expect(_note('uno').wordCount, 1);
       expect(_note('uno due  tre\nquattro\tcinque').wordCount, 5);
-      expect(_note('  spazi ai bordi  ').wordCount, 2);
+      expect(_note('  spazi ai bordi  ').wordCount, 3);
     });
 
     test('riconosce gli stessi spazi di \\s (spazio non separabile incluso)', () {
