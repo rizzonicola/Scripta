@@ -424,6 +424,13 @@ class NotesNotifier extends StateNotifier<NotesState> {
       final ids = _folderCustomOrders[_scope] ?? const <String>[];
       folderPos = <String, int>{for (var i = 0; i < ids.length; i++) ids[i]: i};
     }
+    // Ordinamento alfabetico: la chiave minuscola si calcola UNA volta per
+    // nota (O(n)) invece che a ogni confronto del comparatore, dove
+    // `toLowerCase()` allocava una nuova stringa O(n log n) volte.
+    final Map<String, String> titleKeys =
+        order == NoteSortOrder.titleAsc || order == NoteSortOrder.titleDesc
+            ? <String, String>{for (final n in sorted) n.id: n.title.toLowerCase()}
+            : const <String, String>{};
     sorted.sort((a, b) {
       if (order != NoteSortOrder.custom) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
@@ -434,8 +441,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
         NoteSortOrder.updatedAsc => a.updatedAt.compareTo(b.updatedAt),
         NoteSortOrder.createdDesc => b.createdAt.compareTo(a.createdAt),
         NoteSortOrder.createdAsc => a.createdAt.compareTo(b.createdAt),
-        NoteSortOrder.titleAsc => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
-        NoteSortOrder.titleDesc => b.title.toLowerCase().compareTo(a.title.toLowerCase()),
+        NoteSortOrder.titleAsc => titleKeys[a.id]!.compareTo(titleKeys[b.id]!),
+        NoteSortOrder.titleDesc => titleKeys[b.id]!.compareTo(titleKeys[a.id]!),
         NoteSortOrder.custom => folderPos == null
             ? a.orderIndex.compareTo(b.orderIndex)
             : _compareByFolderPosition(a, b, folderPos),
@@ -849,6 +856,38 @@ final activeNoteProvider = Provider<NoteModel?>((ref) {
   return notes.isNotEmpty ? notes.first : null;
 });
 
+/// Esito della ricerca testuale per nota, memorizzato PER ISTANZA di
+/// [NoteModel] e valido per UNA query alla volta.
+///
+/// Perché: `filteredNotesProvider` si ricalcola a ogni battitura nell'editor
+/// (ogni modifica produce una nuova lista di note). Con una ricerca attiva,
+/// il filtro rifaceva `toLowerCase()` sul contenuto COMPLETO di tutte le
+/// note a ogni carattere digitato (O(numero note × lunghezza testo)). Le note
+/// sono immutabili e ogni modifica crea una nuova istanza: tenere l'esito
+/// per istanza significa rivalutare solo la nota appena modificata. Quando la
+/// query cambia la cache si svuota; essendo `Expando`, non trattiene in
+/// memoria le note scartate. Nessuna copia minuscola del testo viene
+/// conservata: costa solo un booleano per nota.
+class _SearchMatchCache {
+  String _query = '';
+  Expando<bool> _matches = Expando<bool>('note-search-match');
+
+  bool matches(NoteModel note, String lowerQuery) {
+    if (lowerQuery != _query) {
+      _query = lowerQuery;
+      _matches = Expando<bool>('note-search-match');
+    }
+    final cached = _matches[note];
+    if (cached != null) return cached;
+    final result = note.title.toLowerCase().contains(lowerQuery) ||
+        note.content.toLowerCase().contains(lowerQuery);
+    _matches[note] = result;
+    return result;
+  }
+}
+
+final _searchMatchCacheProvider = Provider<_SearchMatchCache>((ref) => _SearchMatchCache());
+
 /// Provider for filtered notes based on folder and search query.
 ///
 /// Vista puramente derivata: legge la STESSA lista di [notesProvider] e la
@@ -876,9 +915,8 @@ final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
 
   if (searchQuery.trim().isNotEmpty) {
     final q = searchQuery.toLowerCase().trim();
-    filtered = filtered.where((n) {
-      return n.title.toLowerCase().contains(q) || n.content.toLowerCase().contains(q);
-    }).toList();
+    final cache = ref.read(_searchMatchCacheProvider);
+    filtered = filtered.where((n) => cache.matches(n, q)).toList();
   }
 
   return filtered;

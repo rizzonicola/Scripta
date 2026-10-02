@@ -32,7 +32,14 @@ class AppDatabase {
   ///   1 -> schema iniziale
   ///   2 -> colonna `dirty` su folders/notes (selezione del push indipendente
   ///        dall'orologio del client, vedi NotesDao.upsert)
-  static const int _schemaVersion = 2;
+  ///   3 -> indici PARZIALI sui tombstone (`deleted_at IS NOT NULL`) di
+  ///        folders/notes. La purge dei tombstone confermati gira dopo OGNI
+  ///        sync e, essendo `dirty = 0` vero per quasi tutte le righe,
+  ///        l'unico indice disponibile non la aiutava: scansionava l'intera
+  ///        tabella note (contenuto incluso). L'indice parziale contiene solo
+  ///        le righe cancellate (poche), quindi non costa spazio né scritture
+  ///        sulle note attive.
+  static const int _schemaVersion = 3;
   static final AppDatabase instance = AppDatabase._();
 
   Database? _db;
@@ -64,9 +71,29 @@ class AppDatabase {
     // Android/iOS: il databaseFactory di default del plugin sqflite va già bene.
   }
 
-  Future<Database> get db async {
-    _db ??= await _open();
-    return _db!;
+  /// Apertura in corso, condivisa tra i chiamanti: `folderProvider`,
+  /// `notesProvider` e `syncProvider` leggono `db` quasi simultaneamente al
+  /// primo avvio. Memorizzare il FUTURE (e non solo il risultato) garantisce
+  /// che [_open] venga eseguita UNA sola volta anche con chiamanti
+  /// concorrenti, invece di lanciare più `openDatabase` in parallelo sullo
+  /// stesso file (con PRAGMA/onCreate/onUpgrade ripetuti).
+  Future<Database>? _opening;
+
+  Future<Database> get db {
+    final open = _db;
+    if (open != null) return Future<Database>.value(open);
+    return _opening ??= _openOnce();
+  }
+
+  Future<Database> _openOnce() async {
+    try {
+      final database = await _open();
+      _db = database;
+      return database;
+    } finally {
+      // Anche in caso di errore: il chiamante successivo riprova da capo.
+      _opening = null;
+    }
   }
 
   Future<Database> _open() async {
@@ -95,6 +122,17 @@ class AppDatabase {
         await db.rawQuery('PRAGMA journal_mode = WAL');
         // "PRAGMA foreign_keys = ON" non restituisce righe: execute() va bene.
         await db.execute('PRAGMA foreign_keys = ON');
+        // Con WAL, `synchronous = NORMAL` è sicuro contro la corruzione (al
+        // più si perde l'ultima transazione in caso di blackout, mai per un
+        // semplice crash/kill dell'app) e riduce gli fsync a ogni commit:
+        // l'autosave con debounce pesa meno sull'I/O. Come per journal_mode
+        // si usa `rawQuery`, perché `execute()` su Android rifiuta gli
+        // statement che possono produrre un result set.
+        await db.rawQuery('PRAGMA synchronous = NORMAL');
+        // Attende fino a 5 s invece di fallire subito con SQLITE_BUSY se
+        // un'altra istanza dell'app (possibile su desktop) tiene per un
+        // istante il lock di scrittura sullo stesso file.
+        await db.rawQuery('PRAGMA busy_timeout = 5000');
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -130,6 +168,7 @@ class AppDatabase {
         await db.execute('CREATE INDEX idx_notes_updated ON notes(updated_at)');
         await db.execute('CREATE INDEX idx_notes_dirty ON notes(dirty)');
         await db.execute('CREATE INDEX idx_folders_dirty ON folders(dirty)');
+        await _createTombstoneIndexes(db);
 
         // Coppia chiave/valore per lo stato della sync (cursore
         // last_synced_at, ecc.). Le preferenze utente "generiche" restano su
@@ -166,11 +205,39 @@ class AppDatabase {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_notes_dirty ON notes(dirty)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_folders_dirty ON folders(dirty)');
     }
+
+    if (oldVersion < 3) {
+      await _createTombstoneIndexes(db);
+    }
+  }
+
+  /// Indici parziali per `purgeCleanTombstones`
+  /// (`WHERE deleted_at IS NOT NULL AND dirty = 0`): il planner di SQLite può
+  /// usarli perché la condizione dell'indice compare tra i termini AND della
+  /// query. `IF NOT EXISTS` rende la funzione idempotente (creazione e
+  /// migrazione condividono lo stesso codice).
+  static Future<void> _createTombstoneIndexes(Database db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_notes_tombstones ON notes(id) WHERE deleted_at IS NOT NULL',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_folders_tombstones ON folders(id) WHERE deleted_at IS NOT NULL',
+    );
   }
 
   /// Chiude la connessione (usato solo nei test, per garantire isolamento
   /// tra un test e l'altro).
   Future<void> close() async {
+    // Un'apertura ancora in volo scriverebbe `_db` DOPO questa chiusura,
+    // lasciando una connessione orfana: la si attende prima.
+    final pending = _opening;
+    if (pending != null) {
+      try {
+        await pending;
+      } catch (_) {
+        // L'apertura è fallita: non c'è nulla da chiudere.
+      }
+    }
     final d = _db;
     _db = null;
     await d?.close();

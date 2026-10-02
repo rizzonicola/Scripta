@@ -7,7 +7,7 @@ import '../../../core/utils/app_commands.dart';
 import '../../../core/utils/focus_requests.dart';
 import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/context_menu.dart';
-import '../../folders/presentation/folder_tree_view.dart' show showAddFolderDialog;
+import '../../folders/presentation/folder_dialogs.dart' show showAddFolderDialog;
 import '../../../core/theme/color_schemes.dart';
 import '../../editor/providers/note_search_provider.dart';
 import '../../folders/providers/folder_provider.dart';

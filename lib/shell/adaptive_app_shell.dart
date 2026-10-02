@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -28,6 +30,13 @@ class AdaptiveAppShell extends ConsumerStatefulWidget {
 
 class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     with WidgetsBindingObserver {
+  /// Pannello cartelle a scomparsa, identico su tablet e mobile.
+  static const Widget _folderDrawer = Drawer(
+    child: SafeArea(
+      child: FolderTreeView(),
+    ),
+  );
+
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   MobileActiveView _mobileActiveView = MobileActiveView.notesList;
   bool _hasCheckedOnboarding = false;
@@ -50,6 +59,13 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
+      // Prima di tutto: scrive subito la nota con modifiche ancora nel
+      // debounce di salvataggio (500 ms). La sync lo faceva già, ma solo con
+      // account connesso e "sync al cambio di stato dell'app" attiva: un
+      // utente solo-locale che mandava l'app in background subito dopo aver
+      // digitato rischiava di perdere gli ultimi caratteri se l'OS
+      // terminava il processo. È idempotente e quasi sempre un no-op.
+      unawaited(ref.read(notesProvider.notifier).flushPendingSaves());
       ref.read(syncProvider.notifier).onAppPaused();
     } else if (state == AppLifecycleState.resumed) {
       // Re-validate connectivity as soon as the app comes back to the
@@ -57,6 +73,21 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       // information (e.g. the network changed while the app was backgrounded).
       ref.read(syncProvider.notifier).onAppResumed();
     }
+  }
+
+  void _openFolderDrawer() => _scaffoldKey.currentState?.openDrawer();
+
+  void _showMobileEditor() {
+    if (_mobileActiveView != MobileActiveView.editor) {
+      setState(() => _mobileActiveView = MobileActiveView.editor);
+    }
+  }
+
+  /// Torna alla lista note (layout mobile). Chiude la nota aperta, quindi
+  /// notifica la sync (vedi `SyncNotifier.onNoteChangedOrClosed`).
+  void _showMobileNotesList() {
+    ref.read(syncProvider.notifier).onNoteChangedOrClosed();
+    setState(() => _mobileActiveView = MobileActiveView.notesList);
   }
 
   @override
@@ -94,129 +125,111 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
     );
 
-    Widget shellContent;
-
-    // 1. FOCUS MODE: Distraction-free full-screen writing or reading
-    if (editorFocusMode) {
-      shellContent = const Scaffold(
-        body: SafeArea(
-          child: NoteEditorPane(),
-        ),
-      );
-    } else if (screenType == DeviceScreenType.desktop) {
-      // 2. DESKTOP LAYOUT (3 Columns: Folders + Notes List + Editor)
-      shellContent = Scaffold(
-        key: _scaffoldKey,
-        appBar: const TopAppBar(),
-        body: const Row(
-          children: [
-            SizedBox(
-              width: AppConstants.folderSidebarWidth,
-              child: FolderTreeView(),
-            ),
-            SizedBox(
-              width: AppConstants.notesListWidth,
-              child: NotesListView(),
-            ),
-            Expanded(
-              child: NoteEditorPane(),
-            ),
-          ],
-        ),
-      );
-    } else if (screenType == DeviceScreenType.tablet) {
-      // 3. TABLET LAYOUT (2 Columns: Notes List + Editor, Folders in Drawer)
-      shellContent = Scaffold(
-        key: _scaffoldKey,
-        appBar: TopAppBar(
-          onToggleSidebar: () {
-            _scaffoldKey.currentState?.openDrawer();
-          },
-        ),
-        drawer: const Drawer(
-          child: SafeArea(
-            child: FolderTreeView(),
-          ),
-        ),
-        body: const Row(
-          children: [
-            SizedBox(
-              width: AppConstants.notesListWidth,
-              child: NotesListView(),
-            ),
-            Expanded(
-              child: NoteEditorPane(),
-            ),
-          ],
-        ),
-      );
-    } else {
-      // 4. MOBILE LAYOUT (Single Pane Navigation + Drawer for Folders)
-      shellContent = PopScope(
-        canPop: _mobileActiveView == MobileActiveView.notesList,
-        onPopInvokedWithResult: (didPop, result) {
-          if (!didPop && _mobileActiveView == MobileActiveView.editor) {
-            ref.read(syncProvider.notifier).onNoteChangedOrClosed();
-            setState(() {
-              _mobileActiveView = MobileActiveView.notesList;
-            });
-          }
-        },
-        child: Scaffold(
-          key: _scaffoldKey,
-          appBar: TopAppBar(
-            showBackButton: _mobileActiveView == MobileActiveView.editor,
-            onBack: () {
-              ref.read(syncProvider.notifier).onNoteChangedOrClosed();
-              setState(() {
-                _mobileActiveView = MobileActiveView.notesList;
-              });
-            },
-            onToggleSidebar: () {
-              _scaffoldKey.currentState?.openDrawer();
-            },
-          ),
-          drawer: const Drawer(
-            child: SafeArea(
-              child: FolderTreeView(),
-            ),
-          ),
-          body: SafeArea(
-            top: false,
-            bottom: true,
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              child: _mobileActiveView == MobileActiveView.notesList
-                  ? NotesListView(
-                      key: const ValueKey('mobile_notes_list'),
-                      onNoteSelected: (note) {
-                        setState(() {
-                          _mobileActiveView = MobileActiveView.editor;
-                        });
-                      },
-                    )
-                  : const NoteEditorPane(
-                      key: ValueKey('mobile_editor_pane'),
-                    ),
-            ),
-          ),
-        ),
-      );
-    }
+    // Il focus mode ha la precedenza su qualunque layout: scrittura o lettura
+    // a tutto schermo, senza barre né pannelli.
+    final Widget shellContent = editorFocusMode
+        ? _buildFocusLayout()
+        : switch (screenType) {
+            DeviceScreenType.desktop => _buildDesktopLayout(),
+            DeviceScreenType.tablet => _buildTabletLayout(),
+            DeviceScreenType.mobile => _buildMobileLayout(),
+          };
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: systemOverlay,
       // Scorciatoie da tastiera globali (Ctrl/Cmd+N, +F, F1...): vedi
       // core/utils/app_commands.dart per l'elenco completo.
       child: AppShortcutsScope(
-        onEditorRequested: () {
-          // Layout mobile a pannello singolo: mostra l'editor quando un
-          // comando crea o duplica una nota.
-          if (_mobileActiveView != MobileActiveView.editor) {
-            setState(() => _mobileActiveView = MobileActiveView.editor);
-          }
-        },
+        // Layout mobile a pannello singolo: mostra l'editor quando un
+        // comando crea o duplica una nota.
+        onEditorRequested: _showMobileEditor,
         child: shellContent,
+      ),
+    );
+  }
+
+  /// Focus mode: scrittura o lettura a tutto schermo, senza distrazioni.
+  Widget _buildFocusLayout() {
+    return const Scaffold(
+      body: SafeArea(
+        child: NoteEditorPane(),
+      ),
+    );
+  }
+
+  /// Desktop: 3 colonne (cartelle + lista note + editor).
+  Widget _buildDesktopLayout() {
+    return Scaffold(
+      key: _scaffoldKey,
+      appBar: const TopAppBar(),
+      body: const Row(
+        children: [
+          SizedBox(
+            width: AppConstants.folderSidebarWidth,
+            child: FolderTreeView(),
+          ),
+          SizedBox(
+            width: AppConstants.notesListWidth,
+            child: NotesListView(),
+          ),
+          Expanded(
+            child: NoteEditorPane(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Tablet: 2 colonne (lista note + editor), cartelle nel drawer.
+  Widget _buildTabletLayout() {
+    return Scaffold(
+      key: _scaffoldKey,
+      appBar: TopAppBar(onToggleSidebar: _openFolderDrawer),
+      drawer: _folderDrawer,
+      body: const Row(
+        children: [
+          SizedBox(
+            width: AppConstants.notesListWidth,
+            child: NotesListView(),
+          ),
+          Expanded(
+            child: NoteEditorPane(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Mobile: pannello singolo (lista note oppure editor), cartelle nel drawer.
+  Widget _buildMobileLayout() {
+    final isEditorVisible = _mobileActiveView == MobileActiveView.editor;
+
+    return PopScope(
+      canPop: !isEditorVisible,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && isEditorVisible) _showMobileNotesList();
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        appBar: TopAppBar(
+          showBackButton: isEditorVisible,
+          onBack: _showMobileNotesList,
+          onToggleSidebar: _openFolderDrawer,
+        ),
+        drawer: _folderDrawer,
+        body: SafeArea(
+          top: false,
+          bottom: true,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: isEditorVisible
+                ? const NoteEditorPane(key: ValueKey('mobile_editor_pane'))
+                : NotesListView(
+                    key: const ValueKey('mobile_notes_list'),
+                    onNoteSelected: (_) => _showMobileEditor(),
+                  ),
+          ),
+        ),
       ),
     );
   }

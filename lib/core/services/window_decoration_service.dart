@@ -18,6 +18,15 @@ class WindowDecorationService {
   // in quel momento (editor, sidebar, dialog...).
   static bool _listenerRegistered = false;
 
+  // Evita toggle sovrapposti: due F11 ravvicinati leggevano entrambi lo
+  // stesso `_isFullScreen` e inviavano lo stesso valore al nativo.
+  static bool _toggleInFlight = false;
+
+  // Ultimo tema inviato al nativo (colori + luminosità). `ScriptaApp.build`
+  // chiama updateTitleBarTheme a ogni ricostruzione; senza questo controllo
+  // ognuna produceva una chiamata sul platform channel anche a tema invariato.
+  static String? _lastTitleBarSignature;
+
   static String _colorToHex(Color color) {
     final int argb = color.toARGB32();
     final r = ((argb >> 16) & 0xFF).toRadixString(16).padLeft(2, '0');
@@ -38,6 +47,10 @@ class WindowDecorationService {
     final textHex = _colorToHex(palette.textPrimary);
     final borderHex = _colorToHex(palette.border);
 
+    final signature = '$bgHex|$textHex|$borderHex|$isDark';
+    if (signature == _lastTitleBarSignature) return;
+    _lastTitleBarSignature = signature;
+
     try {
       await _channel.invokeMethod('updateTitleBarTheme', {
         'backgroundColor': bgHex,
@@ -46,7 +59,10 @@ class WindowDecorationService {
         'isDark': isDark,
       });
     } catch (_) {
-      // Gracefully ignore if method channel is unavailable
+      // Gracefully ignore if method channel is unavailable. Si azzera la
+      // firma così il prossimo build riprova invece di considerare il tema
+      // già applicato.
+      _lastTitleBarSignature = null;
     }
   }
 
@@ -78,6 +94,8 @@ class WindowDecorationService {
   }
 
   static Future<void> _toggleFullScreen() async {
+    if (_toggleInFlight) return;
+    _toggleInFlight = true;
     final bool nextValue = !_isFullScreen;
 
     try {
@@ -88,6 +106,8 @@ class WindowDecorationService {
       _isFullScreen = nextValue;
     } catch (_) {
       // Gracefully ignore if method channel is unavailable
+    } finally {
+      _toggleInFlight = false;
     }
   }
 }

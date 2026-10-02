@@ -1,4 +1,6 @@
 import 'dart:async';
+
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati in
 // questo import separato, non rimossi). SyncNotifier resta deliberatamente
@@ -7,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // toccata in questa modernizzazione, solo l'import necessario a compilare.
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart' show DatabaseException;
 import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
@@ -57,6 +60,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// triggered (e.g. the user isn't editing notes).
   static const Duration _connectivityPollInterval = Duration(seconds: 25);
 
+  /// Quanti giri di sync "di recupero" consecutivi si accettano al massimo
+  /// dopo il primo, per le richieste arrivate mentre una sync era in corso
+  /// (vedi [_resyncRequested]). Il limite evita che trigger continui (es.
+  /// digitazione con sync su inattività) tengano il motore occupato
+  /// indefinitamente.
+  static const int _maxFollowUpRounds = 2;
+
   final Ref _ref;
   final SyncApiService _apiService;
   final SecureStorageService _secureStorage;
@@ -67,6 +77,16 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   Timer? _noteSwitchDebounceTimer;
   Timer? _folderStructureDebounceTimer;
   Timer? _connectivityTimer;
+
+  /// Vero se un trigger (cambio nota, modifica cartelle, inattività,
+  /// lifecycle...) è arrivato MENTRE una sync era già in corso. Prima quel
+  /// trigger veniva semplicemente scartato: una modifica fatta dopo la lettura
+  /// delle righe `dirty` del giro in corso restava non inviata fino al
+  /// trigger successivo (anche molto più tardi, o mai se l'utente smetteva di
+  /// interagire). Ora la richiesta viene ricordata e, a sync riuscita, si
+  /// esegue un solo giro di recupero (vedi [triggerSync]).
+  bool _resyncRequested = false;
+
   late final Future<void> initialized;
 
   SyncNotifier(
@@ -137,12 +157,12 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // If authenticated and launch sync enabled, trigger sync & fetch remote settings
     if (hasToken && launchSync && mounted) {
       // Defer slightly to let UI settle
-      Future.delayed(const Duration(milliseconds: 500), () async {
+      unawaited(Future.delayed(const Duration(milliseconds: 500), () async {
         if (!mounted) return;
         await fetchRemoteUserSettings();
         if (!mounted) return;
         await triggerSync();
-      });
+      }));
     }
   }
 
@@ -158,7 +178,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         _connectivityTimer?.cancel();
         return;
       }
-      checkConnection();
+      unawaited(checkConnection());
     });
   }
 
@@ -355,8 +375,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       () {
         // Re-check the toggle at execution time too: it may have been
         // disabled after the timer was scheduled but before it fired.
-        if (mounted && !state.isSyncing && state.syncOnInactivity) {
-          triggerSync();
+        // Se una sync è già in corso, triggerSync() accoda un giro di
+        // recupero invece di perdere la richiesta (vedi _resyncRequested).
+        if (mounted && state.syncOnInactivity) {
+          unawaited(triggerSync());
         }
       },
     );
@@ -368,8 +390,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
     _noteSwitchDebounceTimer?.cancel();
     _noteSwitchDebounceTimer = Timer(const Duration(milliseconds: 600), () {
-      if (mounted && !state.isSyncing && state.syncOnNoteSwitch) {
-        triggerSync();
+      if (mounted && state.syncOnNoteSwitch) {
+        unawaited(triggerSync());
       }
     });
   }
@@ -384,8 +406,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
     _folderStructureDebounceTimer?.cancel();
     _folderStructureDebounceTimer = Timer(const Duration(milliseconds: 600), () {
-      if (mounted && !state.isSyncing) {
-        triggerSync();
+      if (mounted) {
+        unawaited(triggerSync());
       }
     });
   }
@@ -398,8 +420,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // (rilevante soprattutto su desktop, dove l'isolate Dart resta vivo),
     // sprecando rete/batteria senza alcun beneficio percepibile dall'utente.
     _stopConnectivityWatchdog();
-    if (state.isAuthenticated && state.syncOnAppLifecycle && !state.isSyncing) {
-      triggerSync();
+    // Invia subito eventuali impostazioni di aspetto ancora in debounce (vedi
+    // SettingsNotifier.flushRemotePush), prima che l'app possa essere chiusa.
+    _ref.read(settingsProvider.notifier).flushRemotePush();
+    if (state.syncOnAppLifecycle) {
+      unawaited(triggerSync()); // no-op se non autenticati; accoda se già in corso
     }
   }
 
@@ -408,7 +433,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// after the device was asleep, on a different network, etc.
   void onAppResumed() {
     if (state.isAuthenticated && !state.isSyncing) {
-      checkConnection();
+      unawaited(checkConnection());
       // Riavvia il poll periodico messo in pausa da onAppPaused (annulla
       // internamente eventuali timer residui, quindi è sicuro anche se non
       // era mai stato fermato).
@@ -481,21 +506,72 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // impostato dopo flush + letture DB + lettura del token: due trigger quasi
     // simultanei (es. cambio nota + lifecycle) passavano entrambi la guardia e
     // avviavano due sync concorrenti sugli stessi dati.
-    if (!state.isAuthenticated || state.isSyncing) return false;
-    state = state.copyWith(
-      isSyncing: true,
-      lastError: () => null,
-      lastSyncMessage: () => 'Sincronizzazione in corso...',
-    );
+    if (!state.isAuthenticated) return false;
+    if (state.isSyncing) {
+      // Non si avviano due round concorrenti sugli stessi dati, ma la
+      // richiesta non va persa: vedi [_resyncRequested].
+      _resyncRequested = true;
+      return false;
+    }
+    // Questo giro leggerà ORA le righe dirty: copre ogni richiesta precedente.
+    // Il flag torna a true solo se un trigger arriva mentre si sincronizza.
+    _resyncRequested = false;
+    _markSyncStarted();
 
     try {
-      return await _runSync();
+      var ok = await _runSyncGuarded();
+
+      // Giri di recupero: una richiesta arrivata durante la sync (modifiche
+      // fatte dopo la lettura delle righe dirty) viene servita subito, ma
+      // solo dopo un giro riuscito (se la rete è giù non ha senso insistere:
+      // ci pensano i trigger e il watchdog di connettività) e al massimo
+      // [_maxFollowUpRounds] volte di fila.
+      for (var round = 0; round < _maxFollowUpRounds; round++) {
+        if (!ok || !_resyncRequested || !mounted || !state.isAuthenticated) break;
+        _resyncRequested = false;
+        _markSyncStarted();
+        ok = await _runSyncGuarded();
+      }
+      return ok;
     } finally {
       // Rete di sicurezza: qualunque uscita (anche eccezione inattesa) deve
       // riportare isSyncing a false, altrimenti la sync resterebbe bloccata.
       if (mounted && state.isSyncing) {
         state = state.copyWith(isSyncing: false);
       }
+    }
+  }
+
+  /// Imposta lo stato "sincronizzazione in corso". Sempre SINCRONO (nessun
+  /// `await` tra il controllo di `isSyncing` e questa chiamata), così due
+  /// trigger quasi simultanei non possono passare entrambi la guardia.
+  void _markSyncStarted() {
+    state = state.copyWith(
+      isSyncing: true,
+      lastError: () => null,
+      lastSyncMessage: () => 'Sincronizzazione in corso...',
+    );
+  }
+
+  /// Esegue [_runSync] garantendo che nessuna eccezione sfugga: `triggerSync`
+  /// viene spesso lanciata da un Timer senza `await`, dove un errore non
+  /// gestito diventerebbe un'eccezione asincrona non catturata. Gli errori
+  /// attesi (rete, HTTP, database) sono già gestiti dentro [_runSync]; qui
+  /// finisce solo ciò che sfugge (es. keystore di sistema illeggibile durante
+  /// la lettura del token).
+  Future<bool> _runSyncGuarded() async {
+    try {
+      return await _runSync();
+    } catch (e, st) {
+      debugPrint('SyncNotifier: errore imprevisto durante la sync: $e\n$st');
+      if (mounted) {
+        state = state.copyWith(
+          isSyncing: false,
+          lastError: () => e.toString(),
+          lastSyncMessage: () => 'Sincronizzazione non riuscita: errore interno',
+        );
+      }
+      return false;
     }
   }
 
@@ -511,6 +587,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
 
     try {
+      // Vero se _repairRejected ha modificato righe nel DB locale: lo stato in
+      // memoria non lo sa, quindi serve rileggere dal DB a fine giro.
+      var repaired = false;
+
       // Massimo 2 tentativi: il secondo solo dopo aver riparato i record
       // rifiutati dal server con 422.
       for (var attempt = 0; attempt < 2; attempt++) {
@@ -535,6 +615,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             // cursore: il nostro resta invariato. Si ripara il riferimento
             // non valido (cartella inesistente sul server) e si riprova.
             await _repairRejected(e.rejected);
+            repaired = true;
             continue;
           }
           rethrow;
@@ -565,8 +646,22 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
         await _syncMetaDao.setSyncCursor(response.serverTime);
 
-        await _ref.read(folderProvider.notifier).refreshFromDb();
-        await _ref.read(notesProvider.notifier).refreshFromDb();
+        // Si rilegge dal DB (tutte le note, contenuto incluso) SOLO se il DB
+        // locale è cambiato rispetto allo stato in memoria: il server ha
+        // restituito righe, è stato un full_resync oppure sono stati
+        // riparati dei record. Con "sync al cambio nota" attiva ogni
+        // cambio nota avvia un giro: rileggere e ricostruire l'intero
+        // archivio a ogni giro, anche con risposta vuota, era puro lavoro
+        // sprecato. markSynced e la purge dei tombstone non toccano nulla
+        // che la UI mostri.
+        final localDbChanged = repaired ||
+            response.fullResync ||
+            response.folders.isNotEmpty ||
+            response.notes.isNotEmpty;
+        if (localDbChanged) {
+          await _ref.read(folderProvider.notifier).refreshFromDb();
+          await _ref.read(notesProvider.notifier).refreshFromDb();
+        }
 
         final syncedAt = DateTime.now();
         final prefs = await SharedPreferences.getInstance();
@@ -588,17 +683,23 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       if (!mounted) return false;
       final isAuthError = e is SyncApiException && e.statusCode == 401;
       final isRejected = e is SyncApiException && e.statusCode == 422;
+      // Un errore di SQLite locale non dice nulla sulla raggiungibilità del
+      // server: prima veniva mostrato come "server non raggiungibile".
+      final isLocalDbError = e is DatabaseException;
+      if (isLocalDbError) debugPrint('SyncNotifier: errore del database locale: $e');
       state = state.copyWith(
         isAuthenticated: isAuthError ? false : state.isAuthenticated,
         // Un 422 è una risposta del server (quindi è online): non va mostrato Offline.
-        isOnline: (isAuthError || isRejected) ? state.isOnline : false,
+        isOnline: (isAuthError || isRejected || isLocalDbError) ? state.isOnline : false,
         isSyncing: false,
         lastError: () => e is SyncApiException ? e.message : e.toString(),
         lastSyncMessage: () => isAuthError
             ? 'Sessione scaduta: effettua nuovamente l\'accesso'
             : isRejected
                 ? 'Sincronizzazione non riuscita: alcuni elementi non sono validi per il server'
-                : 'Sincronizzazione non riuscita: server non raggiungibile',
+                : isLocalDbError
+                    ? 'Sincronizzazione non riuscita: errore del database locale'
+                    : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       if (isAuthError) {
         await _secureStorage.clearAuth();
@@ -644,7 +745,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           token: token,
         ),
       );
-      _ref.read(settingsProvider.notifier).applyRemoteSettings(remoteSettings);
+      unawaited(_ref.read(settingsProvider.notifier).applyRemoteSettings(remoteSettings));
     } catch (e) {
       if (e is SyncApiException && e.statusCode == 401) {
         state = state.copyWith(isAuthenticated: false);

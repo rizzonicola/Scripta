@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -8,7 +10,7 @@ import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/context_menu.dart';
 import '../../../core/services/export_service.dart';
 import '../../../core/theme/color_schemes.dart';
-import '../../folders/models/folder_node.dart';
+import '../../folders/presentation/folder_picker_dialog.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/note_model.dart';
@@ -46,131 +48,40 @@ class NoteCard extends ConsumerWidget {
   /// Dialog "Sposta in cartella": pubblico perché usato anche dal menu
   /// contestuale e dalla scorciatoia Ctrl+Shift+M.
   static void showMoveNoteDialog(BuildContext context, WidgetRef ref, NoteModel note) {
-    final folderState = ref.read(folderProvider);
-    final theme = Theme.of(context);
+    // Notifier e messenger si leggono PRIMA di aprire il dialog: dopo la
+    // scelta non si usa più `ref`/`context` (la card potrebbe nel frattempo
+    // essere stata ricostruita o rimossa dalla lista).
+    final notes = ref.read(notesProvider.notifier);
+    final sync = ref.read(syncProvider.notifier);
+    final messenger = ScaffoldMessenger.of(context);
+    final destinations = flattenFolders(ref.read(folderProvider).rootFolders);
 
-    // Flatten folder hierarchy for clear selection
-    final flattened = <_FolderFlatItem>[];
-    void collect(List<FolderNode> nodes, int depth) {
-      for (final n in nodes) {
-        flattened.add(_FolderFlatItem(node: n, depth: depth));
-        if (n.children.isNotEmpty) {
-          collect(n.children, depth + 1);
-        }
-      }
-    }
-    collect(folderState.rootFolders, 0);
-
-    showDialog(
-      context: context,
-      builder: (dialogCtx) {
-        return AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.drive_file_move_outlined, size: 22, color: theme.colorScheme.primary),
-              const SizedBox(width: 8),
-              const Expanded(child: Text('Sposta nota')),
-            ],
-          ),
-          contentPadding: const EdgeInsets.symmetric(vertical: 12),
-          content: SizedBox(
-            width: 380,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Root option: No folder (All notes)
-                  ListTile(
-                    leading: Icon(
-                      Icons.notes_rounded,
-                      color: note.folderId == null
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                    ),
-                    title: const Text('Nessuna cartella (Tutte le note)'),
-                    trailing: note.folderId == null
-                        ? Icon(Icons.check_rounded, color: theme.colorScheme.primary, size: 18)
-                        : null,
-                    selected: note.folderId == null,
-                    onTap: () {
-                      ref.read(notesProvider.notifier).moveNote(note.id, null);
-                      ref.read(syncProvider.notifier).onFolderStructureChanged();
-                      Navigator.of(dialogCtx).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Nota spostata in "Nessuna cartella"'),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                    },
-                  ),
-                  const Divider(height: 1),
-                  if (flattened.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        'Nessuna cartella creata',
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                          fontSize: 13,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    )
-                  else
-                    ...flattened.map((item) {
-                      final isCurrent = note.folderId == item.node.id;
-                      return ListTile(
-                        contentPadding: EdgeInsets.only(
-                          left: 16.0 + (item.depth * 16.0),
-                          right: 16,
-                        ),
-                        leading: Icon(
-                          item.node.children.isNotEmpty
-                              ? Icons.folder_outlined
-                              : Icons.folder_open_outlined,
-                          size: 20,
-                          color: isCurrent
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                        ),
-                        title: Text(
-                          item.node.name,
-                          style: TextStyle(
-                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                            color: isCurrent ? theme.colorScheme.primary : null,
-                          ),
-                        ),
-                        trailing: isCurrent
-                            ? Icon(Icons.check_rounded, color: theme.colorScheme.primary, size: 18)
-                            : null,
-                        selected: isCurrent,
-                        onTap: () {
-                          ref.read(notesProvider.notifier).moveNote(note.id, item.node.id);
-                          ref.read(syncProvider.notifier).onFolderStructureChanged();
-                          Navigator.of(dialogCtx).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Nota spostata in "${item.node.name}"'),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        },
-                      );
-                    }),
-                ],
+    unawaited(
+      showDialog<void>(
+        context: context,
+        builder: (_) => FolderPickerDialog(
+          title: 'Sposta nota',
+          rootIcon: Icons.notes_rounded,
+          rootLabel: 'Nessuna cartella (Tutte le note)',
+          emptyLabel: 'Nessuna cartella creata',
+          cancelLabel: 'Annulla',
+          destinations: destinations,
+          currentFolderId: note.folderId,
+          onSelected: (targetId) {
+            notes.moveNote(note.id, targetId);
+            sync.onFolderStructureChanged();
+            final String message = targetId == null
+                ? 'Nota spostata in "Nessuna cartella"'
+                : 'Nota spostata in "${destinations.firstWhere((d) => d.node.id == targetId).node.name}"';
+            messenger.showSnackBar(
+              SnackBar(
+                content: Text(message),
+                behavior: SnackBarBehavior.floating,
               ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogCtx).pop(),
-              child: const Text('Annulla'),
-            ),
-          ],
-        );
-      },
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -270,18 +181,6 @@ class NoteCard extends ConsumerWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
-
-    final handleBorderColor = isSelected
-        ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.35 : 0.22)
-        : theme.colorScheme.outline.withValues(alpha: isDark ? 0.18 : 0.12);
-    final handleBgColor = isSelected
-        ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.08)
-        : (isDark
-            ? Colors.white.withValues(alpha: 0.03)
-            : Colors.black.withValues(alpha: 0.02));
-    final handleIconColor = isSelected
-        ? theme.colorScheme.primary
-        : theme.colorScheme.onSurface.withValues(alpha: 0.3);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -383,69 +282,7 @@ class NoteCard extends ConsumerWidget {
                             ),
                           ),
                           const SizedBox(width: 4),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: Icon(
-                                  note.isPinned
-                                      ? Icons.push_pin_rounded
-                                      : Icons.push_pin_outlined,
-                                  size: 14,
-                                  color: note.isPinned
-                                      ? theme.colorScheme.primary
-                                      : theme.colorScheme.onSurface.withValues(alpha: 0.4),
-                                ),
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 12,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: () => ref
-                                    .read(notesProvider.notifier)
-                                    .togglePin(note.id),
-                              ),
-                              IconButton(
-                                icon: Icon(
-                                  Icons.drive_file_move_outlined,
-                                  size: 15,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                                ),
-                                tooltip: 'Sposta in un\'altra cartella',
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 12,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: () => showMoveNoteDialog(context, ref, note),
-                              ),
-                              IconButton(
-                                icon: Icon(
-                                  Icons.file_download_outlined,
-                                  size: 15,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                                ),
-                                tooltip: 'Esporta come Markdown (.md)',
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 12,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: () => ExportService.exportNoteAsMarkdown(context, note),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                icon: Icon(
-                                  Icons.delete_outline_rounded,
-                                  size: 14,
-                                  color: Colors.red.withValues(alpha: 0.7),
-                                ),
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 12,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: () =>
-                                    confirmDelete(context, ref, l10n, note),
-                              ),
-                            ],
-                          ),
+                          _NoteCardActions(note: note),
                         ],
                       ),
                     ],
@@ -453,34 +290,7 @@ class NoteCard extends ConsumerWidget {
                 ),
                 if (showDragHandle && dragIndex != null) ...[
                   const SizedBox(width: 10),
-                  ReorderableDragStartListener(
-                    index: dragIndex!,
-                    child: Tooltip(
-                      message: 'Trascina per riordinare',
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.grab,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 14,
-                          ),
-                          decoration: BoxDecoration(
-                            color: handleBgColor,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: handleBorderColor,
-                              width: 1,
-                            ),
-                          ),
-                          child: Icon(
-                            Icons.drag_indicator_rounded,
-                            size: 18,
-                            color: handleIconColor,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  _NoteDragHandle(index: dragIndex!, isSelected: isSelected),
                 ],
               ],
             ),
@@ -491,10 +301,126 @@ class NoteCard extends ConsumerWidget {
   }
 }
 
-class _FolderFlatItem {
-  final FolderNode node;
-  final int depth;
+/// Pulsanti rapidi in fondo alla card: fissa, sposta, esporta, elimina.
+class _NoteCardActions extends ConsumerWidget {
+  const _NoteCardActions({required this.note});
 
-  const _FolderFlatItem({required this.node, required this.depth});
+  final NoteModel note;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: Icon(
+            note.isPinned
+                ? Icons.push_pin_rounded
+                : Icons.push_pin_outlined,
+            size: 14,
+            color: note.isPinned
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurface.withValues(alpha: 0.4),
+          ),
+          visualDensity: VisualDensity.compact,
+          splashRadius: 12,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          onPressed: () => ref
+              .read(notesProvider.notifier)
+              .togglePin(note.id),
+        ),
+        IconButton(
+          icon: Icon(
+            Icons.drive_file_move_outlined,
+            size: 15,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+          ),
+          tooltip: 'Sposta in un\'altra cartella',
+          visualDensity: VisualDensity.compact,
+          splashRadius: 12,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          onPressed: () => NoteCard.showMoveNoteDialog(context, ref, note),
+        ),
+        IconButton(
+          icon: Icon(
+            Icons.file_download_outlined,
+            size: 15,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+          ),
+          tooltip: 'Esporta come Markdown (.md)',
+          visualDensity: VisualDensity.compact,
+          splashRadius: 12,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          onPressed: () => ExportService.exportNoteAsMarkdown(context, note),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          icon: Icon(
+            Icons.delete_outline_rounded,
+            size: 14,
+            color: Colors.red.withValues(alpha: 0.7),
+          ),
+          visualDensity: VisualDensity.compact,
+          splashRadius: 12,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          onPressed: () => NoteCard.confirmDelete(context, ref, l10n, note),
+        ),
+      ],
+    );
+  }
 }
 
+/// Maniglia di trascinamento per il riordino manuale.
+class _NoteDragHandle extends StatelessWidget {
+  const _NoteDragHandle({required this.index, required this.isSelected});
+
+  final int index;
+  final bool isSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final borderColor = isSelected
+        ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.35 : 0.22)
+        : theme.colorScheme.outline.withValues(alpha: isDark ? 0.18 : 0.12);
+    final bgColor = isSelected
+        ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.08)
+        : (isDark
+            ? Colors.white.withValues(alpha: 0.03)
+            : Colors.black.withValues(alpha: 0.02));
+    final iconColor = isSelected
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurface.withValues(alpha: 0.3);
+
+    return ReorderableDragStartListener(
+      index: index,
+      child: Tooltip(
+        message: 'Trascina per riordinare',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.grab,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 14),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: borderColor, width: 1),
+            ),
+            child: Icon(
+              Icons.drag_indicator_rounded,
+              size: 18,
+              color: iconColor,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

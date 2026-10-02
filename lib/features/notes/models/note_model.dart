@@ -72,15 +72,43 @@ class NoteModel {
     );
   }
 
-  int get wordCount {
-    if (content.trim().isEmpty) return 0;
-    return content.trim().split(RegExp(r'\s+')).length;
+  /// Numero di parole, calcolato UNA sola volta per istanza (la nota è
+  /// immutabile). Prima era un getter ricalcolato (e chiamato due volte per
+  /// ogni rebuild di `NoteCard`, anche via [readingTimeMinutes]) con
+  /// `trim()` + `split(RegExp(...))`: una copia del testo e una stringa per
+  /// ogni parola, a ogni battitura sulla nota aperta.
+  late final int wordCount = _countWords();
+
+  /// Una parola è una sequenza massimale di caratteri non-spazio: stesso
+  /// risultato di `content.trim().split(RegExp(r'\s+'))`, in un solo passaggio
+  /// sul testo e senza allocare nulla.
+  int _countWords() {
+    final text = content;
+    var count = 0;
+    var inWord = false;
+    for (var i = 0; i < text.length; i++) {
+      final isSpace = _isWhitespace(text.codeUnitAt(i));
+      if (!isSpace && !inWord) count++;
+      inWord = !isSpace;
+    }
+    return count;
   }
 
-  int get readingTimeMinutes {
-    final words = wordCount;
-    return (words / 200).ceil().clamp(1, 999);
-  }
+  /// Gli stessi caratteri riconosciuti da `\s` nelle RegExp.
+  static bool _isWhitespace(int c) =>
+      c == 0x20 ||
+      (c >= 0x09 && c <= 0x0D) ||
+      c == 0xA0 ||
+      c == 0x1680 ||
+      (c >= 0x2000 && c <= 0x200A) ||
+      c == 0x2028 ||
+      c == 0x2029 ||
+      c == 0x202F ||
+      c == 0x205F ||
+      c == 0x3000 ||
+      c == 0xFEFF;
+
+  late final int readingTimeMinutes = (wordCount / 200).ceil().clamp(1, 999);
 
   /// Anteprima "pulita" (senza simboli di formattazione Markdown) mostrata
   /// nelle card della lista note.
@@ -94,15 +122,43 @@ class NoteModel {
   /// senza alcun bisogno di ripetere il calcolo.
   late final String previewSnippet = _buildPreviewSnippet();
 
+  // RegExp compilate una volta sola (erano ricreate a ogni calcolo).
+  static final RegExp _headingMarks = RegExp(r'#+\s*');
+  static final RegExp _emphasisMarks = RegExp(r'\*+');
+  static final RegExp _codeMarks = RegExp(r'`+');
+  static final RegExp _linkSyntax = RegExp(r'\[(.*?)\]\(.*?\)');
+  static final RegExp _taskMarks = RegExp(r'- \[( |x)\]');
+
+  /// Quanti caratteri iniziali del contenuto si ripuliscono per ricavare lo
+  /// snippet. Lo snippet ne mostra al massimo 120: passare 5 RegExp su una
+  /// nota da centinaia di KB (e rifarlo a ogni battitura, perché ogni
+  /// modifica crea una nuova istanza) era il costo dominante dell'editing di
+  /// note lunghe.
+  static const int _snippetSourceChars = 4000;
+
+  /// Se dal prefisso restano meno di questi caratteri "puliti" (inizio quasi
+  /// tutto markup), il prefisso non basta e si ripulisce l'intero contenuto,
+  /// come in origine.
+  static const int _snippetMinCleanChars = 200;
+
+  /// Rimuove i simboli di formattazione Markdown per un'anteprima leggibile.
+  static String _stripMarkdown(String raw) => raw
+      .replaceAll(_headingMarks, '')
+      .replaceAll(_emphasisMarks, '')
+      .replaceAll(_codeMarks, '')
+      // NB: `replaceAll(.., r'$1')` inseriva il testo letterale "$1" (in Dart
+      // la stringa di sostituzione non viene interpretata): serve un callback
+      // per mostrare il testo del link.
+      .replaceAllMapped(_linkSyntax, (m) => m[1] ?? '')
+      .replaceAll(_taskMarks, '')
+      .trim();
+
   String _buildPreviewSnippet() {
-    // Strip markdown formatting symbols for clean preview
-    final cleaned = content
-        .replaceAll(RegExp(r'#+\s*'), '')
-        .replaceAll(RegExp(r'\*+'), '')
-        .replaceAll(RegExp(r'`+'), '')
-        .replaceAll(RegExp(r'\[(.*?)\]\(.*?\)'), r'$1')
-        .replaceAll(RegExp(r'- \[( |x)\]'), '')
-        .trim();
+    final isLong = content.length > _snippetSourceChars;
+    var cleaned = _stripMarkdown(isLong ? content.substring(0, _snippetSourceChars) : content);
+    if (isLong && cleaned.length < _snippetMinCleanChars) {
+      cleaned = _stripMarkdown(content);
+    }
     if (cleaned.isEmpty) return 'Nessun testo aggiuntivo';
     return cleaned.length > 120 ? '${cleaned.substring(0, 120)}...' : cleaned;
   }

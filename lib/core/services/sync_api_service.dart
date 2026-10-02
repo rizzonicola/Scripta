@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
 import '../../features/sync/models/sync_models.dart';
 
@@ -22,6 +23,44 @@ class SyncApiService {
   final http.Client _client;
 
   SyncApiService([http.Client? client]) : _client = client ?? http.Client();
+
+  /// Dimensione (in caratteri) da cui la (de)serializzazione JSON di un round
+  /// di sync passa a un isolate. Sotto soglia il lavoro è trascurabile e
+  /// avviare un isolate costerebbe di più; sopra (prima sync di un archivio
+  /// importante, migliaia di note) decodifica e codifica sul thread della UI
+  /// la facevano scattare per centinaia di millisecondi.
+  static const int isolateJsonThreshold = 128 * 1024;
+
+  // Funzioni statiche (quindi utilizzabili da `compute`): lavorano solo su
+  // stringhe e DTO puri, mai su oggetti Flutter.
+  static SyncResponse _parseSyncResponse(String body) =>
+      SyncResponse.fromJson(json.decode(body) as Map<String, dynamic>);
+
+  static String _encodeSyncRequest(SyncRequest request) =>
+      json.encode(request.toJson());
+
+  /// Decodifica la risposta di sync, in un isolate se è voluminosa. Gli
+  /// errori (JSON non valido) arrivano al chiamante come prima.
+  Future<SyncResponse> _decodeSyncResponse(http.Response response) {
+    final body = response.body;
+    if (body.length < isolateJsonThreshold) {
+      return Future.sync(() => _parseSyncResponse(body));
+    }
+    return compute(_parseSyncResponse, body);
+  }
+
+  /// Serializza la richiesta di sync, in un isolate se il contenuto delle note
+  /// da inviare è voluminoso.
+  Future<String> _encodeSyncBody(SyncRequest request) {
+    var contentChars = 0;
+    for (final note in request.notes) {
+      contentChars += note.content.length;
+    }
+    if (contentChars < isolateJsonThreshold) {
+      return Future.sync(() => _encodeSyncRequest(request));
+    }
+    return compute(_encodeSyncRequest, request);
+  }
 
   String _cleanUrl(String baseUrl) {
     var url = baseUrl.trim();
@@ -170,6 +209,7 @@ class SyncApiService {
     final uri = Uri.parse('$clean/api/v1/sync');
 
     final payload = SyncRequest(lastSyncedAt: lastSyncedAt, folders: folders, notes: notes);
+    final requestBody = await _encodeSyncBody(payload);
 
     final response = await _client
         .post(
@@ -178,13 +218,12 @@ class SyncApiService {
             'Authorization': 'Bearer $token',
             'Content-Type': 'application/json',
           },
-          body: json.encode(payload.toJson()),
+          body: requestBody,
         )
         .timeout(const Duration(seconds: 30));
 
     if (response.statusCode == 200) {
-      final decoded = json.decode(response.body) as Map<String, dynamic>;
-      return SyncResponse.fromJson(decoded);
+      return _decodeSyncResponse(response);
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else if (response.statusCode == 503) {

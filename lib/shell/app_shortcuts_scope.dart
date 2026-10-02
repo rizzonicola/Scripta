@@ -13,7 +13,7 @@ import '../core/widgets/shortcuts_help_dialog.dart';
 import '../features/editor/models/editor_state_model.dart';
 import '../features/editor/providers/editor_provider.dart';
 import '../features/editor/providers/note_search_provider.dart';
-import '../features/folders/presentation/folder_tree_view.dart'
+import '../features/folders/presentation/folder_dialogs.dart'
     show showAddFolderDialog;
 import '../features/folders/providers/folder_provider.dart';
 import '../features/notes/presentation/note_card.dart';

@@ -49,7 +49,20 @@ SingleActivator _primary(
 }
 
 /// Attivatori di [command]; il primo è quello mostrato nelle etichette.
-List<SingleActivator> activatorsFor(AppCommand command) {
+///
+/// Calcolati UNA volta sola (lazy, alla prima lettura) e riusati: il
+/// dispatcher globale ([matchAppCommand]) gira a OGNI tasto premuto, anche
+/// mentre si scrive nell'editor, e prima ricostruiva da zero tutti gli
+/// attivatori di tutti i comandi a ogni battitura. La piattaforma non cambia
+/// a runtime, quindi la cache non può diventare obsoleta.
+List<SingleActivator> activatorsFor(AppCommand command) => _activatorCache[command]!;
+
+final Map<AppCommand, List<SingleActivator>> _activatorCache = {
+  for (final command in AppCommand.values)
+    command: List<SingleActivator>.unmodifiable(_buildActivators(command)),
+};
+
+List<SingleActivator> _buildActivators(AppCommand command) {
   switch (command) {
     case AppCommand.newNote:
       return [_primary(LogicalKeyboardKey.keyN)];

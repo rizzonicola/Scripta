@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (non
@@ -16,10 +18,30 @@ import '../../sync/providers/sync_provider.dart';
 import '../models/app_settings.dart';
 
 class SettingsNotifier extends StateNotifier<AppSettings> {
+  /// Attesa prima di inviare al server le impostazioni "di aspetto". Gli
+  /// slider (dimensione font, interlinea) chiamano il setter a ogni
+  /// variazione: senza debounce un singolo trascinamento produceva decine di
+  /// PUT, e risposte in ordine diverso da quello di invio potevano lasciare
+  /// sul server un valore intermedio invece dell'ultimo.
+  static const Duration _remotePushDebounce = Duration(milliseconds: 400);
+
   final Ref? _ref;
+  Timer? _remotePushTimer;
+
+  /// Vero se esiste una modifica non ancora inviata al server. Flag esplicito
+  /// invece di `Timer.isActive`: dentro il callback del timer stesso il suo
+  /// valore dipende dall'implementazione, e un falso negativo farebbe
+  /// scartare l'invio.
+  bool _remotePushPending = false;
 
   SettingsNotifier([this._ref]) : super(const AppSettings()) {
     _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    _remotePushTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadSettings() async {
@@ -61,8 +83,27 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     );
   }
 
+  /// Pianifica l'invio al server dello stato CORRENTE (debounced: vince
+  /// sempre l'ultimo valore).
   void _pushRemoteSettings() {
     if (_ref == null) return;
+    _remotePushPending = true;
+    _remotePushTimer?.cancel();
+    _remotePushTimer = Timer(_remotePushDebounce, flushRemotePush);
+  }
+
+  /// Invia subito l'eventuale invio in attesa. Chiamato anche quando l'app va
+  /// in background ([SyncNotifier.onAppPaused]): all'avvio successivo le
+  /// impostazioni remote prevalgono su quelle locali, quindi un invio perso
+  /// per la chiusura dell'app durante il debounce farebbe "tornare indietro"
+  /// l'ultima modifica.
+  void flushRemotePush() {
+    final ref = _ref;
+    if (ref == null || !mounted || !_remotePushPending) return;
+    _remotePushPending = false;
+    _remotePushTimer?.cancel();
+    _remotePushTimer = null;
+
     final themeStr = state.themeMode == ThemeMode.dark
         ? 'dark'
         : state.themeMode == ThemeMode.light
@@ -78,7 +119,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       lineSpacing: state.lineHeight,
       layout: 'split',
     );
-    _ref.read(syncProvider.notifier).pushUserSettings(payload);
+    unawaited(ref.read(syncProvider.notifier).pushUserSettings(payload));
   }
 
   Future<void> applyRemoteSettings(UserSettingsDto remote) async {

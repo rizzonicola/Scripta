@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
@@ -11,124 +10,14 @@ import '../../features/folders/models/folder_node.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../features/notes/models/note_model.dart';
 import '../../features/notes/providers/notes_provider.dart';
-
-/// Parametri passati all'isolate dedicato per la codifica dello ZIP di UNA
-/// cartella (vedi [ExportService.exportFolderAsZip]). Nessun riferimento a
-/// `BuildContext`/`WidgetRef`/oggetti Flutter: solo dati puri, come richiesto
-/// da [compute] per l'invio all'isolate.
-class _FolderZipParams {
-  final FolderNode rootFolder;
-  final List<NoteModel> allNotes;
-
-  const _FolderZipParams(this.rootFolder, this.allNotes);
-}
-
-/// Parametri per la codifica dello ZIP di backup completo (tutte le
-/// cartelle/note), vedi [ExportService.exportAllAsZip].
-class _AllNotesZipParams {
-  final List<FolderNode> rootFolders;
-  final List<NoteModel> allNotes;
-
-  const _AllNotesZipParams(this.rootFolders, this.allNotes);
-}
-
-class _ZipEncodeResult {
-  final Uint8List bytes;
-  final int noteCount;
-
-  const _ZipEncodeResult(this.bytes, this.noteCount);
-}
-
-String _sanitizeFileNameTopLevel(String name) => ExportService._sanitizeFileName(name);
-
-String _noteMarkdownContent(NoteModel note) {
-  var content = note.content;
-  if (!content.startsWith('# ') && note.title.trim().isNotEmpty) {
-    content = '# ${note.title}\n\n$content';
-  }
-  return content;
-}
-
-/// Costruisce e codifica l'archivio ZIP di una singola cartella. Funzione
-/// TOP-LEVEL (non un metodo di istanza/statico legato alla UI) perché è il
-/// requisito di [compute] per poter essere eseguita su un isolate dedicato:
-/// `ZipEncoder().encode()` è CPU-bound e sincrono, quindi eseguito
-/// direttamente sull'isolate principale bloccherebbe il thread della UI
-/// (jank/freeze) per l'intera durata della compressione su backup
-/// voluminosi — esattamente lo stesso ragionamento già applicato
-/// all'importazione (vedi `import_service.dart`, `_decodeZipEntriesSync`).
-_ZipEncodeResult _encodeFolderZip(_FolderZipParams params) {
-  final archive = Archive();
-  var exportedNotesCount = 0;
-
-  void addFolderToArchive(FolderNode folder, String parentPath) {
-    final currentPath =
-        parentPath.isEmpty ? folder.name : '$parentPath/${folder.name}';
-
-    final folderNotes =
-        params.allNotes.where((n) => n.folderId == folder.id).toList();
-    for (final note in folderNotes) {
-      final noteTitle = _sanitizeFileNameTopLevel(
-          note.title.trim().isEmpty ? 'Nota_${note.id.substring(0, 6)}' : note.title);
-      final noteFileName = '$noteTitle.md';
-      final bytes = utf8.encode(_noteMarkdownContent(note));
-      archive.addFile(ArchiveFile('$currentPath/$noteFileName', bytes.length, bytes));
-      exportedNotesCount++;
-    }
-
-    for (final child in folder.children) {
-      addFolderToArchive(child, currentPath);
-    }
-  }
-
-  addFolderToArchive(params.rootFolder, '');
-
-  final encoded = ZipEncoder().encode(archive);
-  return _ZipEncodeResult(Uint8List.fromList(encoded), exportedNotesCount);
-}
-
-/// Equivalente di [_encodeFolderZip] per il backup completo (tutte le
-/// cartelle radice + tutte le note, con risoluzione del percorso completo
-/// per ciascuna nota). Stessa motivazione: esecuzione su isolate via
-/// [compute] per non bloccare la UI.
-_ZipEncodeResult _encodeAllNotesZip(_AllNotesZipParams params) {
-  final archive = Archive();
-  var exportedNotesCount = 0;
-
-  final folderPathMap = <String, String>{};
-  void mapPaths(FolderNode node, String parentPath) {
-    final p = parentPath.isEmpty ? node.name : '$parentPath/${node.name}';
-    folderPathMap[node.id] = p;
-    for (final child in node.children) {
-      mapPaths(child, p);
-    }
-  }
-
-  for (final root in params.rootFolders) {
-    mapPaths(root, '');
-  }
-
-  for (final note in params.allNotes) {
-    final folderPath = note.folderId != null && folderPathMap.containsKey(note.folderId)
-        ? folderPathMap[note.folderId]!
-        : 'Non_Catalogate';
-    final noteTitle = _sanitizeFileNameTopLevel(
-        note.title.trim().isEmpty ? 'Nota_${note.id.substring(0, 6)}' : note.title);
-    final noteFileName = '$noteTitle.md';
-    final bytes = utf8.encode(_noteMarkdownContent(note));
-    archive.addFile(ArchiveFile('$folderPath/$noteFileName', bytes.length, bytes));
-    exportedNotesCount++;
-  }
-
-  final encoded = ZipEncoder().encode(archive);
-  return _ZipEncodeResult(Uint8List.fromList(encoded), exportedNotesCount);
-}
+import 'export_archive.dart';
 
 class ExportService {
-  static String _sanitizeFileName(String name) {
-    final sanitized = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-    return sanitized.isEmpty ? 'untitled' : sanitized;
-  }
+  static String _sanitizeFileName(String name) => sanitizeFileName(name);
+
+  /// Dati minimi di una nota per l'archivio (vedi [ExportNote]).
+  static ExportNote _toExportNote(NoteModel n) =>
+      (id: n.id, title: n.title, content: n.content, folderId: n.folderId);
 
   /// Helper to save file across platforms with native picker and Android SAF support
   static Future<bool> _saveExportFile({
@@ -173,12 +62,9 @@ class ExportService {
     final title = note.title.trim().isEmpty ? 'Nota_senza_titolo' : note.title.trim();
     final fileName = '${_sanitizeFileName(title)}.md';
 
-    String content = note.content;
-    if (!content.startsWith('# ') && note.title.trim().isNotEmpty) {
-      content = '# ${note.title}\n\n$content';
-    }
-
-    final bytes = Uint8List.fromList(utf8.encode(content));
+    final bytes = Uint8List.fromList(
+      utf8.encode(noteMarkdownContent(note.title, note.content)),
+    );
 
     try {
       final saved = await _saveExportFile(
@@ -218,12 +104,22 @@ class ExportService {
     try {
       final allNotes = ref.read(notesProvider).notes;
 
+      // Solo le note del sottoalbero (e solo i campi che servono) vengono
+      // inviate all'isolate: prima partiva l'intera collezione.
+      final folders = flattenFolderTree([rootFolder]);
+      final subtreeIds = {for (final f in folders) f.id};
+      final notes = [
+        for (final n in allNotes)
+          if (n.folderId != null && subtreeIds.contains(n.folderId))
+            _toExportNote(n),
+      ];
+
       // Codifica ZIP CPU-bound eseguita su isolate dedicato (vedi
-      // `_encodeFolderZip`): non blocca il thread della UI, stesso pattern
+      // `buildNotesZip`): non blocca il thread della UI, stesso pattern
       // già usato per la decompressione in fase di importazione.
       final result = await compute(
-        _encodeFolderZip,
-        _FolderZipParams(rootFolder, allNotes),
+        buildNotesZip,
+        (folders: folders, notes: notes),
       );
 
       final saved = await _saveExportFile(
@@ -257,7 +153,8 @@ class ExportService {
 
   /// Export ALL notes in all folders as a complete backup ZIP
   static Future<void> exportAllAsZip(BuildContext context, WidgetRef ref) async {
-    final zipFileName = 'Scripta_Backup_${DateTime.now().year}_${DateTime.now().month}_${DateTime.now().day}.zip';
+    final now = DateTime.now();
+    final zipFileName = 'Scripta_Backup_${now.year}_${now.month}_${now.day}.zip';
 
     try {
       final allNotes = ref.read(notesProvider).notes;
@@ -266,8 +163,11 @@ class ExportService {
       // Vedi commento analogo in exportFolderAsZip: codifica su isolate
       // dedicato per non bloccare la UI durante backup voluminosi.
       final result = await compute(
-        _encodeAllNotesZip,
-        _AllNotesZipParams(folderState.rootFolders, allNotes),
+        buildNotesZip,
+        (
+          folders: flattenFolderTree(folderState.rootFolders),
+          notes: [for (final n in allNotes) _toExportNote(n)],
+        ),
       );
 
       final saved = await _saveExportFile(
