@@ -49,19 +49,12 @@ class FolderTreeView extends ConsumerWidget {
             behavior: HitTestBehavior.opaque,
             entriesBuilder: (ctx) => workspaceMenuEntries(ctx, ref),
             child: Padding(
-            // Allineamento con le righe sottostanti (FolderItemTile): la
-            // sua icona parte a 8 (padding esterno) + 6 (interno) + 18
-            // (slot freccia) + 4 = 36 px dal bordo, con icone da 18 px e
-            // 8 px di spazio prima del testo. Con il vecchio padding
-            // sinistro di 16 px e icona da 20 px, icona e titolo
-            // "Folders" risultavano spostati a sinistra rispetto a
-            // "Tutte le note" e alle cartelle.
-            padding: const EdgeInsets.fromLTRB(36, 12, 8, 8),
+            padding: const EdgeInsets.fromLTRB(16, 16, 8, 12),
             child: Row(
               children: [
                 Icon(
                   Icons.folder_copy_outlined,
-                  size: 18,
+                  size: 20,
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
@@ -152,8 +145,11 @@ class FolderTreeView extends ConsumerWidget {
             enabled: isDesktopPlatform,
             behavior: HitTestBehavior.opaque,
             entriesBuilder: (ctx) => workspaceMenuEntries(ctx, ref),
+            // Nessun padding verticale: il riquadro di "Tutte le note" ha
+            // già 4 px sopra e sotto, così dista 4 px sia dalla linea
+            // sopra sia da quella sotto (prima: 4 px sopra, 10 sotto).
             child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: EdgeInsets.symmetric(horizontal: 16),
               child: Divider(height: 1),
             ),
           ),
