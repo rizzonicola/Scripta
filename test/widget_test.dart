@@ -11,6 +11,7 @@ import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
+import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/core/utils/markdown_toolbar_actions.dart';
 import 'package:scripta/core/utils/syntax_highlighter.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
@@ -39,6 +40,11 @@ void main() {
     // Nei test non c'è rete: google_fonts non deve tentare di scaricare i font
     // (altrimenti eccezioni asincrone dopo la fine del test).
     GoogleFonts.config.allowRuntimeFetching = false;
+    AppTheme.debugDisableGoogleFonts = true;
+  });
+
+  tearDownAll(() {
+    AppTheme.debugDisableGoogleFonts = false;
   });
 
   setUp(() async {

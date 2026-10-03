@@ -1,8 +1,15 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'color_schemes.dart';
 
 class AppTheme {
+  /// Solo per i test: senza rete e senza font tra gli asset, `google_fonts`
+  /// lancia eccezioni asincrone. Con questo flag attivo si usano gli stili di
+  /// sistema. In produzione resta `false`: nessun cambio di comportamento.
+  @visibleForTesting
+  static bool debugDisableGoogleFonts = false;
+
   static TextStyle getTextStyleForFont(
     String fontFamily, {
     double? fontSize,
@@ -10,6 +17,14 @@ class AppTheme {
     Color? color,
     double? height,
   }) {
+    if (debugDisableGoogleFonts) {
+      return TextStyle(
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        color: color,
+        height: height,
+      );
+    }
     switch (fontFamily.toLowerCase()) {
       case 'jetbrains mono':
         return GoogleFonts.jetBrainsMono(
@@ -57,7 +72,9 @@ class AppTheme {
     final baseTheme = palette.brightness == Brightness.dark
         ? ThemeData.dark()
         : ThemeData.light();
-    final textTheme = GoogleFonts.interTextTheme(baseTheme.textTheme);
+    final textTheme = debugDisableGoogleFonts
+        ? baseTheme.textTheme
+        : GoogleFonts.interTextTheme(baseTheme.textTheme);
 
     return ThemeData(
       useMaterial3: true,
