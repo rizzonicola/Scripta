@@ -95,12 +95,23 @@ void main() {
   });
 
   testWidgets('Scripta app initial widget pump test — no fake welcome note/folders', (WidgetTester tester) async {
+    // google_fonts, senza rete e senza font tra gli asset, lancia un'eccezione
+    // asincrona (non legata all'app): la si ignora, ma SOLO quella. Qualsiasi
+    // altra eccezione resta un errore del test.
+    void ignoreGoogleFontsError() {
+      final ex = tester.takeException();
+      if (ex != null && !ex.toString().contains('GoogleFonts')) {
+        throw ex;
+      }
+    }
+
     await tester.pumpWidget(
       const ProviderScope(
         child: ScriptaApp(),
       ),
     );
     await tester.pumpAndSettle();
+    ignoreGoogleFontsError();
 
     // Scripta title should be present
     expect(find.text('Scripta'), findsWidgets);
@@ -113,6 +124,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pumpWidget(const SizedBox.shrink());
+    ignoreGoogleFontsError();
   });
 
   test('ScriptaCodeHighlighter highlights Dart code into styled tokens', () {
