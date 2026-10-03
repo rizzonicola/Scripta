@@ -1,17 +1,13 @@
 import 'dart:io';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:scripta/app.dart';
 import 'package:scripta/core/database/app_database.dart';
-import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
-import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/core/utils/markdown_toolbar_actions.dart';
 import 'package:scripta/core/utils/syntax_highlighter.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
@@ -34,27 +30,7 @@ Future<void> waitUntil(
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-
-  setUpAll(() {
-    // Nei test non c'è rete: google_fonts non deve tentare di scaricare i font
-    // (altrimenti eccezioni asincrone dopo la fine del test).
-    GoogleFonts.config.allowRuntimeFetching = false;
-    AppTheme.debugDisableGoogleFonts = true;
-  });
-
-  tearDownAll(() {
-    AppTheme.debugDisableGoogleFonts = false;
-  });
-
   setUp(() async {
-    // flutter_secure_storage non ha implementazione nativa nei test: lo si
-    // simula come "vuoto" (nessun token/URL salvato).
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
-      (MethodCall call) async => null,
-    );
     SharedPreferences.setMockInitialValues({});
     AppDatabase.ensureFactoryInitialized();
     await AppDatabase.instance.close();
@@ -66,6 +42,12 @@ void main() {
   });
 
   tearDown(() async {
+    // I notifier avviano letture/scritture SQLite "fire and forget" (e il
+    // pump del widget non le attende: l'I/O dell'isolate FFI non avanza con
+    // il clock finto). Chiudere subito il DB le farebbe fallire con
+    // "database has already been closed": si lascia prima smaltire l'I/O
+    // in volo, poi si chiude.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     await AppDatabase.instance.close();
     AppDatabase.debugDatabasePathOverride = null;
   });
@@ -101,36 +83,15 @@ void main() {
   });
 
   testWidgets('Scripta app initial widget pump test — no fake welcome note/folders', (WidgetTester tester) async {
-    // google_fonts, senza rete e senza font tra gli asset, lancia un'eccezione
-    // asincrona (non legata all'app): la si ignora, ma SOLO quella. Qualsiasi
-    // altra eccezione resta un errore del test.
-    void ignoreGoogleFontsError() {
-      final ex = tester.takeException();
-      if (ex != null && !ex.toString().contains('GoogleFonts')) {
-        throw ex;
-      }
-    }
-
     await tester.pumpWidget(
       const ProviderScope(
         child: ScriptaApp(),
       ),
     );
     await tester.pumpAndSettle();
-    ignoreGoogleFontsError();
 
     // Scripta title should be present
     expect(find.text('Scripta'), findsWidgets);
-
-    // I provider caricano da SQLite fuori dal FakeAsync del test: li si lascia
-    // finire (runAsync = tempo reale) prima che il tearDown chiuda il DB.
-    await tester.runAsync(() async {
-      await FoldersDao().getActive();
-      await NotesDao().getById('__drain__');
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    });
-    await tester.pumpWidget(const SizedBox.shrink());
-    ignoreGoogleFontsError();
   });
 
   test('ScriptaCodeHighlighter highlights Dart code into styled tokens', () {
@@ -176,14 +137,6 @@ void main() {
     notesNotifier.moveNote(note.id, null);
     final rootNote = container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
     expect(rootNote.folderId, isNull);
-
-    // Le scritture sono fire-and-forget: attendere l'ultima (folderId null)
-    // prima che il tearDown chiuda il database.
-    final dao = NotesDao();
-    await waitUntil(() async {
-      final row = await dao.getById(note.id);
-      return row != null && row.folderId == null;
-    });
   });
 
   test('moveFolder moves folder and prevents cyclic moves', () async {
@@ -209,14 +162,6 @@ void main() {
 
     final roots = container.read(folderProvider).rootFolders;
     expect(roots.any((f) => f.id == child.id), isTrue);
-
-    // Attendere che l'ultimo UPDATE (parent_id = NULL) sia su disco prima
-    // che il tearDown chiuda il database.
-    final dao = FoldersDao();
-    await waitUntil(() async {
-      final row = await dao.getById(child.id);
-      return row != null && row.parentId == null;
-    });
   });
 
   test('deleteFolder cascades to subfolders and notes inside them', () async {
