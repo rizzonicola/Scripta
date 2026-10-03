@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,7 +33,22 @@ Future<void> waitUntil(
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUpAll(() {
+    // Nei test non c'è rete: google_fonts non deve tentare di scaricare i font
+    // (altrimenti eccezioni asincrone dopo la fine del test).
+    GoogleFonts.config.allowRuntimeFetching = false;
+  });
+
   setUp(() async {
+    // flutter_secure_storage non ha implementazione nativa nei test: lo si
+    // simula come "vuoto" (nessun token/URL salvato).
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+      (MethodCall call) async => null,
+    );
     SharedPreferences.setMockInitialValues({});
     AppDatabase.ensureFactoryInitialized();
     await AppDatabase.instance.close();
