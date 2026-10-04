@@ -347,7 +347,7 @@ void main() {
     });
 
     test('un file sopra il limite di una nota viene rifiutato', () {
-      final size = ImportService.maxEntryBytes + 1;
+      const size = ImportService.maxEntryBytes + 1;
       final archive = Archive()
         ..addFile(ArchiveFile('Grande.md', size, Uint8List(size)));
       final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
