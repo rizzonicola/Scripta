@@ -4,31 +4,14 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/folders/models/folder_node.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
-
-/// Voce grezza estratta da un file (ZIP o filesystem) durante l'import,
-/// ancora priva di un folderId reale: [folderPathSegments] è il percorso
-/// relativo (una cartella per elemento, radice esclusa) che verrà
-/// risolto/creato in [FolderNode] soltanto al momento del commit, per poter
-/// riutilizzare cartelle già esistenti con lo stesso nome invece di
-/// duplicarle.
-class _RawImportEntry {
-  final List<String> folderPathSegments;
-  final String fileName;
-  final String rawContent;
-
-  const _RawImportEntry({
-    required this.folderPathSegments,
-    required this.fileName,
-    required this.rawContent,
-  });
-}
+import 'import_parser.dart';
 
 /// Importazione di note/cartelle da un backup ZIP (creato da
 /// [ExportService.exportAllAsZip]/[ExportService.exportFolderAsZip]) o da una
@@ -42,6 +25,12 @@ class _RawImportEntry {
 ///    create come nuove entità con un id fresco, mai fatte combaciare con
 ///    una esistente, per evitare qualunque rischio di sovrascrittura
 ///    distruttiva di contenuto già presente.
+///  - STRUTTURA E TITOLI COME NELL'ESPORTAZIONE: le note che l'esportazione
+///    raccoglie in `Non_Catalogate/` tornano alla radice ("Tutte le note")
+///    invece di ricreare quella cartella, e il titolo di una nota è il nome
+///    del suo file (un `# Titolo` in testa lo sostituisce solo se ne è
+///    l'eco). Le regole stanno in `import_parser.dart`, accanto alle
+///    convenzioni dell'esportazione che condividono.
 ///  - NESSUN BLOCCO DELL'INTERFACCIA: la lettura di file/ZIP di grandi
 ///    dimensioni avviene con API asincrone (`Directory.list`, lettura bytes
 ///    async) invece delle controparti sincrone, e l'inserimento delle note
@@ -49,8 +38,6 @@ class _RawImportEntry {
 ///    `NotesNotifier.importNotesBulk`) invece che nota per nota.
 class ImportService {
   ImportService._();
-
-  static const _supportedExtensions = ['.md', '.markdown', '.txt'];
 
   // ---- Limiti anti "zip bomb" / import fuori scala -------------------------
   // Uno ZIP (o una cartella) scelto dall'utente può essere malevolo o
@@ -192,7 +179,7 @@ class ImportService {
       await _runImport(
         context,
         ref,
-        () => _extractFromDirectory(Directory(dirPath)),
+        () => extractFromDirectory(Directory(dirPath)),
       );
     } catch (e) {
       if (context.mounted) {
@@ -209,7 +196,7 @@ class ImportService {
   static Future<void> _runImport(
     BuildContext context,
     WidgetRef ref,
-    Future<List<_RawImportEntry>> Function() extract,
+    Future<List<ImportEntry>> Function() extract,
   ) async {
     _showLoadingDialog(context);
     try {
@@ -284,16 +271,19 @@ class ImportService {
   /// direttamente sull'isolate principale bloccherebbe il thread della UI
   /// (frame freeze/jank) per l'intera durata della decompressione su backup
   /// voluminosi. Con [compute] il lavoro pesante viene invece eseguito su un
-  /// isolate dedicato, lasciando la UI reattiva; [_decodeZipEntriesSync] è
+  /// isolate dedicato, lasciando la UI reattiva; [decodeZipEntries] è
   /// un metodo statico (non una closure) proprio perché è questo il
   /// requisito di `compute` per poter essere invocato nel nuovo isolate.
-  static Future<List<_RawImportEntry>> _extractFromZipBytes(
+  static Future<List<ImportEntry>> _extractFromZipBytes(
     Uint8List bytes,
   ) {
-    return compute(_decodeZipEntriesSync, bytes);
+    return compute(decodeZipEntries, bytes);
   }
 
-  static List<_RawImportEntry> _decodeZipEntriesSync(Uint8List bytes) {
+  /// Parte sincrona di [_extractFromZipBytes]. Pubblica solo perché i test
+  /// la invocano direttamente, senza isolate.
+  @visibleForTesting
+  static List<ImportEntry> decodeZipEntries(Uint8List bytes) {
     if (bytes.length > maxZipBytes) {
       throw FormatException('ZIP troppo grande (massimo ${_mb(maxZipBytes)}).');
     }
@@ -301,22 +291,20 @@ class ImportService {
     if (archive.files.length > maxZipEntries) {
       throw const FormatException('ZIP con troppe voci (massimo $maxZipEntries).');
     }
-    final entries = <_RawImportEntry>[];
+    final entries = <ImportEntry>[];
     var totalBytes = 0;
 
     for (final file in archive.files) {
       if (!file.isFile) continue;
-      final normalized = file.name.replaceAll('\\', '/');
-      if (!_hasSupportedExtension(normalized)) continue;
-      // Difesa in profondità: uno ZIP malformato/malevolo non deve poter
-      // referenziare percorsi fuori dalla gerarchia che stiamo costruendo
-      // (path traversal "..", percorsi assoluti, lettere di unità Windows).
-      if (normalized.split('/').contains('..')) continue;
-      if (normalized.startsWith('/') || RegExp(r'^[A-Za-z]:').hasMatch(normalized)) continue;
-
-      final segments = normalized.split('/').where((s) => s.isNotEmpty).toList();
-      if (segments.isEmpty) continue;
-      final fileName = segments.removeLast();
+      // Difesa in profondità e rumore dei sistemi operativi: uno ZIP
+      // malformato/malevolo non deve poter referenziare percorsi fuori dalla
+      // gerarchia che stiamo costruendo (path traversal, percorsi assoluti,
+      // lettere di unità Windows) e gli ZIP di macOS portano con sé cartelle
+      // di metadati. `null` = voce da ignorare. Qui si decide anche che le
+      // note di `Non_Catalogate/` tornano alla radice (vedi import_parser).
+      final location = mapZipEntryPath(file.name);
+      if (location == null) continue;
+      final fileName = location.fileName;
 
       // Limiti verificati sulla dimensione DICHIARATA, prima di accedere a
       // `file.content` (che è ciò che decomprime davvero il contenuto).
@@ -340,8 +328,8 @@ class ImportService {
       }
       final rawContent = utf8.decode(contentBytes, allowMalformed: true);
 
-      entries.add(_RawImportEntry(
-        folderPathSegments: segments,
+      entries.add(ImportEntry(
+        folderPathSegments: location.folders,
         fileName: fileName,
         rawContent: rawContent,
       ));
@@ -354,11 +342,13 @@ class ImportService {
   // Estrazione: cartella su filesystem
   // ---------------------------------------------------------------------
 
-  static Future<List<_RawImportEntry>> _extractFromDirectory(
+  /// Legge ricorsivamente una cartella scelta dall'utente. Pubblica solo
+  /// perché i test la invocano su una cartella temporanea reale.
+  @visibleForTesting
+  static Future<List<ImportEntry>> extractFromDirectory(
     Directory root,
   ) async {
-    final entries = <_RawImportEntry>[];
-    final rootPath = root.path.replaceAll('\\', '/');
+    final entries = <ImportEntry>[];
     var totalBytes = 0;
 
     // Directory.list (async) invece di listSync: evita di bloccare
@@ -366,17 +356,15 @@ class ImportService {
     // molto grandi.
     await for (final entity in root.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
-      final entityPath = entity.path.replaceAll('\\', '/');
-      if (!_hasSupportedExtension(entityPath)) continue;
 
-      var relative = entityPath.startsWith(rootPath)
-          ? entityPath.substring(rootPath.length)
-          : entityPath;
-      if (relative.startsWith('/')) relative = relative.substring(1);
-
-      final segments = relative.split('/').where((s) => s.isNotEmpty).toList();
-      if (segments.isEmpty) continue;
-      final fileName = segments.removeLast();
+      // Percorso relativo alla cartella scelta, calcolato e spezzato con le
+      // regole NATIVE della piattaforma (`\` e lettere di unità su Windows,
+      // `/` altrove). Prima si confrontava il prefisso testuale dopo aver
+      // trasformato ogni `\` in `/`, anche su piattaforme dove `\` è un
+      // carattere legale di un nome di file.
+      final location = mapFilePath(entity.path, rootPath: root.path);
+      if (location == null) continue;
+      final fileName = location.fileName;
 
       // Stessi limiti dello ZIP, controllati sulla dimensione su disco PRIMA
       // di leggere il file.
@@ -400,8 +388,8 @@ class ImportService {
         rawContent = utf8.decode(bytes, allowMalformed: true);
       }
 
-      entries.add(_RawImportEntry(
-        folderPathSegments: segments,
+      entries.add(ImportEntry(
+        folderPathSegments: location.folders,
         fileName: fileName,
         rawContent: rawContent,
       ));
@@ -410,18 +398,28 @@ class ImportService {
     return entries;
   }
 
-  static bool _hasSupportedExtension(String path) {
-    final lower = path.toLowerCase();
-    return _supportedExtensions.any(lower.endsWith);
-  }
-
   // ---------------------------------------------------------------------
   // Commit: risolve/crea cartelle e inserisce le note in blocco
   // ---------------------------------------------------------------------
 
   static Future<({int importedNotes, int importedFolders})> _commitEntries(
     WidgetRef ref,
-    List<_RawImportEntry> entries,
+    List<ImportEntry> entries,
+  ) {
+    return commitEntries(
+      ref.read(folderProvider.notifier),
+      ref.read(notesProvider.notifier),
+      entries,
+    );
+  }
+
+  /// Materializza [entries] in cartelle e note. Riceve i due notifier invece
+  /// di un `WidgetRef` così i test lo usano con DAO finti, senza UI.
+  @visibleForTesting
+  static Future<({int importedNotes, int importedFolders})> commitEntries(
+    FolderNotifier folders,
+    NotesNotifier notes,
+    List<ImportEntry> entries,
   ) async {
     if (entries.isEmpty) return (importedNotes: 0, importedFolders: 0);
 
@@ -430,14 +428,16 @@ class ImportService {
     final notesToImport = <({String title, String content, String? folderId})>[];
 
     for (final entry in entries) {
+      // Percorso vuoto = radice: nessuna cartella, la nota compare in
+      // "Tutte le note".
       final folderId = _ensureFolderPath(
-        ref,
+        folders,
         entry.folderPathSegments,
         folderIdByPath,
         onFolderCreated: () => importedFolders++,
       );
 
-      final parsed = _parseTitleAndContent(entry.rawContent, entry.fileName);
+      final parsed = parseNoteFile(entry.rawContent, entry.fileName);
       notesToImport.add((
         title: parsed.title,
         content: parsed.content,
@@ -445,9 +445,7 @@ class ImportService {
       ));
     }
 
-    final importedNotes = await ref
-        .read(notesProvider.notifier)
-        .importNotesBulk(notesToImport);
+    final importedNotes = await notes.importNotesBulk(notesToImport);
 
     return (importedNotes: importedNotes, importedFolders: importedFolders);
   }
@@ -456,9 +454,10 @@ class ImportService {
   /// cartelle già esistenti con lo stesso nome allo stesso livello (ricerca
   /// case-insensitive) e creando solo i segmenti mancanti tramite
   /// [FolderNotifier.addFolder] (già sincrono nello stato in-memory, quindi
-  /// visibile immediatamente alla prossima iterazione).
+  /// visibile immediatamente alla prossima iterazione). Una catena vuota è la
+  /// radice e restituisce `null`.
   static String? _ensureFolderPath(
-    WidgetRef ref,
+    FolderNotifier folders,
     List<String> segments,
     Map<String, String?> cache, {
     required VoidCallback onFolderCreated,
@@ -477,7 +476,7 @@ class ImportService {
         continue;
       }
 
-      final siblings = _siblingsOf(ref, parentId);
+      final siblings = _siblingsOf(folders, parentId);
       FolderNode? existing;
       for (final node in siblings) {
         if (node.name.toLowerCase() == segment.toLowerCase()) {
@@ -490,9 +489,7 @@ class ImportService {
       if (existing != null) {
         resolvedId = existing.id;
       } else {
-        final created = ref
-            .read(folderProvider.notifier)
-            .addFolder(segment, parentId: parentId);
+        final created = folders.addFolder(segment, parentId: parentId);
         resolvedId = created.id;
         onFolderCreated();
       }
@@ -504,54 +501,9 @@ class ImportService {
     return parentId;
   }
 
-  static List<FolderNode> _siblingsOf(WidgetRef ref, String? parentId) {
-    if (parentId == null) {
-      return ref.read(folderProvider).rootFolders;
-    }
-    final parent = ref.read(folderProvider.notifier).findNode(parentId);
+  static List<FolderNode> _siblingsOf(FolderNotifier folders, String? parentId) {
+    if (parentId == null) return folders.rootFolders;
+    final parent = folders.findNode(parentId);
     return parent?.children ?? const [];
-  }
-
-  /// Ricava titolo/contenuto da un file Markdown importato.
-  ///
-  /// Simmetrico rispetto a `ExportService`, che per l'esportazione antepone
-  /// al contenuto grezzo della nota una riga `# Titolo` (solo nel file
-  /// esportato, MAI nel campo `content` salvato nel database): qui, se il
-  /// file importato inizia con un heading di primo livello, lo trattiamo
-  /// come titolo e lo rimuoviamo dal corpo così da non duplicarlo nell'editor
-  /// (che mostra titolo e corpo in due campi separati). Se non è presente
-  /// alcun heading iniziale, il titolo viene derivato dal nome del file.
-  static ({String title, String content}) _parseTitleAndContent(
-    String raw,
-    String fileName,
-  ) {
-    final lines = raw.split('\n');
-    var idx = 0;
-    while (idx < lines.length && lines[idx].trim().isEmpty) {
-      idx++;
-    }
-
-    if (idx < lines.length && lines[idx].trimLeft().startsWith('# ')) {
-      final headingTitle = lines[idx].trimLeft().substring(2).trim();
-      var contentStart = idx + 1;
-      if (contentStart < lines.length && lines[contentStart].trim().isEmpty) {
-        contentStart++;
-      }
-      final body = lines.sublist(contentStart).join('\n');
-      return (
-        title: headingTitle.isEmpty ? _titleFromFileName(fileName) : headingTitle,
-        content: body,
-      );
-    }
-
-    return (title: _titleFromFileName(fileName), content: raw);
-  }
-
-  static String _titleFromFileName(String fileName) {
-    final base = fileName.replaceAll(
-      RegExp(r'\.(md|markdown|txt)$', caseSensitive: false),
-      '',
-    ).trim();
-    return base.isEmpty ? 'Nota importata' : base;
   }
 }

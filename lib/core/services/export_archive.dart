@@ -27,6 +27,12 @@ typedef ZipResult = ({Uint8List bytes, int noteCount});
 
 /// Cartella che raccoglie le note senza cartella (o con cartella ignota)
 /// nel backup completo.
+///
+/// È un contenitore dell'ARCHIVIO, non una cartella dell'utente:
+/// l'importazione (`import_parser.dart`, che legge questa stessa costante)
+/// riporta alla radice le note che stanno direttamente al suo interno. I
+/// backup già prodotti conservano il nome com'era quando sono stati creati:
+/// cambiarlo qui significherebbe non riconoscerli più all'importazione.
 const String uncatalogedFolderName = 'Non_Catalogate';
 
 final RegExp _illegalNameChars = RegExp(r'[\\/:*?"<>|\x00-\x1F]');

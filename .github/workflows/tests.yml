@@ -1,0 +1,54 @@
+name: Tests
+
+# Esegue i test su Linux, Windows e macOS: la logica di importazione dipende
+# da come ogni sistema scrive i percorsi (separatori, unità, file di
+# servizio), quindi un solo sistema non basta a dimostrarla corretta.
+# Android e iOS condividono il codice Dart di Linux/macOS (stessi percorsi
+# POSIX): non hanno un job a parte perché questi test non usano la UI.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: flutter test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: SQLite (solo Linux, per i test che usano sqflite_common_ffi)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Test di importazione ed esportazione
+        run: >
+          flutter test
+          test/import_parser_test.dart
+          test/import_integration_test.dart
+          test/import_limits_test.dart
+          test/export_archive_test.dart
+
+      - name: Suite completa
+        run: flutter test

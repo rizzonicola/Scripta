@@ -213,6 +213,11 @@ class FolderNotifier extends StateNotifier<FolderState> {
     return result;
   }
 
+  /// Cartelle radice correnti (lettura sincrona dello stato in memoria).
+  /// `state` è protetto: chi non è una sottoclasse, come l'importazione
+  /// (`ImportService.commitEntries`), passa da qui.
+  List<FolderNode> get rootFolders => state.rootFolders;
+
   FolderNode? findNode(String id) => _findNode(state.rootFolders, id);
 
   FolderNode? _findNode(List<FolderNode> list, String id) {
