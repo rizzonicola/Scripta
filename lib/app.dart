@@ -9,6 +9,7 @@ import 'core/theme/color_schemes.dart';
 import 'core/utils/haptics_helper.dart';
 import 'features/settings/providers/settings_provider.dart';
 import 'shell/adaptive_app_shell.dart';
+import 'shell/session_persistence.dart';
 
 /// Temi chiaro e scuro, derivati SOLO da tema scelto e famiglia di font.
 ///
@@ -30,6 +31,11 @@ class ScriptaApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Attiva il salvataggio continuo dell'ultima posizione (modalità
+    // Modifica/Visualizza, cartella, nota aperta): vedi session_persistence.dart.
+    // Il provider non produce valori e non ricostruisce mai questo widget.
+    ref.watch(sessionPersistenceProvider);
+
     // `select` mirati invece di `ref.watch(settingsProvider)` pieno: la
     // dimensione del font e l'interlinea (che cambiano di continuo mentre si
     // trascina lo slider in Impostazioni) NON influenzano MaterialApp, e

@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
+import '../../../core/services/session_state_service.dart';
 import '../../notes/providers/notes_provider.dart';
 import '../models/folder_node.dart';
 
@@ -91,18 +92,46 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// metodi pubblici qui sotto).
   List<FolderRow> _activeRows = [];
 
-  FolderNotifier(this._ref, {FoldersDao? foldersDao, NotesDao? notesDao})
-      : _foldersDao = foldersDao ?? FoldersDao(),
+  /// [initialSelectedFolderId] è la cartella selezionata nell'ultima sessione
+  /// (vedi [sessionSnapshotProvider]): parte già selezionata fin dal primo
+  /// frame, senza passare per "Tutte le note". È solo un riferimento da
+  /// validare: se la cartella non esiste più, il primo caricamento da DB
+  /// ripiega su "Tutte le note" (vedi [_loadFromDb]).
+  FolderNotifier(
+    this._ref, {
+    FoldersDao? foldersDao,
+    NotesDao? notesDao,
+    String? initialSelectedFolderId,
+  })  : _foldersDao = foldersDao ?? FoldersDao(),
         _notesDao = notesDao ?? NotesDao(),
-        super(const FolderState()) {
-    _loadFromDb();
+        super(FolderState(selectedFolderId: initialSelectedFolderId)) {
+    _loadFromDb(validateSelection: true);
   }
 
-  Future<void> _loadFromDb() async {
+  /// Carica le cartelle attive dal DB e ricostruisce l'albero.
+  ///
+  /// Con [validateSelection] (solo il primo caricamento, all'avvio) una
+  /// cartella selezionata che non è fra quelle caricate viene azzerata:
+  /// altrimenti, se l'ultima sessione si era chiusa su una cartella poi
+  /// cancellata da un altro dispositivo, l'utente resterebbe bloccato su una
+  /// vista vuota di una cartella inesistente. I caricamenti successivi (dopo
+  /// una sync) NON toccano la selezione, esattamente come prima.
+  ///
+  /// La selezione si rilegge DOPO l'await: se l'utente ne ha scelta un'altra
+  /// mentre il DB veniva letto, si valida quella, non quella iniziale.
+  Future<void> _loadFromDb({bool validateSelection = false}) async {
     final rows = await _foldersDao.getActive();
     if (!mounted) return;
     _activeRows = rows;
-    state = state.copyWith(rootFolders: FolderNode.buildForest(rows));
+
+    var next = state.copyWith(rootFolders: FolderNode.buildForest(rows));
+    final selected = state.selectedFolderId;
+    if (validateSelection &&
+        selected != null &&
+        !rows.any((r) => r.id == selected)) {
+      next = next.copyWith(selectedFolderId: () => null);
+    }
+    state = next;
   }
 
   /// Ricarica l'albero dal database locale. Esposto principalmente per la
@@ -265,5 +294,9 @@ class FolderNotifier extends StateNotifier<FolderState> {
 }
 
 final folderProvider = StateNotifierProvider<FolderNotifier, FolderState>((ref) {
-  return FolderNotifier(ref);
+  return FolderNotifier(
+    ref,
+    // Cartella dell'ultima sessione (null = "Tutte le note" o nessuna sessione).
+    initialSelectedFolderId: ref.read(sessionSnapshotProvider).folderId,
+  );
 });

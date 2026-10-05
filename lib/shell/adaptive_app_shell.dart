@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants/app_constants.dart';
+import '../core/services/session_state_service.dart';
 import '../core/utils/responsive_breakpoints.dart';
 import '../features/editor/presentation/note_editor_pane.dart';
 import '../features/editor/providers/editor_provider.dart';
@@ -45,6 +46,17 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // Ripresa dell'ultima posizione (layout mobile a pannello singolo): se
+    // l'app era stata chiusa sull'editor si riparte dall'editor, non dalla
+    // lista. Serve anche una nota salvata: senza (ultima nota cancellata) non
+    // c'è nulla da mostrare nell'editor e si parte dalla lista. Sugli altri
+    // layout il valore non ha effetto. `read` e non `watch`: è un'istantanea
+    // fissata all'avvio (vedi sessionSnapshotProvider).
+    final session = ref.read(sessionSnapshotProvider);
+    if (session.mobileEditorOpen && session.noteId != null) {
+      _mobileActiveView = MobileActiveView.editor;
+    }
   }
 
   @override
@@ -77,9 +89,14 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
 
   void _openFolderDrawer() => _scaffoldKey.currentState?.openDrawer();
 
+  /// Tutti i percorsi che mostrano l'editor su mobile (tocco su una nota,
+  /// nuova nota, duplica) passano da qui; tutti quelli che tornano alla lista
+  /// (freccia indietro, gesto/tasto Indietro) da [_showMobileNotesList]. Sono
+  /// quindi gli unici due punti in cui salvare il pannello visibile.
   void _showMobileEditor() {
     if (_mobileActiveView != MobileActiveView.editor) {
       setState(() => _mobileActiveView = MobileActiveView.editor);
+      unawaited(SessionStateService.saveMobileEditorOpen(true));
     }
   }
 
@@ -88,6 +105,7 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
   void _showMobileNotesList() {
     ref.read(syncProvider.notifier).onNoteChangedOrClosed();
     setState(() => _mobileActiveView = MobileActiveView.notesList);
+    unawaited(SessionStateService.saveMobileEditorOpen(false));
   }
 
   @override

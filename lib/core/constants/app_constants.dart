@@ -34,4 +34,13 @@ class AppConstants {
   static const String prefCustomOrderByScope = 'scripta_custom_order_by_scope';
   static const String prefOnboardingCompleted = 'scripta_onboarding_completed';
   static const String prefHapticIntensity = 'scripta_haptic_intensity';
+
+  // Ripresa della sessione: l'ultima posizione dell'utente (modalità
+  // Modifica/Visualizza, cartella, nota aperta, pannello editor su mobile).
+  // Puramente locali: non fanno parte del payload di sync. Vedi
+  // core/services/session_state_service.dart.
+  static const String prefSessionEditorMode = 'scripta_session_editor_mode';
+  static const String prefSessionFolderId = 'scripta_session_folder_id';
+  static const String prefSessionNoteId = 'scripta_session_note_id';
+  static const String prefSessionMobileEditorOpen = 'scripta_session_mobile_editor_open';
 }

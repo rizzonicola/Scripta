@@ -19,6 +19,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/database/notes_dao.dart';
+import '../../../core/services/session_state_service.dart';
 import '../../folders/models/folder_node.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../models/note_model.dart';
@@ -94,6 +95,17 @@ class NotesNotifier extends StateNotifier<NotesState> {
   final NotesDao _dao;
   final _uuid = const Uuid();
   Timer? _saveDebounceTimer;
+
+  /// Nota che era aperta nell'ultima sessione (vedi [sessionSnapshotProvider]),
+  /// da riaprire al primo caricamento da DB. Si consuma UNA volta in
+  /// [_loadFromDb] e poi resta `null`: è solo un riferimento da validare (la
+  /// nota potrebbe essere stata cancellata nel frattempo), non uno stato.
+  ///
+  /// Volutamente NON messa in `state.activeNoteId` fin dal costruttore: finché
+  /// la lista `notes` è vuota, un id attivo farebbe mostrare all'editor un
+  /// campo di testo vuoto e modificabile per una nota non ancora caricata. Così
+  /// il primo `activeNoteId` non nullo arriva insieme alle note.
+  String? _restoreActiveNoteId;
 
   // ---------------------------------------------------------------------
   // Ordinamento PER VISTA
@@ -223,8 +235,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
     return f;
   }
 
-  NotesNotifier({NotesDao? dao})
+  NotesNotifier({NotesDao? dao, String? initialActiveNoteId})
       : _dao = dao ?? NotesDao(),
+        _restoreActiveNoteId = initialActiveNoteId,
         super(const NotesState()) {
     _loadFromDb();
   }
@@ -290,9 +303,22 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // CORRETTO: la nota attiva iniziale veniva presa dalla lista ordinata con
     // l'ordine di DEFAULT (ultima modifica) invece che da quella mostrata.
     final sorted = _sort(loaded, sortOrder);
+
+    // Ripresa della sessione: si riapre la nota dell'ultima volta, se esiste
+    // ancora fra quelle attive; altrimenti (prima installazione, nota
+    // cancellata altrove, DB vuoto) si ripiega sulla prima della lista, come
+    // sempre.
+    final restoreId = _restoreActiveNoteId;
+    _restoreActiveNoteId = null;
+    final restoredStillExists =
+        restoreId != null && sorted.any((n) => n.id == restoreId);
+    final String? initialActiveId = restoredStillExists
+        ? restoreId
+        : (sorted.isNotEmpty ? sorted.first.id : null);
+
     state = state.copyWith(
       notes: sorted,
-      activeNoteId: () => sorted.isNotEmpty ? sorted.first.id : null,
+      activeNoteId: () => initialActiveId,
       sortOrder: sortOrder,
     );
   }
@@ -833,7 +859,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
 }
 
 final notesProvider = StateNotifierProvider<NotesNotifier, NotesState>((ref) {
-  final notifier = NotesNotifier();
+  final notifier = NotesNotifier(
+    // Nota aperta nell'ultima sessione (null se nessuna).
+    initialActiveNoteId: ref.read(sessionSnapshotProvider).noteId,
+  );
   // Ogni vista ("Tutte le note" / cartella) ha il proprio ordinamento: il
   // notifier deve sapere quale cartella è selezionata. `fireImmediately`
   // copre l'eventuale selezione già presente alla creazione.

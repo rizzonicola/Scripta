@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
 import 'core/database/app_database.dart';
+import 'core/services/session_state_service.dart';
 import 'core/services/window_decoration_service.dart';
 import 'core/utils/haptic_gating_binding.dart';
 
@@ -26,9 +27,19 @@ void main() async {
   // ovunque nell'app indipendentemente da quale widget ha il focus.
   WindowDecorationService.initializeFullScreenShortcut();
 
+  // Ultima posizione dell'utente (modalità Modifica/Visualizza, cartella,
+  // nota aperta, pannello mobile), letta PRIMA del primo frame: i provider
+  // partono già dallo stato giusto invece di mostrare per un istante quello di
+  // default e poi "scattare". Non lancia mai: nel caso peggiore restituisce
+  // il default (vedi SessionStateService.load).
+  final session = await SessionStateService.load();
+
   runApp(
-    const ProviderScope(
-      child: ScriptaApp(),
+    ProviderScope(
+      overrides: [
+        sessionSnapshotProvider.overrideWithValue(session),
+      ],
+      child: const ScriptaApp(),
     ),
   );
 }
