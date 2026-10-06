@@ -11,6 +11,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/markdown_math.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/link_safety.dart';
+import '../../../core/utils/selection_auto_scroller.dart';
 import '../../settings/providers/settings_provider.dart';
 import 'package:flutter_math_fork/flutter_math.dart' show ParseException;
 import 'package:flutter_math_fork/tex.dart'
@@ -46,7 +47,8 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
       _MarkdownRenderedViewState();
 }
 
-class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
+class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
+    with SingleTickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _selectionFocusNode = FocusNode(debugLabel: 'markdown-selection');
 
@@ -78,6 +80,17 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   final GlobalKey<MarkdownSelectionScopeState> _selectionScopeKey =
       GlobalKey<MarkdownSelectionScopeState>();
   MarkdownSelection? _activeSelection;
+
+  // --- Auto-scroll durante il trascinamento della selezione ----------------
+  // `MarkdownSelectionScope` (flutter_md 0.2.0) non ha alcun auto-scroll:
+  // trascinando una selezione verso il bordo la `ListView` restava ferma
+  // (esiste solo una PR upstream non ancora rilasciata, DoctorinaAI/md#30).
+  // Lo fa quindi questo componente, usando solo API pubbliche: osserva i
+  // puntatori, e mentre un dito/mouse trascina una selezione nella fascia di
+  // bordo fa scorrere `_scrollController` in modo continuo, anche a dito
+  // fermo (vedi la doc di `SelectionAutoScroller`).
+  late final SelectionAutoScroller _autoScroller;
+  MarkdownSelection? _lastObservedSelection;
 
   // Rilevamento del "tap a vuoto" fatto a mano su eventi puntatore grezzi
   // (`Listener`), non con un `GestureDetector`/`TapGestureRecognizer`.
@@ -126,7 +139,27 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
   @override
   void initState() {
     super.initState();
+    _autoScroller = SelectionAutoScroller(
+      vsync: this,
+      scrollController: _scrollController,
+      viewportRect: _viewportGlobalRect,
+      onScrollingChanged: (scrolling) =>
+          HapticsHelper.selectionAutoScrollActive = scrolling,
+    );
+    _selectionController.addListener(_onSelectionControllerChanged);
     _updateBlocks(widget.content);
+  }
+
+  // Il controller notifica anche per motivi diversi dalla selezione (es.
+  // `setDocuments`): si segnala all'auto-scroller solo un VERO cambio di
+  // valore della selezione (`MarkdownSelection` ha uguaglianza per valore),
+  // altrimenti un normale scroll a dito potrebbe essere scambiato per un
+  // trascinamento di selezione.
+  void _onSelectionControllerChanged() {
+    final selection = _selectionController.selection;
+    if (selection == _lastObservedSelection) return;
+    _lastObservedSelection = selection;
+    if (selection != null) _autoScroller.notifySelectionChanged();
   }
 
   @override
@@ -139,6 +172,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView> {
 
   @override
   void dispose() {
+    _selectionController.removeListener(_onSelectionControllerChanged);
+    _autoScroller.dispose();
     _scrollController.dispose();
     _selectionFocusNode.dispose();
     _selectionController.dispose();

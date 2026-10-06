@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/haptics_helper.dart';
+import '../../../core/utils/selection_auto_scroller.dart';
 import '../../settings/providers/settings_provider.dart';
 
 class MarkdownEditorField extends ConsumerStatefulWidget {
@@ -129,9 +130,59 @@ class _SelectionHapticBinder {
   }
 }
 
-class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
+/// Inoltra a [SelectionAutoScroller] i cambi di SELEZIONE di un
+/// [TextEditingController].
+///
+/// Le notifiche dovute a digitazione/IME (il testo cambia) vengono ignorate:
+/// non sono un gesto di selezione e non devono mai armare l'auto-scroll.
+class _SelectionChangeRelay {
+  _SelectionChangeRelay(this._controller, this._onSelectionChanged) {
+    _lastText = _controller.text;
+    _lastSelection = _controller.selection;
+    _controller.addListener(_onValueChanged);
+  }
+
+  final TextEditingController _controller;
+  final VoidCallback _onSelectionChanged;
+  late String _lastText;
+  late TextSelection _lastSelection;
+
+  void _onValueChanged() {
+    final text = _controller.text;
+    final selection = _controller.selection;
+    final textChanged = text != _lastText;
+    final selectionChanged = selection != _lastSelection;
+    _lastText = text;
+    _lastSelection = selection;
+    if (textChanged || !selectionChanged || !selection.isValid) return;
+    _onSelectionChanged();
+  }
+
+  void dispose() {
+    _controller.removeListener(_onValueChanged);
+  }
+}
+
+class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
+    with SingleTickerProviderStateMixin {
   late _SelectionHapticBinder _titleHaptics;
   late _SelectionHapticBinder _contentHaptics;
+
+  // Auto-scroll continuo durante il trascinamento di una selezione (vedi la
+  // doc di `SelectionAutoScroller`) e relativi relay dei due campi.
+  //
+  // Il comportamento nativo di `TextField` dentro uno `SingleChildScrollView`
+  // scorre solo quando arrivano eventi del puntatore (a dito fermo non
+  // scorre) e porta a schermo il cursore da più percorsi concorrenti
+  // (`bringIntoView` + `_scheduleShowCaretOnScreen`) che, trascinando la
+  // maniglia SUPERIORE, lavorano su estremi diversi della selezione:
+  // il risultato sono scatti e "rimbalzi" verso il fondo della selezione
+  // (flutter/flutter#132047, fix in corso in #185206). Per questo, finché
+  // si trascina una selezione, `SelectionRevealShield` (vedi `build`)
+  // silenzia quel meccanismo e lo scroll è governato solo dall'auto-scroller.
+  late final SelectionAutoScroller _autoScroller;
+  late _SelectionChangeRelay _titleSelectionRelay;
+  late _SelectionChangeRelay _contentSelectionRelay;
 
   // Riferimenti propri (non condivisi col chiamante) usati SOLO per portare
   // a schermo automaticamente l'occorrenza attiva della ricerca interna
@@ -155,9 +206,33 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
       () => ref.read(settingsProvider).hapticIntensity,
     );
 
+    _autoScroller = SelectionAutoScroller(
+      vsync: this,
+      scrollController: _scrollController,
+      viewportRect: _viewportGlobalRect,
+      onScrollingChanged: (scrolling) =>
+          HapticsHelper.selectionAutoScrollActive = scrolling,
+    );
+    _titleSelectionRelay = _SelectionChangeRelay(
+      widget.titleController,
+      _autoScroller.notifySelectionChanged,
+    );
+    _contentSelectionRelay = _SelectionChangeRelay(
+      widget.contentController,
+      _autoScroller.notifySelectionChanged,
+    );
+
     if (widget.activeSearchMatch != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToActiveMatch());
     }
+  }
+
+  // Rettangolo globale della viewport di scroll (l'area in cui il contenuto
+  // è realmente visibile), o `null` se non ancora disponibile.
+  Rect? _viewportGlobalRect() {
+    final box = _scrollViewKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
   }
 
   @override
@@ -173,12 +248,22 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
         widget.titleController,
         () => ref.read(settingsProvider).hapticIntensity,
       );
+      _titleSelectionRelay.dispose();
+      _titleSelectionRelay = _SelectionChangeRelay(
+        widget.titleController,
+        _autoScroller.notifySelectionChanged,
+      );
     }
     if (oldWidget.contentController != widget.contentController) {
       _contentHaptics.dispose();
       _contentHaptics = _SelectionHapticBinder(
         widget.contentController,
         () => ref.read(settingsProvider).hapticIntensity,
+      );
+      _contentSelectionRelay.dispose();
+      _contentSelectionRelay = _SelectionChangeRelay(
+        widget.contentController,
+        _autoScroller.notifySelectionChanged,
       );
     }
 
@@ -197,6 +282,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
   void dispose() {
     _titleHaptics.dispose();
     _contentHaptics.dispose();
+    _titleSelectionRelay.dispose();
+    _contentSelectionRelay.dispose();
+    _autoScroller.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -300,56 +388,59 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 840),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Title Field
-              TextField(
-                controller: widget.titleController,
-                onChanged: widget.onTitleChanged,
-                style: titleStyle,
-                maxLines: null,
-                keyboardType: TextInputType.multiline,
-                textInputAction: TextInputAction.next,
-                decoration: InputDecoration(
-                  hintText: l10n.untitledNote,
-                  hintStyle: titleStyle.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-
-              const SizedBox(height: 12),
-              Divider(
-                color: theme.colorScheme.outline.withValues(alpha: 0.25),
-                thickness: 1,
-              ),
-              const SizedBox(height: 16),
-
-              // Markdown Body Field
-              Container(
-                key: _contentFieldKey,
-                child: TextField(
-                  controller: widget.contentController,
-                  focusNode: widget.contentFocusNode,
-                  undoController: widget.undoController,
-                  onChanged: widget.onContentChanged,
-                  style: contentStyle,
+          child: SelectionRevealShield(
+            isBlocking: () => _autoScroller.isDraggingSelection,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Title Field
+                TextField(
+                  controller: widget.titleController,
+                  onChanged: widget.onTitleChanged,
+                  style: titleStyle,
                   maxLines: null,
                   keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.next,
                   decoration: InputDecoration(
-                    hintText: l10n.writeMarkdownHere,
-                    hintStyle: contentStyle.copyWith(
+                    hintText: l10n.untitledNote,
+                    hintStyle: titleStyle.copyWith(
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
                     ),
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
-              ),
-            ],
+
+                const SizedBox(height: 12),
+                Divider(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.25),
+                  thickness: 1,
+                ),
+                const SizedBox(height: 16),
+
+                // Markdown Body Field
+                Container(
+                  key: _contentFieldKey,
+                  child: TextField(
+                    controller: widget.contentController,
+                    focusNode: widget.contentFocusNode,
+                    undoController: widget.undoController,
+                    onChanged: widget.onContentChanged,
+                    style: contentStyle,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    decoration: InputDecoration(
+                      hintText: l10n.writeMarkdownHere,
+                      hintStyle: contentStyle.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

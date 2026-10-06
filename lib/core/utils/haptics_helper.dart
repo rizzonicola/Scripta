@@ -68,6 +68,17 @@ class HapticsHelper {
   static Timer? _rearmTimer;
   static const _rearmDelay = Duration(milliseconds: 200);
 
+  /// true mentre un auto-scroll di selezione (vedi `SelectionAutoScroller`)
+  /// sta facendo scorrere la vista. In quel caso la selezione cambia a ogni
+  /// frame e, con l'intensità "strong", ogni cambio produrrebbe una
+  /// vibrazione (sia quella nativa del framework sia [selectionDragTick]):
+  /// una raffica continua. Finché è true, [gateNativeHapticCall] lascia
+  /// passare al massimo una vibrazione ogni [_autoScrollTickInterval].
+  /// Fuori dall'auto-scroll il comportamento resta quello di sempre.
+  static bool selectionAutoScrollActive = false;
+  static const _autoScrollTickInterval = Duration(milliseconds: 140);
+  static DateTime? _lastAutoScrollTick;
+
   /// true sui soli sistemi Desktop dove l'aptica non ha senso. Usato solo
   /// dalle chiamate esplicite residue di questa classe (vedi
   /// [selectionDragTick]); il gate del platform channel filtra comunque
@@ -107,6 +118,13 @@ class HapticsHelper {
       case HapticIntensity.off:
         return false;
       case HapticIntensity.strong:
+        if (!selectionAutoScrollActive) return true;
+        final now = DateTime.now();
+        final last = _lastAutoScrollTick;
+        if (last != null && now.difference(last) < _autoScrollTickInterval) {
+          return false;
+        }
+        _lastAutoScrollTick = now;
         return true;
       case HapticIntensity.light:
         if (_armed) {
