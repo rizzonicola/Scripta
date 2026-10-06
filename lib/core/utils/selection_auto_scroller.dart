@@ -431,19 +431,25 @@ class SelectionRevealShield extends SingleChildRenderObjectWidget {
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _RenderSelectionRevealShield(isBlocking);
+      RenderSelectionRevealShield(isBlocking);
 
   @override
   void updateRenderObject(
     BuildContext context,
-    covariant _RenderSelectionRevealShield renderObject,
+    covariant RenderSelectionRevealShield renderObject,
   ) {
     renderObject.isBlocking = isBlocking;
   }
 }
 
-class _RenderSelectionRevealShield extends RenderProxyBox {
-  _RenderSelectionRevealShield(this.isBlocking);
+/// Render object di [SelectionRevealShield].
+///
+/// È volutamente pubblico: compare nella firma di `updateRenderObject`, che
+/// è API pubblica, e un tipo privato lì dentro fa scattare la lint
+/// `library_private_types_in_public_api` (che con `flutter analyze` nel
+/// workflow fa fallire la build). Non rinominarlo con il `_` iniziale.
+class RenderSelectionRevealShield extends RenderProxyBox {
+  RenderSelectionRevealShield(this.isBlocking);
 
   bool Function() isBlocking;
 
