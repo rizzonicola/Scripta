@@ -282,6 +282,10 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
   void dispose() {
     _titleHaptics.dispose();
     _contentHaptics.dispose();
+    // I binder hanno appena smesso di ascoltare i controller: un timer di
+    // riarmo aptico ancora in attesa (statico, vive in `HapticsHelper`)
+    // sopravvivrebbe al widget. Va annullato qui.
+    HapticsHelper.resetSelectionState();
     _titleSelectionRelay.dispose();
     _contentSelectionRelay.dispose();
     _autoScroller.dispose();

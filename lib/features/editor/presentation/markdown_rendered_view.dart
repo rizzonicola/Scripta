@@ -1,3 +1,5 @@
+import 'dart:async' show Timer;
+
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform, ValueListenable, ValueNotifier;
 import 'package:flutter/gestures.dart'
@@ -120,6 +122,23 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // mano la logica minima di "è stato un tap breve, non un drag né un
   // long-press" (soglia di spostamento + soglia di durata), usando le stesse
   // costanti che userebbe Flutter internamente.
+  //
+  // La soglia di DURATA è un `Timer` (vedi `_PendingTap`), NON un confronto
+  // fra due `DateTime.now()`: il `Timer` segue l'orologio della `Zone`
+  // corrente, quindi nei test (`FakeAsync`, dove `tester.pump(Duration)` fa
+  // avanzare solo l'orologio finto) un long-press simulato scade davvero
+  // dopo `_tapMaxDuration`, esattamente come su un dispositivo. Con
+  // `DateTime.now()` (orologio di sistema, non toccato da `FakeAsync`) un
+  // long-press di test sembrava durare ~0 ms, veniva scambiato per un tap
+  // breve e `_handleBackgroundPointerUp` annullava subito la selezione appena
+  // creata dal long-press.
+  //
+  // Invariante: `_pendingTapPointers` contiene SOLO puntatori ancora
+  // candidati a essere un tap breve (premuti da meno di `_tapMaxDuration` e
+  // mai spostati oltre `_tapTouchSlop`). Tutto ciò che li squalifica (scadenza
+  // del timer, movimento, cancel, up) li toglie dalla mappa e annulla il
+  // loro timer; `dispose()` annulla quelli ancora in corsa. Così non resta
+  // mai un `Timer` vivo oltre la vita del widget.
   static const double _tapTouchSlop = kTouchSlop; // ~18px
   static const Duration _tapMaxDuration = Duration(milliseconds: 500); // ~kLongPressTimeout
   final Map<int, _PendingTap> _pendingTapPointers = <int, _PendingTap>{};
@@ -197,13 +216,20 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   @override
   void dispose() {
+    // Prima di tutto i timer: nessun callback deve poter girare dopo lo
+    // smontaggio (in un test sarebbe "A Timer is still pending even after
+    // the widget tree was disposed").
+    _cancelAllPendingTaps();
+    // Il timer di riarmo dell'aptica è statico (vive in `HapticsHelper`) e
+    // l'ultimo `onSelectionChanged` può averlo appena avviato (selezione
+    // appena annullata): va annullato qui, altrimenti sopravvive al widget.
+    HapticsHelper.resetSelectionState();
     _selectionController.removeListener(_onSelectionControllerChanged);
     _selectionEdgeIds.dispose();
     _autoScroller.dispose();
     _scrollController.dispose();
     _selectionFocusNode.dispose();
     _selectionController.dispose();
-    _pendingTapPointers.clear();
     super.dispose();
   }
 
@@ -570,6 +596,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   void _handleBackgroundPointerDown(PointerDownEvent event) {
+    final pointer = event.pointer;
+    // Un id di puntatore non viene riusato, ma un eventuale residuo non deve
+    // mai lasciare un timer orfano.
+    _forgetPendingTap(pointer);
+
     // Desktop (mouse/trackpad/penna): il tasto DESTRO (o centrale) apre il
     // menu contestuale (Copia / Seleziona tutto) e NON deve mai contare come
     // "tocco a vuoto": prima veniva trattato come un normale tap breve e
@@ -577,34 +608,53 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // l'apertura del menu. Il tasto va letto qui, sul `PointerDown`: sul
     // `PointerUp` `event.buttons` vale già 0. Su touch `buttons` è sempre
     // `kPrimaryButton`, quindi il comportamento mobile resta identico.
-    if ((event.buttons & (kSecondaryButton | kTertiaryButton)) != 0) {
-      _pendingTapPointers.remove(event.pointer);
-      return;
-    }
-    _pendingTapPointers[event.pointer] = _PendingTap(event.position, DateTime.now());
+    if ((event.buttons & (kSecondaryButton | kTertiaryButton)) != 0) return;
+
+    _pendingTapPointers[pointer] = _PendingTap(
+      origin: event.position,
+      maxDuration: _tapMaxDuration,
+      // Tenuto premuto oltre la soglia di long-press (avvio selezione
+      // touch, o pressione lunga con il mouse): non è più un tap.
+      onExpired: () => _forgetPendingTap(pointer),
+    );
   }
 
   void _handleBackgroundPointerMove(PointerMoveEvent event) {
-    _pendingTapPointers[event.pointer]?.registerPosition(event.position);
+    final pending = _pendingTapPointers[event.pointer];
+    if (pending == null) return;
+    // Spostato oltre la soglia (drag/scroll/table-scroll): non è un tap.
+    if ((event.position - pending.origin).distance > _tapTouchSlop) {
+      _forgetPendingTap(event.pointer);
+    }
   }
 
   void _handleBackgroundPointerCancel(PointerCancelEvent event) {
-    _pendingTapPointers.remove(event.pointer);
+    _forgetPendingTap(event.pointer);
   }
 
   void _handleBackgroundPointerUp(PointerUpEvent event) {
+    // Se il puntatore non è più nella mappa NON è un tap breve (scaduto,
+    // spostato oltre la soglia, tasto destro/centrale): non deve annullare
+    // nulla.
     final pending = _pendingTapPointers.remove(event.pointer);
     if (pending == null) return;
-
-    // Non un tap: si è spostato oltre la soglia (drag/scroll/table-scroll) o
-    // è stato tenuto premuto oltre la soglia di long-press (avvio selezione
-    // touch). In entrambi i casi non deve annullare nulla.
-    if (pending.maxDistanceFromOrigin > _tapTouchSlop) return;
-    if (DateTime.now().difference(pending.downTime) > _tapMaxDuration) return;
+    pending.cancel();
 
     final selection = _activeSelection;
     if (selection == null || selection.isCollapsed) return;
     _selectionScopeKey.currentState?.clearSelection();
+  }
+
+  // Toglie il puntatore dai candidati-tap e ne annulla il timer.
+  void _forgetPendingTap(int pointer) {
+    _pendingTapPointers.remove(pointer)?.cancel();
+  }
+
+  void _cancelAllPendingTaps() {
+    for (final pending in _pendingTapPointers.values) {
+      pending.cancel();
+    }
+    _pendingTapPointers.clear();
   }
 
   Widget _buildTitleWidget(ThemeData theme, Color selectionColor) {
@@ -746,22 +796,29 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
   }
 }
 
-/// Stato di un puntatore ancora "in corsa" fra `PointerDown` e `PointerUp`,
-/// usato da `_MarkdownRenderedViewState` per riconoscere a mano un tap breve
-/// senza passare dalla gesture arena (vedi commento su `_pendingTapPointers`).
+/// Puntatore ancora "in corsa" fra `PointerDown` e `PointerUp` e ancora
+/// candidato a essere un tap breve, usato da `_MarkdownRenderedViewState` per
+/// riconoscere a mano un tap senza passare dalla gesture arena (vedi commento
+/// su `_pendingTapPointers`).
+///
+/// La durata massima è un `Timer` creato alla costruzione: quando scade
+/// chiama [onExpired] (il proprietario toglie il puntatore dai candidati).
+/// Chi rimuove un `_PendingTap` dalla mappa DEVE chiamare [cancel], altrimenti
+/// il timer resta vivo fino alla scadenza.
 class _PendingTap {
-  _PendingTap(this.origin, this.downTime);
+  _PendingTap({
+    required this.origin,
+    required Duration maxDuration,
+    required void Function() onExpired,
+  }) : _expiryTimer = Timer(maxDuration, onExpired);
 
+  /// Posizione globale del `PointerDown`.
   final Offset origin;
-  final DateTime downTime;
-  double maxDistanceFromOrigin = 0;
 
-  void registerPosition(Offset position) {
-    final distance = (position - origin).distance;
-    if (distance > maxDistanceFromOrigin) {
-      maxDistanceFromOrigin = distance;
-    }
-  }
+  final Timer _expiryTimer;
+
+  /// Annulla il timer di scadenza (idempotente).
+  void cancel() => _expiryTimer.cancel();
 }
 
 /// Tiene vivo — cioè NON smontato dalla virtualizzazione della
@@ -805,8 +862,11 @@ class _PendingTap {
 /// (`AutomaticKeepAliveClientMixin`): la `ListView.builder` avvolge già ogni
 /// item in un `AutomaticKeepAlive`, qui non si cambia nessun parametro.
 class _KeepAliveWhileSelectionEdge extends StatefulWidget {
+  // Niente `super.key`: la classe è privata e nessun punto di chiamata passa
+  // una `key` (l'item della lista è già identificato dall'`Align` con
+  // `ValueKey`), quindi il parametro sarebbe sempre inutilizzato e farebbe
+  // scattare `unused_element_parameter` in `flutter analyze`.
   const _KeepAliveWhileSelectionEdge({
-    super.key,
     required this.documentId,
     required this.edgeIds,
     required this.child,

@@ -105,9 +105,37 @@ class HapticsHelper {
   /// la chiamata nativa a `HapticFeedback.vibrate` e l'aggiornamento del
   /// controller (che possono avvenire in un ordine non garantito).
   static void reportSelectionState({required bool isCollapsed}) {
-    _rearmTimer?.cancel();
+    _cancelRearmTimer();
     if (!isCollapsed) return;
-    _rearmTimer = Timer(_rearmDelay, () => _armed = true);
+    _rearmTimer = Timer(_rearmDelay, () {
+      _rearmTimer = null;
+      _armed = true;
+    });
+  }
+
+  /// Annulla il timer di riarmo in sospeso (se c'è) e azzera il riferimento.
+  static void _cancelRearmTimer() {
+    _rearmTimer?.cancel();
+    _rearmTimer = null;
+  }
+
+  /// Da chiamare dal `dispose()` di ogni widget che invia le proprie
+  /// selezioni a [reportSelectionState] (vista di lettura, campo editor).
+  ///
+  /// Il timer di riarmo è STATICO, quindi sopravvive al widget che l'ha
+  /// avviato: se il widget viene smontato mentre il timer è ancora in
+  /// attesa, il timer resta vivo fuori dall'albero (in un test, fa fallire
+  /// l'invariante "A Timer is still pending even after the widget tree was
+  /// disposed"; in produzione è solo un callback orfano). Qui il timer viene
+  /// annullato e il riarmo viene applicato SUBITO: è lo stesso effetto che
+  /// il timer avrebbe avuto dopo [_rearmDelay] di quiete, e quando il widget
+  /// che teneva la selezione sparisce, la selezione sparisce con lui, quindi
+  /// la prossima (in qualunque widget) deve poter vibrare di nuovo.
+  ///
+  /// Idempotente: si può chiamare più volte e da più widget.
+  static void resetSelectionState() {
+    _cancelRearmTimer();
+    _armed = true;
   }
 
   /// Da chiamare dall'interceptor del platform channel in `main.dart` ogni
@@ -129,7 +157,7 @@ class HapticsHelper {
       case HapticIntensity.light:
         if (_armed) {
           _armed = false;
-          _rearmTimer?.cancel();
+          _cancelRearmTimer();
           return true;
         }
         return false;
