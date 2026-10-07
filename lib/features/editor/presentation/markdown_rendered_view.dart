@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform, ValueListenable, ValueNotifier;
 import 'package:flutter/gestures.dart'
     show kTouchSlop, kSecondaryButton, kTertiaryButton;
 import 'package:flutter/material.dart';
@@ -32,6 +33,11 @@ import 'display_math_block.dart';
 /// `RenderObject` a schermo, quindi resta corretta — "Seleziona tutto"
 /// incluso — anche per blocchi mai costruiti o già scomparsi dalla
 /// `cacheExtent` di default.
+///
+/// Unica eccezione alla virtualizzazione: i (al massimo 2) blocchi che
+/// contengono gli estremi della selezione restano montati finché la
+/// selezione esiste, altrimenti le maniglie non tornerebbero dopo aver
+/// scrollato lontano (vedi `_KeepAliveWhileSelectionEdge`).
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -91,6 +97,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // fermo (vedi la doc di `SelectionAutoScroller`).
   late final SelectionAutoScroller _autoScroller;
   MarkdownSelection? _lastObservedSelection;
+
+  // Id dei blocchi che contengono i due estremi (base, extent) della
+  // selezione attiva, oppure `(null, null)` se non c'è una selezione vera
+  // (assente o collassata: senza range non ci sono maniglie). Lo ascoltano
+  // SOLO i blocchi montati (vedi `_KeepAliveWhileSelectionEdge`), che si
+  // tengono vivi finché sono un estremo. I record hanno uguaglianza per
+  // valore: il notifier avvisa solo se cambia davvero un estremo.
+  final ValueNotifier<(String?, String?)> _selectionEdgeIds =
+      ValueNotifier<(String?, String?)>((null, null));
 
   // Rilevamento del "tap a vuoto" fatto a mano su eventi puntatore grezzi
   // (`Listener`), non con un `GestureDetector`/`TapGestureRecognizer`.
@@ -159,7 +174,17 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final selection = _selectionController.selection;
     if (selection == _lastObservedSelection) return;
     _lastObservedSelection = selection;
+    _selectionEdgeIds.value = _edgeIdsOf(selection);
     if (selection != null) _autoScroller.notifySelectionChanged();
+  }
+
+  // Id dei blocchi con base ed extent. `documentId` è un `Object` opaco per
+  // il pacchetto, ma qui è sempre la stringa 'block-N' di `_updateBlocks`.
+  static (String?, String?) _edgeIdsOf(MarkdownSelection? selection) {
+    if (selection == null || selection.isCollapsed) return (null, null);
+    final base = selection.base.documentId;
+    final extent = selection.extent.documentId;
+    return (base is String ? base : null, extent is String ? extent : null);
   }
 
   @override
@@ -173,6 +198,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   @override
   void dispose() {
     _selectionController.removeListener(_onSelectionControllerChanged);
+    _selectionEdgeIds.dispose();
     _autoScroller.dispose();
     _scrollController.dispose();
     _selectionFocusNode.dispose();
@@ -696,7 +722,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         constraints: const BoxConstraints(maxWidth: 840),
         child: Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: content,
+          // Solo i blocchi Markdown: le formule non hanno `documentId` e non
+          // contengono mai un estremo della selezione. Il wrapper non
+          // aggiunge alcun RenderObject (vedi la sua doc per il perché).
+          child: item is _BlockItem
+              ? _KeepAliveWhileSelectionEdge(
+                  documentId: item.documentId,
+                  edgeIds: _selectionEdgeIds,
+                  child: content,
+                )
+              : content,
         ),
       ),
     );
@@ -726,6 +761,119 @@ class _PendingTap {
     if (distance > maxDistanceFromOrigin) {
       maxDistanceFromOrigin = distance;
     }
+  }
+}
+
+/// Tiene vivo — cioè NON smontato dalla virtualizzazione della
+/// `ListView.builder` — il blocco che contiene un estremo della selezione
+/// attiva, e solo finché lo è: al massimo 2 blocchi, mai tutti.
+///
+/// PERCHÉ ESISTE (bug "le maniglie non tornano")
+/// ---------------------------------------------
+/// In `flutter_md` 0.2.0 le maniglie sono gli `OverlayEntry` di un
+/// `SelectionOverlay` che seguono dei `LayerLink`; il `LeaderLayer` di
+/// ciascun link lo disegna il `RenderObject` del blocco che contiene
+/// l'estremo (`MarkdownSelectionSurface.setSelectionHandleLayers`, vedi
+/// CHANGELOG 0.2.0) e, senza leader, il framework non disegna la maniglia
+/// (`showWhenUnlinked: false` nel `SelectionOverlay` di Flutter). Quando il
+/// blocco esce dalla `cacheExtent` il suo `RenderObject` viene distrutto: la
+/// selezione sopravvive (è ancorata al modello) e l'evidenziazione torna al
+/// ritorno (comportamento osservato), ma i `LayerLink` non vengono ridati al
+/// nuovo `RenderObject`: `MarkdownSelectionController.attachSurface` e
+/// `detachSurface` aggiornano solo una mappa, senza `notifyListeners()`, e
+/// nei metodi pubblici dello scope (`initState`, `didChangeDependencies`,
+/// `build`, `dispose`) non c'è alcun ascoltatore di scroll: lo scope non ha
+/// quindi motivo di ricalcolare le maniglie finché la selezione non cambia.
+/// Non esiste un'API pubblica per ri-mostrarle (`showToolbar` gestisce solo
+/// la toolbar).
+///
+/// (Verificato sul sorgente pubblicato su pub.dev, solo membri pubblici: i
+/// due metodi del controller, `selectionHandleEndpoints`, `showToolbar`,
+/// `initState`/`didChangeDependencies`/`build`/`dispose` dello scope. NON
+/// verificato: i metodi PRIVATI dello scope (`_onControllerChanged` e
+/// simili), non consultabili da lì; il passaggio "nessun ricalcolo dopo il
+/// rimontaggio" è dedotto dal sintomo osservato.)
+///
+/// RIMEDIO
+/// -------
+/// Tenendo montato il blocco di ogni estremo, il suo `RenderObject` non
+/// viene mai ricreato: conserva i `LayerLink` e, quando torna dentro la
+/// viewport, ridisegna il leader da solo. Fuori viewport lo sliver non
+/// disegna i figli tenuti vivi (nessun leader, quindi nessuna maniglia fuori
+/// posto). Per tutti gli altri blocchi `cacheExtent` e virtualizzazione
+/// restano quelle di default. Il meccanismo è quello standard
+/// (`AutomaticKeepAliveClientMixin`): la `ListView.builder` avvolge già ogni
+/// item in un `AutomaticKeepAlive`, qui non si cambia nessun parametro.
+class _KeepAliveWhileSelectionEdge extends StatefulWidget {
+  const _KeepAliveWhileSelectionEdge({
+    super.key,
+    required this.documentId,
+    required this.edgeIds,
+    required this.child,
+  });
+
+  final String documentId;
+  final ValueListenable<(String?, String?)> edgeIds;
+  final Widget child;
+
+  @override
+  State<_KeepAliveWhileSelectionEdge> createState() =>
+      _KeepAliveWhileSelectionEdgeState();
+}
+
+class _KeepAliveWhileSelectionEdgeState
+    extends State<_KeepAliveWhileSelectionEdge>
+    with AutomaticKeepAliveClientMixin<_KeepAliveWhileSelectionEdge> {
+  // `late` con inizializzatore: il mixin legge `wantKeepAlive` già dentro
+  // `super.initState()`, dove `widget` è disponibile.
+  late bool _isEdge = _computeIsEdge();
+
+  @override
+  bool get wantKeepAlive => _isEdge;
+
+  bool _computeIsEdge() {
+    final (base, extent) = widget.edgeIds.value;
+    return base == widget.documentId || extent == widget.documentId;
+  }
+
+  // Si ricalcola solo la risposta a "devo restare vivo?": nessun `setState`
+  // (non cambia nulla di visibile) e `updateKeepAlive` solo se cambia. È
+  // sicuro anche se il controller notifica in fase di build/layout:
+  // `AutomaticKeepAlive` gestisce notifiche e rilasci in qualunque fase.
+  void _syncKeepAlive() {
+    final isEdge = _computeIsEdge();
+    if (isEdge == _isEdge) return;
+    _isEdge = isEdge;
+    updateKeepAlive();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.edgeIds.addListener(_syncKeepAlive);
+  }
+
+  @override
+  void didUpdateWidget(covariant _KeepAliveWhileSelectionEdge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.edgeIds != widget.edgeIds) {
+      oldWidget.edgeIds.removeListener(_syncKeepAlive);
+      widget.edgeIds.addListener(_syncKeepAlive);
+    }
+    // Lo stesso slot della lista può essere riusato per un altro blocco.
+    _syncKeepAlive();
+  }
+
+  @override
+  void dispose() {
+    widget.edgeIds.removeListener(_syncKeepAlive);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // richiesto da AutomaticKeepAliveClientMixin
+    return widget.child;
   }
 }
 
