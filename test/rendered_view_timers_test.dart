@@ -226,10 +226,29 @@ void main() {
       (tester) async {
         await _pumpNote(tester, _note(30));
 
-        // Nessun `up`/`cancel`: a fine test l'albero viene smontato mentre il
-        // timer di scadenza del tap è ancora in corsa; `dispose()` deve
-        // annullarlo.
+        // Nessun `up`/`cancel`: la vista viene smontata mentre il timer di
+        // scadenza del tap (`_PendingTap`, 500 ms) è ancora in corsa;
+        // `dispose()` deve annullarlo.
         await tester.startGesture(_wordPoint(tester, 10));
+        await tester.pumpWidget(const SizedBox.shrink());
+        expect(find.byType(MarkdownRenderedView), findsNothing);
+
+        // Il `PointerDown` fa partire anche un timer che NON è dell'app: un
+        // `DoubleTapGestureRecognizer` presente nell'albero (in `lib/` non
+        // c'è nessun `onDoubleTap`: viene da una dipendenza, verosimilmente
+        // `flutter_md` per il doppio tap che seleziona la parola) crea, per
+        // ogni tocco, un conto alla rovescia di `kDoubleTapMinTime` (40 ms)
+        // che nessuno può annullare, nemmeno `dispose()` (vedi
+        // `_CountdownZoned` in multitap.dart). Senza far avanzare l'orologio
+        // finto, `flutter_test` lo trova pendente e fallisce con "A Timer is
+        // still pending even after the widget tree was disposed" pur senza
+        // alcuna colpa dell'app.
+        //
+        // 50 ms bastano a far scadere quel timer ma restano molto sotto i
+        // 500 ms di `_PendingTap`: se `dispose()` smettesse di annullarlo, il
+        // controllo finale di `flutter_test` lo vedrebbe ancora pendente e il
+        // test fallirebbe, quindi la regressione resta coperta.
+        await tester.pump(const Duration(milliseconds: 50));
       },
     );
   });
