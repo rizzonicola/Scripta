@@ -3,7 +3,17 @@ import 'dart:async' show Timer;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform, ValueListenable, ValueNotifier;
 import 'package:flutter/gestures.dart'
-    show kTouchSlop, kSecondaryButton, kTertiaryButton;
+    show
+        GestureBinding,
+        PointerCancelEvent,
+        PointerDownEvent,
+        PointerEvent,
+        PointerHoverEvent,
+        PointerRemovedEvent,
+        PointerUpEvent,
+        kSecondaryButton,
+        kTertiaryButton,
+        kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionControls, cupertinoDesktopTextSelectionControls;
@@ -100,14 +110,31 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   late final SelectionAutoScroller _autoScroller;
   MarkdownSelection? _lastObservedSelection;
 
-  // Id dei blocchi che contengono i due estremi (base, extent) della
-  // selezione attiva, oppure `(null, null)` se non c'è una selezione vera
-  // (assente o collassata: senza range non ci sono maniglie). Lo ascoltano
-  // SOLO i blocchi montati (vedi `_KeepAliveWhileSelectionEdge`), che si
-  // tengono vivi finché sono un estremo. I record hanno uguaglianza per
-  // valore: il notifier avvisa solo se cambia davvero un estremo.
+  // Id dei blocchi da tenere vivi: `(base, extent)` PUBBLICATI, oppure
+  // `(null, null)` se non c'è una selezione vera (assente o collassata:
+  // senza range non ci sono maniglie). Lo ascoltano SOLO i blocchi montati
+  // (vedi `_KeepAliveWhileSelectionEdge`), che si tengono vivi finché sono un
+  // estremo. I record hanno uguaglianza per valore: il notifier avvisa solo
+  // se cambia davvero un estremo.
+  //
+  // Durante un gesto NON coincide con gli estremi reali della selezione
+  // (`_latestEdgeIds`): la pubblicazione è parziale, vedi `_syncEdgeIds`.
   final ValueNotifier<(String?, String?)> _selectionEdgeIds =
       ValueNotifier<(String?, String?)>((null, null));
+
+  // Estremi REALI `(base, extent)` dell'ultima selezione osservata, sempre
+  // aggiornati (`(null, null)` se non c'è una selezione vera).
+  (String?, String?) _latestEdgeIds = (null, null);
+
+  // Puntatori attualmente premuti, in QUALSIASI punto dello schermo (le
+  // maniglie vivono in un `OverlayEntry`, fuori da ogni `Listener` di questa
+  // vista): pointer -> device. Serve solo a sapere se è in corso un gesto
+  // (vedi `_syncEdgeIds`); lo mantiene `_trackPressedPointers`.
+  final Map<int, int> _pressedPointers = <int, int>{};
+
+  // Nel gesto in corso l'ancora è già stata pubblicata una volta (vedi
+  // `_syncEdgeIds`): da qui al rilascio lo stato pubblicato non cambia più.
+  bool _anchorPublishedInGesture = false;
 
   // Rilevamento del "tap a vuoto" fatto a mano su eventi puntatore grezzi
   // (`Listener`), non con un `GestureDetector`/`TapGestureRecognizer`.
@@ -180,6 +207,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       onScrollingChanged: (scrolling) =>
           HapticsHelper.selectionAutoScrollActive = scrolling,
     );
+    // Route GLOBALE (come quella dell'auto-scroller, indipendente da essa):
+    // vede anche i puntatori che non passano per il `Listener` di questa
+    // vista, come quello che trascina una maniglia.
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_trackPressedPointers);
     _selectionController.addListener(_onSelectionControllerChanged);
     _updateBlocks(widget.content);
   }
@@ -193,8 +224,81 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final selection = _selectionController.selection;
     if (selection == _lastObservedSelection) return;
     _lastObservedSelection = selection;
-    _selectionEdgeIds.value = _edgeIdsOf(selection);
+    _latestEdgeIds = _edgeIdsOf(selection);
+    _syncEdgeIds();
     if (selection != null) _autoScroller.notifySelectionChanged();
+  }
+
+  /// Pubblica gli estremi da tenere vivi (`_selectionEdgeIds`).
+  ///
+  /// A RIPOSO (nessun puntatore premuto) si pubblicano subito gli estremi
+  /// reali. Durante un GESTO no: lì la selezione cambia a ogni evento
+  /// puntatore e, con i blocchi spaziatori fra un paragrafo e l'altro, ogni
+  /// attraversamento di uno "spazio vuoto" cambia il blocco dell'estremo.
+  /// Se il keep-alive lo seguisse in tempo reale, ogni cambio farebbe
+  /// scattare in sincrono, dentro la `notifyListeners()` del controller e
+  /// PRIMA dei listener del pacchetto, un rilascio + un nuovo keep-alive su
+  /// due blocchi: una mutazione strutturale della lista (`markNeedsLayout`
+  /// dello sliver, garbage collection, attach/detach dei `RenderObject` che
+  /// il controller usa come superfici) a ogni evento del drag. In 0.9.8 lo
+  /// stesso evento era un semplice repaint. Durante il gesto quindi:
+  ///
+  /// - l'ANCORA (`base`, l'estremo fisso) si pubblica subito, ma al massimo
+  ///   UNA volta per gesto: in un trascinamento di maniglia non cambia mai
+  ///   (nessun churn); nasce o cambia una sola volta se il gesto crea una
+  ///   nuova selezione (long-press + trascinamento senza staccare il dito:
+  ///   l'auto-scroll può portarla lontano prima del rilascio). Se cambiasse
+  ///   a ogni evento (maniglie scavalcate l'una sull'altra) vale comunque
+  ///   solo il primo cambio: il resto aspetta il rilascio;
+  /// - l'estremo MOBILE (`extent`) resta quello già pubblicato: segue il dito,
+  ///   quindi è sempre in viewport e non serve tenerlo vivo finché il dito è
+  ///   giù. Si pubblica al rilascio (`_flushEdgeIds`).
+  void _syncEdgeIds() {
+    final latest = _latestEdgeIds;
+    if (_pressedPointers.isEmpty) {
+      _selectionEdgeIds.value = latest;
+      return;
+    }
+    final published = _selectionEdgeIds.value;
+    if (!_anchorPublishedInGesture && latest.$1 != published.$1) {
+      _anchorPublishedInGesture = true;
+      _selectionEdgeIds.value = (latest.$1, published.$2);
+    }
+  }
+
+  /// Pubblica gli estremi reali (fine del gesto).
+  void _flushEdgeIds() {
+    _anchorPublishedInGesture = false;
+    _selectionEdgeIds.value = _latestEdgeIds;
+  }
+
+  /// Route globale: tiene aggiornato `_pressedPointers` e, quando l'ultimo
+  /// puntatore viene rilasciato, pubblica gli estremi reali.
+  ///
+  /// Ordine di consegna (`PointerRouter.route`): prima le route dei
+  /// recognizer del puntatore (quindi la fine del drag di una maniglia, nel
+  /// pacchetto), poi quelle globali: qui la selezione è già "assestata".
+  void _trackPressedPointers(PointerEvent event) {
+    if (event is PointerDownEvent) {
+      if (_pressedPointers.isEmpty) _anchorPublishedInGesture = false;
+      _pressedPointers[event.pointer] = event.device;
+      return;
+    }
+    final bool released;
+    if (event is PointerUpEvent || event is PointerCancelEvent) {
+      released = _pressedPointers.remove(event.pointer) != null;
+    } else if (event is PointerHoverEvent || event is PointerRemovedEvent) {
+      // Rete di sicurezza (stessa dell'auto-scroller): un hover o una
+      // rimozione dello stesso device significa che non è più premuto, anche
+      // se il suo `PointerUp` non è mai arrivato (mouse rilasciato fuori
+      // dalla finestra). Senza, il gesto resterebbe "aperto" per sempre.
+      final before = _pressedPointers.length;
+      _pressedPointers.removeWhere((_, device) => device == event.device);
+      released = _pressedPointers.length != before;
+    } else {
+      return;
+    }
+    if (released && _pressedPointers.isEmpty) _flushEdgeIds();
   }
 
   // Id dei blocchi con base ed extent. `documentId` è un `Object` opaco per
@@ -220,6 +324,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // smontaggio (in un test sarebbe "A Timer is still pending even after
     // the widget tree was disposed").
     _cancelAllPendingTaps();
+    GestureBinding.instance.pointerRouter
+        .removeGlobalRoute(_trackPressedPointers);
+    _pressedPointers.clear();
     // Il timer di riarmo dell'aptica è statico (vive in `HapticsHelper`) e
     // l'ultimo `onSelectionChanged` può averlo appena avviato (selezione
     // appena annullata): va annullato qui, altrimenti sopravvive al widget.
@@ -861,6 +968,18 @@ class _PendingTap {
 /// restano quelle di default. Il meccanismo è quello standard
 /// (`AutomaticKeepAliveClientMixin`): la `ListView.builder` avvolge già ogni
 /// item in un `AutomaticKeepAlive`, qui non si cambia nessun parametro.
+///
+/// QUANDO CAMBIA IL KEEP-ALIVE (regressione 0.9.9: sfarfallio nel drag)
+/// ---------------------------------------------------------------------
+/// NON a ogni cambio di estremo. Nella prima versione di questo wrapper gli
+/// estremi pubblicati seguivano la selezione in tempo reale: durante il
+/// trascinamento di una maniglia l'estremo mobile cambia blocco a quasi ogni
+/// evento puntatore (con i blocchi spaziatori fra un paragrafo e l'altro, a
+/// ogni attraversamento di uno "spazio vuoto"), e ogni cambio muta la
+/// struttura della lista dentro la `notifyListeners()` del controller (rilascio
+/// = `markNeedsLayout` dello sliver + garbage collection; vedi sopra). Ora lo
+/// stato cambia solo a riposo e a fine gesto; durante il gesto si pubblica al
+/// massimo un cambio di ancora. Vedi `_MarkdownRenderedViewState._syncEdgeIds`.
 class _KeepAliveWhileSelectionEdge extends StatefulWidget {
   // Niente `super.key`: la classe è privata e nessun punto di chiamata passa
   // una `key` (l'item della lista è già identificato dall'`Align` con
