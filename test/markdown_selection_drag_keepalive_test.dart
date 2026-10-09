@@ -359,7 +359,7 @@ void main() {
 
         // Il device viene rimosso: la rete di sicurezza chiude il gesto e
         // pubblica lo stato reale.
-        await tester.sendEventToBinding(PointerRemovedEvent(device: 7));
+        await tester.sendEventToBinding(const PointerRemovedEvent(device: 7));
         await tester.pump();
 
         await _scrollTo(tester, 12000);
