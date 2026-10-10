@@ -1,16 +1,19 @@
-import 'dart:async' show Timer;
-
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, TargetPlatform, ValueListenable, ValueNotifier;
+    show
+        ErrorDescription,
+        FlutterError,
+        FlutterErrorDetails,
+        TargetPlatform,
+        defaultTargetPlatform;
 import 'package:flutter/gestures.dart'
     show
-        GestureBinding,
-        PointerCancelEvent,
+        GestureDisposition,
+        HitTestResult,
+        LongPressEndDetails,
+        LongPressGestureRecognizer,
+        LongPressStartDetails,
+        PointerDeviceKind,
         PointerDownEvent,
-        PointerEvent,
-        PointerHoverEvent,
-        PointerRemovedEvent,
-        PointerUpEvent,
         kSecondaryButton,
         kTertiaryButton,
         kTouchSlop;
@@ -45,11 +48,6 @@ import 'display_math_block.dart';
 /// `RenderObject` a schermo, quindi resta corretta — "Seleziona tutto"
 /// incluso — anche per blocchi mai costruiti o già scomparsi dalla
 /// `cacheExtent` di default.
-///
-/// Unica eccezione alla virtualizzazione: i (al massimo 2) blocchi che
-/// contengono gli estremi della selezione restano montati finché la
-/// selezione esiste, altrimenti le maniglie non tornerebbero dopo aver
-/// scrollato lontano (vedi `_KeepAliveWhileSelectionEdge`).
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -59,6 +57,14 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
     required this.title,
     required this.content,
   });
+
+  /// SOLO PER I TEST: quante volte il long-press "di richiamo" ha eseguito
+  /// `_recallSelectionUi` (vedi `_MarkdownRenderedViewState`). Serve a
+  /// distinguere in modo deterministico "il richiamo è scattato" da "ha
+  /// agito il pacchetto" nei casi in cui l'effetto visibile coinciderebbe
+  /// (long-press fuori dalla selezione, tap, mouse...). Nessun codice di
+  /// produzione lo legge.
+  static int debugSelectionRecallCount = 0;
 
   @override
   ConsumerState<MarkdownRenderedView> createState() =>
@@ -110,32 +116,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   late final SelectionAutoScroller _autoScroller;
   MarkdownSelection? _lastObservedSelection;
 
-  // Id dei blocchi da tenere vivi: `(base, extent)` PUBBLICATI, oppure
-  // `(null, null)` se non c'è una selezione vera (assente o collassata:
-  // senza range non ci sono maniglie). Lo ascoltano SOLO i blocchi montati
-  // (vedi `_KeepAliveWhileSelectionEdge`), che si tengono vivi finché sono un
-  // estremo. I record hanno uguaglianza per valore: il notifier avvisa solo
-  // se cambia davvero un estremo.
-  //
-  // Durante un gesto NON coincide con gli estremi reali della selezione
-  // (`_latestEdgeIds`): la pubblicazione è parziale, vedi `_syncEdgeIds`.
-  final ValueNotifier<(String?, String?)> _selectionEdgeIds =
-      ValueNotifier<(String?, String?)>((null, null));
-
-  // Estremi REALI `(base, extent)` dell'ultima selezione osservata, sempre
-  // aggiornati (`(null, null)` se non c'è una selezione vera).
-  (String?, String?) _latestEdgeIds = (null, null);
-
-  // Puntatori attualmente premuti, in QUALSIASI punto dello schermo (le
-  // maniglie vivono in un `OverlayEntry`, fuori da ogni `Listener` di questa
-  // vista): pointer -> device. Serve solo a sapere se è in corso un gesto
-  // (vedi `_syncEdgeIds`); lo mantiene `_trackPressedPointers`.
-  final Map<int, int> _pressedPointers = <int, int>{};
-
-  // Nel gesto in corso l'ancora è già stata pubblicata una volta (vedi
-  // `_syncEdgeIds`): da qui al rilascio lo stato pubblicato non cambia più.
-  bool _anchorPublishedInGesture = false;
-
   // Rilevamento del "tap a vuoto" fatto a mano su eventi puntatore grezzi
   // (`Listener`), non con un `GestureDetector`/`TapGestureRecognizer`.
   // Motivo: un `TapGestureRecognizer` partecipa alla gesture arena, e se da
@@ -149,26 +129,47 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // mano la logica minima di "è stato un tap breve, non un drag né un
   // long-press" (soglia di spostamento + soglia di durata), usando le stesse
   // costanti che userebbe Flutter internamente.
-  //
-  // La soglia di DURATA è un `Timer` (vedi `_PendingTap`), NON un confronto
-  // fra due `DateTime.now()`: il `Timer` segue l'orologio della `Zone`
-  // corrente, quindi nei test (`FakeAsync`, dove `tester.pump(Duration)` fa
-  // avanzare solo l'orologio finto) un long-press simulato scade davvero
-  // dopo `_tapMaxDuration`, esattamente come su un dispositivo. Con
-  // `DateTime.now()` (orologio di sistema, non toccato da `FakeAsync`) un
-  // long-press di test sembrava durare ~0 ms, veniva scambiato per un tap
-  // breve e `_handleBackgroundPointerUp` annullava subito la selezione appena
-  // creata dal long-press.
-  //
-  // Invariante: `_pendingTapPointers` contiene SOLO puntatori ancora
-  // candidati a essere un tap breve (premuti da meno di `_tapMaxDuration` e
-  // mai spostati oltre `_tapTouchSlop`). Tutto ciò che li squalifica (scadenza
-  // del timer, movimento, cancel, up) li toglie dalla mappa e annulla il
-  // loro timer; `dispose()` annulla quelli ancora in corsa. Così non resta
-  // mai un `Timer` vivo oltre la vita del widget.
   static const double _tapTouchSlop = kTouchSlop; // ~18px
   static const Duration _tapMaxDuration = Duration(milliseconds: 500); // ~kLongPressTimeout
   final Map<int, _PendingTap> _pendingTapPointers = <int, _PendingTap>{};
+
+  // --- Step A: long-press DENTRO la selezione = "richiamo" di maniglie e menù
+  // Il perché della scelta (un recognizer che vince l'arena prima di quello
+  // del pacchetto) e i dettagli del gesto sono nel doc comment di
+  // [_SelectionRecallRecognizer]; qui solo lo stato necessario.
+  //
+  // Tolleranza (px) attorno ai rettangoli della selezione entro cui un
+  // long-press touch conta come "sulla selezione": `globalSelectionRects()`
+  // restituisce i box delle righe, quindi senza margine l'interlinea, i 16px
+  // fra un blocco e l'altro e un dito che sfiora il bordo del testo
+  // cadrebbero "fuori". Con 10px per lato i 16px fra blocchi sono coperti.
+  static const double _recallTouchTolerance = 10.0;
+
+  // true SOLO mentre [_rebuildSelectionOverlay] riassegna la selezione: un
+  // ripristino programmatico non è un gesto dell'utente, quindi non deve né
+  // segnalare un cambio all'auto-scroller (vedi
+  // [_onSelectionControllerChanged]) né toccare il riarmo aptico (vedi
+  // `onSelectionChanged` in [_buildFormattedView]).
+  bool _rebuildingSelectionOverlay = false;
+
+  // Un'unica istanza della mappa, riusata a ogni build: il recognizer viene
+  // creato una sola volta dal `RawGestureDetector` e la sua inizializzazione
+  // (callback) rieseguita a ogni aggiornamento del widget.
+  late final Map<Type, GestureRecognizerFactory> _recallGestures =
+      <Type, GestureRecognizerFactory>{
+    _SelectionRecallRecognizer:
+        GestureRecognizerFactoryWithHandlers<_SelectionRecallRecognizer>(
+      () => _SelectionRecallRecognizer(
+        shouldClaim: _claimsRecallAt,
+        stillClaimable: _stillClaimsRecallAt,
+      ),
+      (instance) {
+        instance
+          ..onLongPressStart = _handleRecallLongPressStart
+          ..onLongPressEnd = _handleRecallLongPressEnd;
+      },
+    ),
+  };
 
   TextSelectionControls get _platformSelectionControls {
     switch (defaultTargetPlatform) {
@@ -207,10 +208,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       onScrollingChanged: (scrolling) =>
           HapticsHelper.selectionAutoScrollActive = scrolling,
     );
-    // Route GLOBALE (come quella dell'auto-scroller, indipendente da essa):
-    // vede anche i puntatori che non passano per il `Listener` di questa
-    // vista, come quello che trascina una maniglia.
-    GestureBinding.instance.pointerRouter.addGlobalRoute(_trackPressedPointers);
     _selectionController.addListener(_onSelectionControllerChanged);
     _updateBlocks(widget.content);
   }
@@ -224,90 +221,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final selection = _selectionController.selection;
     if (selection == _lastObservedSelection) return;
     _lastObservedSelection = selection;
-    _latestEdgeIds = _edgeIdsOf(selection);
-    _syncEdgeIds();
+    // Un ripristino programmatico (vedi [_rebuildSelectionOverlay]) cambia il
+    // valore ma non è un trascinamento di selezione: si aggiorna
+    // `_lastObservedSelection` (così i veri cambi successivi vengono
+    // confrontati col valore giusto) ma non si arma l'auto-scroller.
+    if (_rebuildingSelectionOverlay) return;
     if (selection != null) _autoScroller.notifySelectionChanged();
-  }
-
-  /// Pubblica gli estremi da tenere vivi (`_selectionEdgeIds`).
-  ///
-  /// A RIPOSO (nessun puntatore premuto) si pubblicano subito gli estremi
-  /// reali. Durante un GESTO no: lì la selezione cambia a ogni evento
-  /// puntatore e, con i blocchi spaziatori fra un paragrafo e l'altro, ogni
-  /// attraversamento di uno "spazio vuoto" cambia il blocco dell'estremo.
-  /// Se il keep-alive lo seguisse in tempo reale, ogni cambio farebbe
-  /// scattare in sincrono, dentro la `notifyListeners()` del controller e
-  /// PRIMA dei listener del pacchetto, un rilascio + un nuovo keep-alive su
-  /// due blocchi: una mutazione strutturale della lista (`markNeedsLayout`
-  /// dello sliver, garbage collection, attach/detach dei `RenderObject` che
-  /// il controller usa come superfici) a ogni evento del drag. In 0.9.8 lo
-  /// stesso evento era un semplice repaint. Durante il gesto quindi:
-  ///
-  /// - l'ANCORA (`base`, l'estremo fisso) si pubblica subito, ma al massimo
-  ///   UNA volta per gesto: in un trascinamento di maniglia non cambia mai
-  ///   (nessun churn); nasce o cambia una sola volta se il gesto crea una
-  ///   nuova selezione (long-press + trascinamento senza staccare il dito:
-  ///   l'auto-scroll può portarla lontano prima del rilascio). Se cambiasse
-  ///   a ogni evento (maniglie scavalcate l'una sull'altra) vale comunque
-  ///   solo il primo cambio: il resto aspetta il rilascio;
-  /// - l'estremo MOBILE (`extent`) resta quello già pubblicato: segue il dito,
-  ///   quindi è sempre in viewport e non serve tenerlo vivo finché il dito è
-  ///   giù. Si pubblica al rilascio (`_flushEdgeIds`).
-  void _syncEdgeIds() {
-    final latest = _latestEdgeIds;
-    if (_pressedPointers.isEmpty) {
-      _selectionEdgeIds.value = latest;
-      return;
-    }
-    final published = _selectionEdgeIds.value;
-    if (!_anchorPublishedInGesture && latest.$1 != published.$1) {
-      _anchorPublishedInGesture = true;
-      _selectionEdgeIds.value = (latest.$1, published.$2);
-    }
-  }
-
-  /// Pubblica gli estremi reali (fine del gesto).
-  void _flushEdgeIds() {
-    _anchorPublishedInGesture = false;
-    _selectionEdgeIds.value = _latestEdgeIds;
-  }
-
-  /// Route globale: tiene aggiornato `_pressedPointers` e, quando l'ultimo
-  /// puntatore viene rilasciato, pubblica gli estremi reali.
-  ///
-  /// Ordine di consegna (`PointerRouter.route`): prima le route dei
-  /// recognizer del puntatore (quindi la fine del drag di una maniglia, nel
-  /// pacchetto), poi quelle globali: qui la selezione è già "assestata".
-  void _trackPressedPointers(PointerEvent event) {
-    if (event is PointerDownEvent) {
-      if (_pressedPointers.isEmpty) _anchorPublishedInGesture = false;
-      _pressedPointers[event.pointer] = event.device;
-      return;
-    }
-    final bool released;
-    if (event is PointerUpEvent || event is PointerCancelEvent) {
-      released = _pressedPointers.remove(event.pointer) != null;
-    } else if (event is PointerHoverEvent || event is PointerRemovedEvent) {
-      // Rete di sicurezza (stessa dell'auto-scroller): un hover o una
-      // rimozione dello stesso device significa che non è più premuto, anche
-      // se il suo `PointerUp` non è mai arrivato (mouse rilasciato fuori
-      // dalla finestra). Senza, il gesto resterebbe "aperto" per sempre.
-      final before = _pressedPointers.length;
-      _pressedPointers.removeWhere((_, device) => device == event.device);
-      released = _pressedPointers.length != before;
-    } else {
-      return;
-    }
-    if (released && _pressedPointers.isEmpty) _flushEdgeIds();
-  }
-
-  // Id dei blocchi con base ed extent. `documentId` è un `Object` opaco per
-  // il pacchetto, ma qui è sempre la stringa 'block-N' di `_updateBlocks`.
-  static (String?, String?) _edgeIdsOf(MarkdownSelection? selection) {
-    if (selection == null || selection.isCollapsed) return (null, null);
-    final base = selection.base.documentId;
-    final extent = selection.extent.documentId;
-    return (base is String ? base : null, extent is String ? extent : null);
   }
 
   @override
@@ -320,23 +239,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   @override
   void dispose() {
-    // Prima di tutto i timer: nessun callback deve poter girare dopo lo
-    // smontaggio (in un test sarebbe "A Timer is still pending even after
-    // the widget tree was disposed").
-    _cancelAllPendingTaps();
-    GestureBinding.instance.pointerRouter
-        .removeGlobalRoute(_trackPressedPointers);
-    _pressedPointers.clear();
-    // Il timer di riarmo dell'aptica è statico (vive in `HapticsHelper`) e
-    // l'ultimo `onSelectionChanged` può averlo appena avviato (selezione
-    // appena annullata): va annullato qui, altrimenti sopravvive al widget.
-    HapticsHelper.resetSelectionState();
     _selectionController.removeListener(_onSelectionControllerChanged);
-    _selectionEdgeIds.dispose();
     _autoScroller.dispose();
     _scrollController.dispose();
     _selectionFocusNode.dispose();
     _selectionController.dispose();
+    _pendingTapPointers.clear();
     super.dispose();
   }
 
@@ -514,6 +422,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       selectionControls: _platformSelectionControls,
       onSelectionChanged: (selection) {
         _activeSelection = selection;
+        // Durante un ripristino programmatico la selezione passa per `null`
+        // per un istante: segnalarlo pianificherebbe il riarmo aptico
+        // (vedi `HapticsHelper.reportSelectionState`). Il valore finale è
+        // identico a quello di partenza, quindi non c'è nulla da riferire.
+        if (_rebuildingSelectionOverlay) return;
         HapticsHelper.reportSelectionState(
           isCollapsed: selection == null || selection.isCollapsed,
         );
@@ -538,28 +451,41 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
             _wrapMenuItem(item, state),
         ],
       ),
-      child: Listener(
+      // Il `RawGestureDetector` è un FIGLIO dello scope (quindi più profondo
+      // del suo `RawGestureDetector` interno): riceve il `PointerDown` prima
+      // e i suoi recognizer entrano per primi nell'arena. Contiene un solo
+      // recognizer, che si iscrive all'arena soltanto per un tocco touch
+      // dentro una selezione esistente (vedi [_SelectionRecallRecognizer]);
+      // in ogni altro caso è inerte e il comportamento resta quello di prima.
+      child: RawGestureDetector(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: _handleBackgroundPointerDown,
-        onPointerMove: _handleBackgroundPointerMove,
-        onPointerUp: _handleBackgroundPointerUp,
-        onPointerCancel: _handleBackgroundPointerCancel,
-        child: MarkdownTheme(
-          data: _markdownTheme,
-          child: ScrollConfiguration(
-            behavior: _NoGlowScrollBehavior(),
-            child: ListView.builder(
-              key: const ValueKey('markdown-formatted-listview'),
-              controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-              itemCount: itemCount,
-              itemBuilder: (context, index) {
-                if (hasTitle && index == 0) {
-                  return _buildTitleWidget(theme, selectionColor);
-                }
-                final itemIndex = hasTitle ? index - 1 : index;
-                return _buildItem(itemIndex, items[itemIndex]);
-              },
+        gestures: _recallGestures,
+        // Il recognizer non deve aggiungere azioni di accessibilità: serve
+        // solo a decidere chi vince l'arena dei gesti.
+        excludeFromSemantics: true,
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _handleBackgroundPointerDown,
+          onPointerMove: _handleBackgroundPointerMove,
+          onPointerUp: _handleBackgroundPointerUp,
+          onPointerCancel: _handleBackgroundPointerCancel,
+          child: MarkdownTheme(
+            data: _markdownTheme,
+            child: ScrollConfiguration(
+              behavior: _NoGlowScrollBehavior(),
+              child: ListView.builder(
+                key: const ValueKey('markdown-formatted-listview'),
+                controller: _scrollController,
+                padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
+                itemCount: itemCount,
+                itemBuilder: (context, index) {
+                  if (hasTitle && index == 0) {
+                    return _buildTitleWidget(theme, selectionColor);
+                  }
+                  final itemIndex = hasTitle ? index - 1 : index;
+                  return _buildItem(itemIndex, items[itemIndex]);
+                },
+              ),
             ),
           ),
         ),
@@ -703,11 +629,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   void _handleBackgroundPointerDown(PointerDownEvent event) {
-    final pointer = event.pointer;
-    // Un id di puntatore non viene riusato, ma un eventuale residuo non deve
-    // mai lasciare un timer orfano.
-    _forgetPendingTap(pointer);
-
     // Desktop (mouse/trackpad/penna): il tasto DESTRO (o centrale) apre il
     // menu contestuale (Copia / Seleziona tutto) e NON deve mai contare come
     // "tocco a vuoto": prima veniva trattato come un normale tap breve e
@@ -715,53 +636,252 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // l'apertura del menu. Il tasto va letto qui, sul `PointerDown`: sul
     // `PointerUp` `event.buttons` vale già 0. Su touch `buttons` è sempre
     // `kPrimaryButton`, quindi il comportamento mobile resta identico.
-    if ((event.buttons & (kSecondaryButton | kTertiaryButton)) != 0) return;
-
-    _pendingTapPointers[pointer] = _PendingTap(
-      origin: event.position,
-      maxDuration: _tapMaxDuration,
-      // Tenuto premuto oltre la soglia di long-press (avvio selezione
-      // touch, o pressione lunga con il mouse): non è più un tap.
-      onExpired: () => _forgetPendingTap(pointer),
-    );
+    if ((event.buttons & (kSecondaryButton | kTertiaryButton)) != 0) {
+      _pendingTapPointers.remove(event.pointer);
+      return;
+    }
+    _pendingTapPointers[event.pointer] = _PendingTap(event.position, DateTime.now());
   }
 
   void _handleBackgroundPointerMove(PointerMoveEvent event) {
-    final pending = _pendingTapPointers[event.pointer];
-    if (pending == null) return;
-    // Spostato oltre la soglia (drag/scroll/table-scroll): non è un tap.
-    if ((event.position - pending.origin).distance > _tapTouchSlop) {
-      _forgetPendingTap(event.pointer);
-    }
+    _pendingTapPointers[event.pointer]?.registerPosition(event.position);
   }
 
   void _handleBackgroundPointerCancel(PointerCancelEvent event) {
-    _forgetPendingTap(event.pointer);
+    _pendingTapPointers.remove(event.pointer);
   }
 
   void _handleBackgroundPointerUp(PointerUpEvent event) {
-    // Se il puntatore non è più nella mappa NON è un tap breve (scaduto,
-    // spostato oltre la soglia, tasto destro/centrale): non deve annullare
-    // nulla.
     final pending = _pendingTapPointers.remove(event.pointer);
     if (pending == null) return;
-    pending.cancel();
+
+    // Non un tap: si è spostato oltre la soglia (drag/scroll/table-scroll) o
+    // è stato tenuto premuto oltre la soglia di long-press (avvio selezione
+    // touch). In entrambi i casi non deve annullare nulla.
+    if (pending.maxDistanceFromOrigin > _tapTouchSlop) return;
+    if (DateTime.now().difference(pending.downTime) > _tapMaxDuration) return;
 
     final selection = _activeSelection;
     if (selection == null || selection.isCollapsed) return;
     _selectionScopeKey.currentState?.clearSelection();
   }
 
-  // Toglie il puntatore dai candidati-tap e ne annulla il timer.
-  void _forgetPendingTap(int pointer) {
-    _pendingTapPointers.remove(pointer)?.cancel();
+  // ---------------------------------------------------------------------------
+  // Step A: richiamo di maniglie e menù con un long-press DENTRO la selezione.
+  // ---------------------------------------------------------------------------
+
+  // Un tocco touch appena iniziato in `position` (globale), col puntatore
+  // `pointer`, è un candidato al richiamo? Sì se TUTTE queste condizioni
+  // valgono:
+  //  1. nessun altro puntatore è premuto (multi-touch: no). `_pendingTapPointers`
+  //     contiene tutti i puntatori primari giù; si esclude quello in esame
+  //     perché, a seconda dell'ordine di consegna dell'evento, potrebbe
+  //     esserci già o no;
+  //  2. esiste una selezione non collassata;
+  //  3. il punto cade in uno dei `globalSelectionRects()` gonfiati di
+  //     [_recallTouchTolerance]. I rettangoli sono vuoti se la selezione è
+  //     collassata o tutta fuori schermo: in quel caso il long-press è per
+  //     forza "fuori" e agisce il pacchetto, come prima.
+  bool _isRecallCandidate(Offset position, int pointer) {
+    if (!mounted) return false;
+    if (_pendingTapPointers.keys.any((other) => other != pointer)) return false;
+    final selection = _selectionController.selection;
+    if (selection == null || selection.isCollapsed) return false;
+    return _selectionController
+        .globalSelectionRects()
+        .any((rect) => rect.inflate(_recallTouchTolerance).contains(position));
   }
 
-  void _cancelAllPendingTaps() {
-    for (final pending in _pendingTapPointers.values) {
-      pending.cancel();
+  // Il layer più alto colpito dal tocco appartiene a QUESTA vista? Le maniglie
+  // (e la toolbar, il magnifier) vivono nell'overlay radice, sopra il
+  // contenuto: se il tocco le colpisce — compresa l'area di tocco allargata
+  // di una maniglia, che è trasparente agli hit-test e può sovrapporsi ai
+  // rettangoli della selezione — il long-press NON parte "dal testo" e non
+  // deve attivare il richiamo (un trascinamento di maniglia resta com'è).
+  // L'hit-test visita dal più profondo/alto al più basso, quindi il primo
+  // `RenderObject` del percorso dice cosa sta in cima: se non è dentro il
+  // sottoalbero di questa vista, sopra c'è qualcos'altro.
+  //
+  // Senza informazioni (nessun `RenderObject` nel percorso, vista non ancora
+  // con un render object) la risposta è "sì": il controllo serve solo a
+  // ESCLUDERE i tocchi su un layer sovrastante, e un'esclusione sbagliata
+  // disattiverebbe del tutto il richiamo, mentre un'esclusione mancata nel
+  // caso raro costa al più un richiamo in più.
+  bool _isTopHitInsideThisView(PointerDownEvent event) {
+    final root = context.findRenderObject();
+    if (root == null) return true;
+    final result = HitTestResult();
+    WidgetsBinding.instance.hitTestInView(result, event.position, event.viewId);
+    for (final entry in result.path) {
+      final target = entry.target;
+      if (target is! RenderObject) continue;
+      for (RenderObject? node = target; node != null; node = node.parent) {
+        if (identical(node, root)) return true;
+      }
+      return false;
     }
-    _pendingTapPointers.clear();
+    return true;
+  }
+
+  // Il richiamo è un'AGGIUNTA: se il controllo di candidatura dovesse mai
+  // lanciare (geometria in uno stato inatteso...) non deve compromettere i
+  // gesti già esistenti. L'errore viene segnalato (visibile in debug e nei
+  // test) ma il recognizer rinuncia e il long-press passa al pacchetto.
+  bool _failSafe(bool Function() check) {
+    try {
+      return check();
+    } catch (error, stack) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stack,
+          library: 'scripta',
+          context: ErrorDescription(
+            'while deciding whether a long press recalls the selection UI',
+          ),
+        ),
+      );
+      return false;
+    }
+  }
+
+  bool _claimsRecallAt(PointerDownEvent event) => _failSafe(
+        () =>
+            _isRecallCandidate(event.position, event.pointer) &&
+            _isTopHitInsideThisView(event),
+      );
+
+  // Ricontrollo alla scadenza del long-press (la selezione o un secondo dito
+  // possono essere comparsi nei 480 ms di attesa).
+  bool _stillClaimsRecallAt(Offset position, int pointer) =>
+      _failSafe(() => _isRecallCandidate(position, pointer));
+
+  // Il long-press di richiamo è stato RICONOSCIUTO (il dito è fermo da
+  // 480 ms). Da questo momento quel puntatore non può più essere un tap: va
+  // tolto da `_pendingTapPointers`, altrimenti [_handleBackgroundPointerUp]
+  // lo giudicherebbe un tap breve (la sua soglia è 500 ms, la nostra 480:
+  // un rilascio fra le due annullerebbe la selezione) — e nei test con
+  // orologio finto, dove `DateTime.now()` non avanza, ogni rilascio
+  // sembrerebbe un tap. Dopo il richiamo il tocco non fa altro: un
+  // trascinamento successivo non estende né sposta la selezione.
+  void _handleRecallLongPressStart(LongPressStartDetails details) {
+    _pendingTapPointers.removeWhere(
+      (_, tap) =>
+          (tap.origin - details.globalPosition).distance <= _tapTouchSlop,
+    );
+  }
+
+  // Il richiamo vero e proprio avviene a FINE gesto (dito sollevato), come
+  // per il long-press normale del pacchetto, che mostra il menù al rilascio.
+  void _handleRecallLongPressEnd(LongPressEndDetails details) {
+    _recallSelectionUi();
+  }
+
+  /// PUNTO DI AGGANCIO dello step B (menù che segue la nota e si aggancia ai
+  /// bordi): è l'unico posto in cui la UI della selezione viene riportata in
+  /// vista dopo un long-press sulla selezione. Lo step B vi si può innestare
+  /// (ricalcolo delle ancore, aggancio al bordo, ri-armo dell'inseguimento)
+  /// senza toccare il riconoscimento del gesto.
+  ///
+  /// È IDEMPOTENTE: ogni passo agisce solo se manca qualcosa, quindi se
+  /// maniglie e menù sono già visibili non cambia nulla (nessun
+  /// lampeggio, nessun toggle). Non modifica mai la selezione (valore
+  /// identico prima e dopo), non vibra e non arma l'auto-scroll.
+  ///  1. focus: tastiera fisica e azioni del pacchetto lo richiedono;
+  ///  2. maniglie (solo piattaforme touch): se non ci sono, si ricostruisce
+  ///     l'overlay con [_rebuildSelectionOverlay];
+  ///  3. menù: `showToolbar()` solo se `toolbarIsVisible` è false. La
+  ///     posizione "naturale" vicino alla selezione arriva dal
+  ///     `contextMenuBuilder` (`_clampAnchorsToViewport`), come per ogni
+  ///     altro punto in cui il menù compare.
+  void _recallSelectionUi() {
+    if (!mounted) return;
+    final state = _selectionScopeKey.currentState;
+    if (state == null || !state.mounted) return;
+    final selection = _selectionController.selection;
+    if (selection == null || selection.isCollapsed) return;
+
+    MarkdownRenderedView.debugSelectionRecallCount++;
+
+    if (!_selectionFocusNode.hasFocus) _selectionFocusNode.requestFocus();
+
+    if (_selectionHandlesExpected && !_areSelectionHandlesShown()) {
+      _rebuildSelectionOverlay();
+    }
+
+    // Dopo `_rebuildSelectionOverlay` la toolbar può essere sparita (il
+    // pacchetto la nasconde quando la selezione passa per `null`): si
+    // controlla per ultima.
+    if (!state.toolbarIsVisible) state.showToolbar();
+  }
+
+  // Le maniglie esistono solo sulle piattaforme touch (su desktop il
+  // pacchetto non le mostra, come `SelectableText`) e solo se almeno uno dei
+  // due estremi della selezione è montato (`selectionHandleEndpoints()` è
+  // null altrimenti): fuori da questi casi non c'è nulla da ripristinare.
+  bool get _selectionHandlesExpected {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return _selectionController.selectionHandleEndpoints() != null;
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return false;
+    }
+  }
+
+  // Il pacchetto non espone se le maniglie sono visibili, e non possiamo
+  // chiederlo a un suo membro privato. Le maniglie sono però costruite dal
+  // `SelectionOverlay` di Flutter nell'overlay radice (`_SelectionHandleOverlay`,
+  // un `StatefulWidget` privato del framework): se nessuno è presente non ci
+  // sono maniglie. Il confronto è per NOME del tipo, quindi fragile per
+  // costruzione: se Flutter lo rinominasse la risposta sarebbe sempre "no" e
+  // l'espediente [_rebuildSelectionOverlay] girerebbe a ogni richiamo (le
+  // maniglie lampeggerebbero, nient'altro si romperebbe). I build di release
+  // non usano `--obfuscate`, quindi il nome è leggibile anche lì.
+  bool _areSelectionHandlesShown() {
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return false;
+    var found = false;
+    void visit(Element element) {
+      if (found) return;
+      // (Non chiamarlo `widget`: nasconderebbe `State.widget`.)
+      final candidate = element.widget;
+      if (candidate is StatefulWidget &&
+          candidate.runtimeType.toString() == '_SelectionHandleOverlay') {
+        found = true;
+        return;
+      }
+      element.visitChildren(visit);
+    }
+
+    (overlay.context as Element).visitChildren(visit);
+    return found;
+  }
+
+  // ESPEDIENTE per riportare le maniglie: il pacchetto (0.2.0) non ha un API
+  // pubblico per ri-mostrarle, ma ricostruisce overlay e maniglie quando la
+  // selezione cambia. Si riassegna quindi la stessa selezione passando per
+  // `null`: `selection = x` è un no-op se `x` è già il valore corrente
+  // (confronto per valore), per cui senza il passaggio da `null` non
+  // succederebbe nulla. È sincrono e dentro lo stesso gestore di eventi:
+  // nessun frame intermedio con la selezione sparita. Va chiamato SOLO se le
+  // maniglie mancano (vedi [_recallSelectionUi]): ricostruirle mentre sono
+  // visibili le farebbe riapparire con la dissolvenza di Flutter, cioè un
+  // lampeggio. Il flag [_rebuildingSelectionOverlay] impedisce che questo
+  // ripristino sia scambiato per un gesto (auto-scroll, riarmo aptico).
+  void _rebuildSelectionOverlay() {
+    final saved = _selectionController.selection;
+    if (saved == null || saved.isCollapsed) return;
+    _rebuildingSelectionOverlay = true;
+    try {
+      _selectionController.clear();
+      _selectionController.selection = saved;
+    } finally {
+      _rebuildingSelectionOverlay = false;
+    }
   }
 
   Widget _buildTitleWidget(ThemeData theme, Color selectionColor) {
@@ -879,16 +999,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         constraints: const BoxConstraints(maxWidth: 840),
         child: Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          // Solo i blocchi Markdown: le formule non hanno `documentId` e non
-          // contengono mai un estremo della selezione. Il wrapper non
-          // aggiunge alcun RenderObject (vedi la sua doc per il perché).
-          child: item is _BlockItem
-              ? _KeepAliveWhileSelectionEdge(
-                  documentId: item.documentId,
-                  edgeIds: _selectionEdgeIds,
-                  child: content,
-                )
-              : content,
+          child: content,
         ),
       ),
     );
@@ -903,156 +1014,123 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
   }
 }
 
-/// Puntatore ancora "in corsa" fra `PointerDown` e `PointerUp` e ancora
-/// candidato a essere un tap breve, usato da `_MarkdownRenderedViewState` per
-/// riconoscere a mano un tap senza passare dalla gesture arena (vedi commento
-/// su `_pendingTapPointers`).
-///
-/// La durata massima è un `Timer` creato alla costruzione: quando scade
-/// chiama [onExpired] (il proprietario toglie il puntatore dai candidati).
-/// Chi rimuove un `_PendingTap` dalla mappa DEVE chiamare [cancel], altrimenti
-/// il timer resta vivo fino alla scadenza.
+/// Stato di un puntatore ancora "in corsa" fra `PointerDown` e `PointerUp`,
+/// usato da `_MarkdownRenderedViewState` per riconoscere a mano un tap breve
+/// senza passare dalla gesture arena (vedi commento su `_pendingTapPointers`).
 class _PendingTap {
-  _PendingTap({
-    required this.origin,
-    required Duration maxDuration,
-    required void Function() onExpired,
-  }) : _expiryTimer = Timer(maxDuration, onExpired);
+  _PendingTap(this.origin, this.downTime);
 
-  /// Posizione globale del `PointerDown`.
   final Offset origin;
+  final DateTime downTime;
+  double maxDistanceFromOrigin = 0;
 
-  final Timer _expiryTimer;
-
-  /// Annulla il timer di scadenza (idempotente).
-  void cancel() => _expiryTimer.cancel();
-}
-
-/// Tiene vivo — cioè NON smontato dalla virtualizzazione della
-/// `ListView.builder` — il blocco che contiene un estremo della selezione
-/// attiva, e solo finché lo è: al massimo 2 blocchi, mai tutti.
-///
-/// PERCHÉ ESISTE (bug "le maniglie non tornano")
-/// ---------------------------------------------
-/// In `flutter_md` 0.2.0 le maniglie sono gli `OverlayEntry` di un
-/// `SelectionOverlay` che seguono dei `LayerLink`; il `LeaderLayer` di
-/// ciascun link lo disegna il `RenderObject` del blocco che contiene
-/// l'estremo (`MarkdownSelectionSurface.setSelectionHandleLayers`, vedi
-/// CHANGELOG 0.2.0) e, senza leader, il framework non disegna la maniglia
-/// (`showWhenUnlinked: false` nel `SelectionOverlay` di Flutter). Quando il
-/// blocco esce dalla `cacheExtent` il suo `RenderObject` viene distrutto: la
-/// selezione sopravvive (è ancorata al modello) e l'evidenziazione torna al
-/// ritorno (comportamento osservato), ma i `LayerLink` non vengono ridati al
-/// nuovo `RenderObject`: `MarkdownSelectionController.attachSurface` e
-/// `detachSurface` aggiornano solo una mappa, senza `notifyListeners()`, e
-/// nei metodi pubblici dello scope (`initState`, `didChangeDependencies`,
-/// `build`, `dispose`) non c'è alcun ascoltatore di scroll: lo scope non ha
-/// quindi motivo di ricalcolare le maniglie finché la selezione non cambia.
-/// Non esiste un'API pubblica per ri-mostrarle (`showToolbar` gestisce solo
-/// la toolbar).
-///
-/// (Verificato sul sorgente pubblicato su pub.dev, solo membri pubblici: i
-/// due metodi del controller, `selectionHandleEndpoints`, `showToolbar`,
-/// `initState`/`didChangeDependencies`/`build`/`dispose` dello scope. NON
-/// verificato: i metodi PRIVATI dello scope (`_onControllerChanged` e
-/// simili), non consultabili da lì; il passaggio "nessun ricalcolo dopo il
-/// rimontaggio" è dedotto dal sintomo osservato.)
-///
-/// RIMEDIO
-/// -------
-/// Tenendo montato il blocco di ogni estremo, il suo `RenderObject` non
-/// viene mai ricreato: conserva i `LayerLink` e, quando torna dentro la
-/// viewport, ridisegna il leader da solo. Fuori viewport lo sliver non
-/// disegna i figli tenuti vivi (nessun leader, quindi nessuna maniglia fuori
-/// posto). Per tutti gli altri blocchi `cacheExtent` e virtualizzazione
-/// restano quelle di default. Il meccanismo è quello standard
-/// (`AutomaticKeepAliveClientMixin`): la `ListView.builder` avvolge già ogni
-/// item in un `AutomaticKeepAlive`, qui non si cambia nessun parametro.
-///
-/// QUANDO CAMBIA IL KEEP-ALIVE (regressione 0.9.9: sfarfallio nel drag)
-/// ---------------------------------------------------------------------
-/// NON a ogni cambio di estremo. Nella prima versione di questo wrapper gli
-/// estremi pubblicati seguivano la selezione in tempo reale: durante il
-/// trascinamento di una maniglia l'estremo mobile cambia blocco a quasi ogni
-/// evento puntatore (con i blocchi spaziatori fra un paragrafo e l'altro, a
-/// ogni attraversamento di uno "spazio vuoto"), e ogni cambio muta la
-/// struttura della lista dentro la `notifyListeners()` del controller (rilascio
-/// = `markNeedsLayout` dello sliver + garbage collection; vedi sopra). Ora lo
-/// stato cambia solo a riposo e a fine gesto; durante il gesto si pubblica al
-/// massimo un cambio di ancora. Vedi `_MarkdownRenderedViewState._syncEdgeIds`.
-class _KeepAliveWhileSelectionEdge extends StatefulWidget {
-  // Niente `super.key`: la classe è privata e nessun punto di chiamata passa
-  // una `key` (l'item della lista è già identificato dall'`Align` con
-  // `ValueKey`), quindi il parametro sarebbe sempre inutilizzato e farebbe
-  // scattare `unused_element_parameter` in `flutter analyze`.
-  const _KeepAliveWhileSelectionEdge({
-    required this.documentId,
-    required this.edgeIds,
-    required this.child,
-  });
-
-  final String documentId;
-  final ValueListenable<(String?, String?)> edgeIds;
-  final Widget child;
-
-  @override
-  State<_KeepAliveWhileSelectionEdge> createState() =>
-      _KeepAliveWhileSelectionEdgeState();
-}
-
-class _KeepAliveWhileSelectionEdgeState
-    extends State<_KeepAliveWhileSelectionEdge>
-    with AutomaticKeepAliveClientMixin<_KeepAliveWhileSelectionEdge> {
-  // `late` con inizializzatore: il mixin legge `wantKeepAlive` già dentro
-  // `super.initState()`, dove `widget` è disponibile.
-  late bool _isEdge = _computeIsEdge();
-
-  @override
-  bool get wantKeepAlive => _isEdge;
-
-  bool _computeIsEdge() {
-    final (base, extent) = widget.edgeIds.value;
-    return base == widget.documentId || extent == widget.documentId;
-  }
-
-  // Si ricalcola solo la risposta a "devo restare vivo?": nessun `setState`
-  // (non cambia nulla di visibile) e `updateKeepAlive` solo se cambia. È
-  // sicuro anche se il controller notifica in fase di build/layout:
-  // `AutomaticKeepAlive` gestisce notifiche e rilasci in qualunque fase.
-  void _syncKeepAlive() {
-    final isEdge = _computeIsEdge();
-    if (isEdge == _isEdge) return;
-    _isEdge = isEdge;
-    updateKeepAlive();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    widget.edgeIds.addListener(_syncKeepAlive);
-  }
-
-  @override
-  void didUpdateWidget(covariant _KeepAliveWhileSelectionEdge oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.edgeIds != widget.edgeIds) {
-      oldWidget.edgeIds.removeListener(_syncKeepAlive);
-      widget.edgeIds.addListener(_syncKeepAlive);
+  void registerPosition(Offset position) {
+    final distance = (position - origin).distance;
+    if (distance > maxDistanceFromOrigin) {
+      maxDistanceFromOrigin = distance;
     }
-    // Lo stesso slot della lista può essere riusato per un altro blocco.
-    _syncKeepAlive();
+  }
+}
+
+/// Scadenza del long-press di richiamo: 20 ms PRIMA di `kLongPressTimeout`
+/// (500 ms), che è la scadenza di default del long-press di Flutter e quindi,
+/// verosimilmente, anche di quello di `MarkdownSelectionScope`. Nell'arena dei
+/// gesti vince chi dichiara per primo: con una scadenza strettamente più
+/// corta il nostro recognizer batte quello del pacchetto SENZA dipendere
+/// dall'ordine con cui i due si registrano a parità di scadenza. Il tocco
+/// lungo è comunque indistinguibile (20 ms) e, una volta riconosciuto, non può
+/// essere scambiato per un tap (vedi `_handleRecallLongPressStart`).
+const Duration _recallLongPressDuration = Duration(milliseconds: 480);
+
+/// Riconoscitore del long-press "di richiamo": scatta solo se un dito (touch)
+/// si appoggia DENTRO una selezione già esistente e vi resta fermo; allora
+/// `_MarkdownRenderedViewState._recallSelectionUi` riporta maniglie e menù
+/// SENZA toccare la selezione.
+///
+/// PERCHÉ UN RECOGNIZER (approccio a) E NON UN RIPRISTINO A POSTERIORI (b)
+/// ----------------------------------------------------------------------
+/// `flutter_md` 0.2.0 non permette di vietare l'avvio di un gesto di
+/// selezione (nessun hook, tipo `canStartSelectionAt`, che esiste solo su
+/// master) e `enabled: false` rimonterebbe l'albero sopra la `ListView`.
+/// Quindi o si lascia agire il pacchetto e si annulla il suo effetto (b), o
+/// gli si impedisce di agire (a). Si è scelto (a) perché, se il nostro
+/// recognizer vince l'arena, il gestore del long-press del pacchetto NON
+/// parte affatto:
+///  * la parola sotto il dito non viene mai selezionata, nemmeno per un
+///    frame (con (b) esisterebbe per l'intervallo fra la notifica del
+///    controller e il ripristino, e vedrebbero il cambio tutti i listener);
+///  * non partono i suoi effetti collaterali — focus, vibrazione, nascondere
+///    il menù, magnifier — che (b) non potrebbe annullare né evitare;
+///  * non serve "congelare" la selezione per la durata del gesto né
+///    sincronizzarsi con l'ordine dei listener del controller o con lo stato
+///    interno (ancora di trascinamento, granularità) del pacchetto.
+/// Usa solo API pubbliche: `LongPressGestureRecognizer` di Flutter e
+/// `MarkdownSelectionController.globalSelectionRects()`. L'unico
+/// accoppiamento col pacchetto è un'assunzione verificabile dal test
+/// `selection_recall_test.dart`: che il suo long-press sia un recognizer
+/// dell'arena (lo dice il README: "long-press-then-drag", "uno swipe fa
+/// ancora scorrere la lista") con scadenza ≥ 480 ms. Se così non fosse
+/// vincerebbe il pacchetto e il comportamento resterebbe quello di prima:
+/// nessuna regressione, solo il richiamo che non scatta.
+///
+/// NIENTE RITARDI SU TAP E DOUBLE-TAP
+/// ----------------------------------
+/// (Il commento su `_pendingTapPointers` racconta come un
+/// `TapGestureRecognizer` aveva già causato ~300 ms di ritardo percepito.)
+///  * Fuori da una selezione, e con mouse/trackpad/penna, [isPointerAllowed]
+///    è `false`: il recognizer non entra proprio nell'arena.
+///  * Dentro una selezione resta in arena solo fino al rilascio: il
+///    `LongPressGestureRecognizer` si rifiuta da solo al `PointerUp` se la
+///    scadenza non è passata, e le route dei recognizer girano PRIMA dello
+///    sweep dell'arena, quindi non trattiene mai la vittoria di un tap né di
+///    un double-tap. Non fa mai `hold` dell'arena e si rifiuta anche se il
+///    dito supera `kTouchSlop`, quindi lo scroll resta quello di prima.
+///  * Il tap a vuoto dell'app non passa dall'arena (usa un `Listener`):
+///    invariato.
+///
+/// MULTI-TOUCH
+/// -----------
+/// Con più di un puntatore giù il tocco non viene reclamato (vedi
+/// `_isRecallCandidate`); se il secondo dito arriva durante l'attesa, il
+/// ricontrollo alla scadenza ([didExceedDeadline]) rifiuta il gesto.
+class _SelectionRecallRecognizer extends LongPressGestureRecognizer {
+  _SelectionRecallRecognizer({
+    required this.shouldClaim,
+    required this.stillClaimable,
+  }) : super(
+          duration: _recallLongPressDuration,
+          supportedDevices: const <PointerDeviceKind>{PointerDeviceKind.touch},
+        );
+
+  /// Decide, al `PointerDown`, se il tocco va reclamato.
+  final bool Function(PointerDownEvent event) shouldClaim;
+
+  /// Ricontrollo alla scadenza del long-press, sulla posizione iniziale.
+  final bool Function(Offset position, int pointer) stillClaimable;
+
+  Offset? _downPosition;
+
+  @override
+  bool isPointerAllowed(PointerDownEvent event) =>
+      super.isPointerAllowed(event) && shouldClaim(event);
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    _downPosition = event.position;
+    super.addAllowedPointer(event);
   }
 
   @override
-  void dispose() {
-    widget.edgeIds.removeListener(_syncKeepAlive);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context); // richiesto da AutomaticKeepAliveClientMixin
-    return widget.child;
+  void didExceedDeadline() {
+    final position = _downPosition;
+    final pointer = primaryPointer;
+    if (position == null ||
+        pointer == null ||
+        !stillClaimable(position, pointer)) {
+      resolve(GestureDisposition.rejected);
+      return;
+    }
+    super.didExceedDeadline();
   }
 }
 
