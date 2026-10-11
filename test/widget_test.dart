@@ -46,8 +46,10 @@ void main() {
     // pump del widget non le attende: l'I/O dell'isolate FFI non avanza con
     // il clock finto). Chiudere subito il DB le farebbe fallire con
     // "database has already been closed": si lascia prima smaltire l'I/O
-    // in volo, poi si chiude.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
+    // in volo, poi si chiude. 300 ms non bastavano su un runner Ubuntu con
+    // altri file di test in parallelo (CI, test `moveNote`, "failed after
+    // test completion"): 1000 ms. Resta un'attesa a tempo, non una garanzia.
+    await Future<void>.delayed(const Duration(milliseconds: 1000));
     await AppDatabase.instance.close();
     AppDatabase.debugDatabasePathOverride = null;
   });
