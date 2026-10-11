@@ -12,8 +12,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_md/flutter_md.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
+import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -265,12 +265,18 @@ const Duration _betweenGestures = Duration(milliseconds: 500);
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  // `AppTheme.getTextStyleForFont` usa sempre google_fonts: nei test la rete
-  // non c'è (HTTP 400) e il download fallito, avvenuto durante l'attesa REALE
-  // di `_holdLongPress`, faceva fallire il test con "Failed to load font".
-  // Impostazione consigliata da google_fonts per i test.
+  // `AppTheme.getTextStyleForFont` passa sempre da google_fonts: nei test non
+  // c'è rete né font negli asset, e google_fonts lancia un'eccezione asincrona
+  // NON gestita che, cadendo durante l'attesa REALE di `_holdLongPress`, fa
+  // fallire il test ("Failed to load font" / "allowRuntimeFetching is false
+  // but font ... was not found"). `GoogleFonts.config.allowRuntimeFetching =
+  // false` NON basta (verificato in CI): si esclude google_fonts dal punto
+  // unico da cui passa la vista.
   setUpAll(() {
-    GoogleFonts.config.allowRuntimeFetching = false;
+    AppTheme.debugSkipGoogleFonts = true;
+  });
+  tearDownAll(() {
+    AppTheme.debugSkipGoogleFonts = false;
   });
 
   setUp(() {
