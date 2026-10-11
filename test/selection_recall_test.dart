@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_md/flutter_md.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -122,6 +123,7 @@ Future<void> _pumpView(WidgetTester tester, String content) async {
     ),
   );
   await tester.pumpAndSettle();
+  await _locateWords(tester, const <int>[_otherBlock, _selectedBlock]);
 }
 
 MarkdownSelectionScopeState _scope(WidgetTester tester) =>
@@ -129,11 +131,63 @@ MarkdownSelectionScopeState _scope(WidgetTester tester) =>
       find.byType(MarkdownSelectionScope),
     );
 
-/// Un punto dentro la prima parola del blocco [blockIndex] (il testo parte
-/// dall'angolo in alto a sinistra del `MarkdownWidget`, qualunque sia il font).
-Offset _wordPoint(WidgetTester tester, int blockIndex) =>
-    tester.getTopLeft(find.byType(MarkdownWidget).at(blockIndex)) +
-    const Offset(8, 8);
+/// Punti di tocco che colpiscono DAVVERO il testo, per blocco. Si riempie in
+/// `_locateWords` (chiamata da `_pumpView`, PRIMA di qualunque selezione).
+final Map<int, Offset> _wordPoints = <int, Offset>{};
+
+/// Cerca, per ciascun blocco in [blocks], un punto che selezioni una parola.
+///
+/// Perché non basta "angolo in alto a sinistra + (8, 8)": in CI quel punto non
+/// selezionava nulla (`selectWordAtGlobal` non produceva alcuna selezione e
+/// `globalSelectionRects()` restava vuota), quindi il punto giusto si trova
+/// PROVANDO. La prova è distruttiva (crea e annulla una selezione), per questo
+/// si fa una volta sola, a vista appena montata e senza selezioni.
+Future<void> _locateWords(WidgetTester tester, Iterable<int> blocks) async {
+  final scope = _scope(tester);
+  final controller = scope.controller;
+  _wordPoints.clear();
+  for (final block in blocks) {
+    final rect = tester.getRect(find.byType(MarkdownWidget).at(block));
+    Offset? found;
+    for (final dy in <double>[8, 12, 16, 4]) {
+      for (final dx in <double>[8, 24, 40, 64, 96]) {
+        final point = rect.topLeft + Offset(dx, dy);
+        if (!rect.contains(point)) continue;
+        controller.selectWordAtGlobal(point);
+        final selection = controller.selection;
+        final hit = selection != null && !selection.isCollapsed;
+        scope.clearSelection();
+        await tester.pump();
+        if (hit) {
+          found = point;
+          break;
+        }
+      }
+      if (found != null) break;
+    }
+    if (found == null) {
+      fail(
+        'Nessun punto del blocco $block selezionabile con '
+        'selectWordAtGlobal: rect=$rect, '
+        'MarkdownWidget=${find.byType(MarkdownWidget).evaluate().length}, '
+        'superfici montate=${controller.mountedSurfaces.length}',
+      );
+    }
+    _wordPoints[block] = found;
+  }
+  // Lascia scadere i Timer da 200 ms di `HapticsHelper` creati dalle prove.
+  await tester.pump(const Duration(seconds: 1));
+}
+
+/// Punto (già verificato da `_locateWords`) dentro una parola del blocco
+/// [blockIndex].
+Offset _wordPoint(int blockIndex) {
+  final point = _wordPoints[blockIndex];
+  if (point == null) {
+    fail('_locateWords non ha registrato il blocco $blockIndex');
+  }
+  return point;
+}
 
 Finder get _handles => find.byWidgetPredicate(
       (widget) => widget.runtimeType.toString() == '_SelectionHandleOverlay',
@@ -172,13 +226,15 @@ Future<MarkdownSelection> _selectWordByLongPress(
   WidgetTester tester,
   int blockIndex,
 ) async {
-  await _holdLongPress(tester, _wordPoint(tester, blockIndex));
+  final point = _wordPoint(blockIndex);
+  await _holdLongPress(tester, point);
   await tester.pumpAndSettle();
   final selection = _scope(tester).controller.selection;
   expect(
     selection,
     isNotNull,
-    reason: 'il long-press fuori da ogni selezione deve selezionare la parola',
+    reason: 'il long-press fuori da ogni selezione deve selezionare la '
+        'parola (punto $point)',
   );
   expect(selection!.isCollapsed, isFalse);
   return selection;
@@ -199,6 +255,14 @@ const Duration _betweenGestures = Duration(milliseconds: 500);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // `AppTheme.getTextStyleForFont` usa sempre google_fonts: nei test la rete
+  // non c'è (HTTP 400) e il download fallito, avvenuto durante l'attesa REALE
+  // di `_holdLongPress`, faceva fallire il test con "Failed to load font".
+  // Impostazione consigliata da google_fonts per i test.
+  setUpAll(() {
+    GoogleFonts.config.allowRuntimeFetching = false;
+  });
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -379,7 +443,7 @@ void main() {
           expect(controller.getText(), _selectedWord);
 
           // Primo blocco: ben oltre i 10px di tolleranza dalla selezione.
-          await _holdLongPress(tester, _wordPoint(tester, _otherBlock));
+          await _holdLongPress(tester, _wordPoint(_otherBlock));
           await tester.pumpAndSettle();
 
           expect(controller.selection, isNot(first));
@@ -425,7 +489,7 @@ void main() {
 
           // Tap breve SULLA selezione: l'app lo tratta come un tap (annulla);
           // il recognizer di richiamo non deve inghiottirlo.
-          final wordPoint = _wordPoint(tester, _selectedBlock);
+          final wordPoint = _wordPoint(_selectedBlock);
           controller.selectWordAtGlobal(wordPoint);
           await tester.pump();
           expect(controller.selection!.isCollapsed, isFalse);
@@ -464,7 +528,7 @@ void main() {
           await _pumpView(tester, _note);
 
           final controller = _scope(tester).controller;
-          final wordPoint = _wordPoint(tester, _selectedBlock);
+          final wordPoint = _wordPoint(_selectedBlock);
 
           for (final kind in <PointerDeviceKind>[
             PointerDeviceKind.mouse,
@@ -509,7 +573,7 @@ void main() {
           await _pumpView(tester, _note);
 
           final controller = _scope(tester).controller;
-          controller.selectWordAtGlobal(_wordPoint(tester, _selectedBlock));
+          controller.selectWordAtGlobal(_wordPoint(_selectedBlock));
           await tester.pump();
           final inside = _insideSelection(tester);
 
@@ -534,7 +598,7 @@ void main() {
 
           // Un dito che si sposta oltre la soglia: è uno scroll, non un
           // long-press.
-          controller.selectWordAtGlobal(_wordPoint(tester, _selectedBlock));
+          controller.selectWordAtGlobal(_wordPoint(_selectedBlock));
           await tester.pump();
           final moving = await tester.startGesture(
             _insideSelection(tester),
