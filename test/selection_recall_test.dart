@@ -48,7 +48,7 @@ const String _note = 'Primo paragrafo con alcune parole.\n\n'
     'Quarto paragrafo da selezionare.\n\n'
     'Quinto paragrafo finale.';
 
-// Blocco della parola selezionata: il QUARTO, non il primo. Il menù compare
+// Paragrafo (con testo, 0 = il primo) della parola selezionata: il QUARTO, non il primo. Il menù compare
 // SOPRA la selezione (con la selezione in cima alla vista verrebbe spinto
 // sulla riga stessa e coprirebbe il punto che i test toccano), mentre le
 // maniglie stanno sotto la riga: la riga del quarto blocco ha spazio libero
@@ -56,7 +56,7 @@ const String _note = 'Primo paragrafo con alcune parole.\n\n'
 const int _selectedBlock = 3;
 const String _selectedWord = 'Quarto';
 
-// Blocco "altrove": il primo, lontano da selezione, menù e maniglie.
+// Paragrafo "altrove": il primo, lontano da selezione, menù e maniglie.
 const int _otherBlock = 0;
 const String _otherWord = 'Primo';
 
@@ -123,7 +123,7 @@ Future<void> _pumpView(WidgetTester tester, String content) async {
     ),
   );
   await tester.pumpAndSettle();
-  await _locateWords(tester, const <int>[_otherBlock, _selectedBlock]);
+  await _locateWords(tester);
 }
 
 MarkdownSelectionScopeState _scope(WidgetTester tester) =>
@@ -131,62 +131,71 @@ MarkdownSelectionScopeState _scope(WidgetTester tester) =>
       find.byType(MarkdownSelectionScope),
     );
 
-/// Punti di tocco che colpiscono DAVVERO il testo, per blocco. Si riempie in
+/// Punti di tocco che colpiscono DAVVERO una parola: uno per paragrafo CON
+/// testo, in ordine di lettura (indice 0 = primo paragrafo). Si riempie in
 /// `_locateWords` (chiamata da `_pumpView`, PRIMA di qualunque selezione).
-final Map<int, Offset> _wordPoints = <int, Offset>{};
-
-/// Cerca, per ciascun blocco in [blocks], un punto che selezioni una parola.
 ///
-/// Perché non basta "angolo in alto a sinistra + (8, 8)": in CI quel punto non
-/// selezionava nulla (`selectWordAtGlobal` non produceva alcuna selezione e
-/// `globalSelectionRects()` restava vuota), quindi il punto giusto si trova
-/// PROVANDO. La prova è distruttiva (crea e annulla una selezione), per questo
-/// si fa una volta sola, a vista appena montata e senza selezioni.
-Future<void> _locateWords(WidgetTester tester, Iterable<int> blocks) async {
-  final scope = _scope(tester);
+/// Perché non si usa `find.byType(MarkdownWidget).at(n)`: in CI una nota di 5
+/// paragrafi produceva 9 `MarkdownWidget` (tra un paragrafo e l'altro ci sono
+/// blocchi vuoti, non selezionabili) e il "blocco 3" era una riga vuota.
+final List<Offset> _wordPoints = <Offset>[];
+
+/// Cerca un punto dentro [rect] che selezioni una parola; `null` se non c'è
+/// (blocco vuoto). La prova è distruttiva (crea e annulla una selezione): si
+/// fa una volta sola, a vista appena montata e senza selezioni.
+Future<Offset?> _selectablePointIn(
+  WidgetTester tester,
+  MarkdownSelectionScopeState scope,
+  Rect rect,
+) async {
   final controller = scope.controller;
+  for (final dy in <double>[8, 12, 4]) {
+    for (final dx in <double>[8, 24, 40, 64, 96]) {
+      final point = rect.topLeft + Offset(dx, dy);
+      if (!rect.contains(point)) continue;
+      controller.selectWordAtGlobal(point);
+      final selection = controller.selection;
+      final hit = selection != null && !selection.isCollapsed;
+      scope.clearSelection();
+      await tester.pump();
+      if (hit) return point;
+    }
+  }
+  return null;
+}
+
+/// Riempie [_wordPoints] con i primi paragrafi che hanno testo.
+Future<void> _locateWords(WidgetTester tester) async {
+  final scope = _scope(tester);
   _wordPoints.clear();
-  for (final block in blocks) {
-    final rect = tester.getRect(find.byType(MarkdownWidget).at(block));
-    Offset? found;
-    for (final dy in <double>[8, 12, 16, 4]) {
-      for (final dx in <double>[8, 24, 40, 64, 96]) {
-        final point = rect.topLeft + Offset(dx, dy);
-        if (!rect.contains(point)) continue;
-        controller.selectWordAtGlobal(point);
-        final selection = controller.selection;
-        final hit = selection != null && !selection.isCollapsed;
-        scope.clearSelection();
-        await tester.pump();
-        if (hit) {
-          found = point;
-          break;
-        }
-      }
-      if (found != null) break;
-    }
-    if (found == null) {
-      fail(
-        'Nessun punto del blocco $block selezionabile con '
-        'selectWordAtGlobal: rect=$rect, '
-        'MarkdownWidget=${find.byType(MarkdownWidget).evaluate().length}, '
-        'superfici montate=${controller.mountedSurfaces.length}',
-      );
-    }
-    _wordPoints[block] = found;
+  final widgets = find.byType(MarkdownWidget);
+  final count = widgets.evaluate().length;
+  for (var i = 0; i < count && _wordPoints.length <= _selectedBlock; i++) {
+    final point = await _selectablePointIn(
+      tester,
+      scope,
+      tester.getRect(widgets.at(i)),
+    );
+    if (point != null) _wordPoints.add(point);
+  }
+  if (_wordPoints.length <= _selectedBlock) {
+    fail(
+      'Trovati solo ${_wordPoints.length} paragrafi selezionabili su $count '
+      'MarkdownWidget (ne servono ${_selectedBlock + 1}); superfici '
+      'montate=${scope.controller.mountedSurfaces.length}',
+    );
   }
   // Lascia scadere i Timer da 200 ms di `HapticsHelper` creati dalle prove.
   await tester.pump(const Duration(seconds: 1));
 }
 
-/// Punto (già verificato da `_locateWords`) dentro una parola del blocco
-/// [blockIndex].
-Offset _wordPoint(int blockIndex) {
-  final point = _wordPoints[blockIndex];
-  if (point == null) {
-    fail('_locateWords non ha registrato il blocco $blockIndex');
+/// Punto (già verificato da `_locateWords`) dentro una parola del
+/// [paragraph]-esimo paragrafo con testo (0 = il primo).
+Offset _wordPoint(int paragraph) {
+  if (paragraph >= _wordPoints.length) {
+    fail('_locateWords non ha registrato il paragrafo $paragraph');
   }
-  return point;
+  return _wordPoints[paragraph];
 }
 
 Finder get _handles => find.byWidgetPredicate(
