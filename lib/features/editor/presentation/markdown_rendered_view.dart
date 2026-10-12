@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart'
         FlutterError,
         FlutterErrorDetails,
         TargetPlatform,
-        defaultTargetPlatform;
+        debugPrint,
+        defaultTargetPlatform,
+        kDebugMode;
 import 'package:flutter/gestures.dart'
     show
         GestureDisposition,
@@ -34,6 +36,7 @@ import 'package:flutter_math_fork/tex.dart'
     show SyntaxTree, TexParser, TexParserSettings;
 import 'code_block_with_copy.dart';
 import 'display_math_block.dart';
+import 'selection_handle_probe.dart';
 
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste più una modalità "testo grezzo" separata.
@@ -718,6 +721,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       for (RenderObject? node = target; node != null; node = node.parent) {
         if (identical(node, root)) return true;
       }
+      if (kDebugMode) {
+        // Diagnostica (HANDOFF A.16, ipotesi (c)): chi sta in cima al tocco?
+        // Di solito una maniglia (ipotesi non verificata: l'hit-test non
+        // guarda se è dipinta, quindi potrebbe bloccare il richiamo anche da
+        // invisibile), la toolbar o il magnifier.
+        debugPrint(
+          'RECALL|primo-hit|FUORI da questa vista: ${target.runtimeType} '
+          '(maniglia, toolbar o magnifier?): il richiamo non parte',
+        );
+      }
       return false;
     }
     return true;
@@ -745,16 +758,28 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
   }
 
-  bool _claimsRecallAt(PointerDownEvent event) => _failSafe(
-        () =>
-            _isRecallCandidate(event.position, event.pointer) &&
-            _isTopHitInsideThisView(event),
-      );
+  bool _claimsRecallAt(PointerDownEvent event) => _failSafe(() {
+        final candidate = _isRecallCandidate(event.position, event.pointer);
+        final topHitInside = candidate && _isTopHitInsideThisView(event);
+        _debugRecallClaim(
+          event,
+          candidate: candidate,
+          topHitInside: topHitInside,
+        );
+        return candidate && topHitInside;
+      });
 
   // Ricontrollo alla scadenza del long-press (la selezione o un secondo dito
   // possono essere comparsi nei 480 ms di attesa).
-  bool _stillClaimsRecallAt(Offset position, int pointer) =>
-      _failSafe(() => _isRecallCandidate(position, pointer));
+  bool _stillClaimsRecallAt(Offset position, int pointer) => _failSafe(() {
+        final stillValid = _isRecallCandidate(position, pointer);
+        if (kDebugMode) {
+          debugPrint(
+            'RECALL|scadenza-480ms|ancora-valido=$stillValid|pos=$position',
+          );
+        }
+        return stillValid;
+      });
 
   // Il long-press di richiamo è stato RICONOSCIUTO (il dito è fermo da
   // 480 ms). Da questo momento quel puntatore non può più essere un tap: va
@@ -765,6 +790,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // sembrerebbe un tap. Dopo il richiamo il tocco non fa altro: un
   // trascinamento successivo non estende né sposta la selezione.
   void _handleRecallLongPressStart(LongPressStartDetails details) {
+    if (kDebugMode) {
+      debugPrint(
+        'RECALL|long-press-riconosciuto|pos=${details.globalPosition}',
+      );
+    }
     _pendingTapPointers.removeWhere(
       (_, tap) =>
           (tap.origin - details.globalPosition).distance <= _tapTouchSlop,
@@ -788,8 +818,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// lampeggio, nessun toggle). Non modifica mai la selezione (valore
   /// identico prima e dopo), non vibra e non arma l'auto-scroll.
   ///  1. focus: tastiera fisica e azioni del pacchetto lo richiedono;
-  ///  2. maniglie (solo piattaforme touch): se non ci sono, si ricostruisce
-  ///     l'overlay con [_rebuildSelectionOverlay];
+  ///  2. maniglie (solo piattaforme touch con almeno un estremo montato): si
+  ///     ricostruisce l'overlay con [_rebuildSelectionOverlay] se NON TUTTE le
+  ///     maniglie esistenti sono DIPINTE ([_selectionHandlesNeedRebuild]:
+  ///     controlla la visibilità, non l'esistenza del widget; HANDOFF A.16);
   ///  3. menù: `showToolbar()` solo se `toolbarIsVisible` è false. La
   ///     posizione "naturale" vicino alla selezione arriva dal
   ///     `contextMenuBuilder` (`_clampAnchorsToViewport`), come per ogni
@@ -802,23 +834,43 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     if (selection == null || selection.isCollapsed) return;
 
     MarkdownRenderedView.debugSelectionRecallCount++;
+    _debugRecall('richiamo-inizio');
 
     if (!_selectionFocusNode.hasFocus) _selectionFocusNode.requestFocus();
 
-    if (_selectionHandlesExpected && !_areSelectionHandlesShown()) {
+    if (_selectionHandlesNeedRebuild) {
       _rebuildSelectionOverlay();
+      if (kDebugMode) {
+        // Le maniglie ricostruite si dipingono nel frame SUCCESSIVO: lo stato
+        // subito dopo la ricostruzione non dice se hanno funzionato. Questa
+        // riga (un frame dopo) è la prova che serve (HANDOFF A.16, passo 5).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _debugRecall('richiamo-un-frame-dopo-la-ricostruzione');
+        });
+        WidgetsBinding.instance.ensureVisualUpdate();
+      }
     }
 
     // Dopo `_rebuildSelectionOverlay` la toolbar può essere sparita (il
     // pacchetto la nasconde quando la selezione passa per `null`): si
     // controlla per ultima.
     if (!state.toolbarIsVisible) state.showToolbar();
+    _debugRecall('richiamo-fine');
   }
 
   // Le maniglie esistono solo sulle piattaforme touch (su desktop il
   // pacchetto non le mostra, come `SelectableText`) e solo se almeno uno dei
   // due estremi della selezione è montato (`selectionHandleEndpoints()` è
   // null altrimenti): fuori da questi casi non c'è nulla da ripristinare.
+  //
+  // CASO (b) di HANDOFF A.15, ENTRAMBI gli estremi smontati (selezione molto
+  // lunga: in vista c'è solo il suo centro). Le maniglie non hanno un punto
+  // a cui agganciarsi (il loro leader è il render object dell'estremo), quindi
+  // il comportamento MENO INVASIVO è non toccarle: niente `clear()` né
+  // riassegnazione, che farebbe solo lampeggiare il menù senza alcun
+  // beneficio. Il richiamo mostra comunque il menù. Quando un estremo
+  // rientra in vista un nuovo long-press sulla selezione ricostruisce le
+  // maniglie se non risultano dipinte.
   bool get _selectionHandlesExpected {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -832,33 +884,43 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
   }
 
-  // Il pacchetto non espone se le maniglie sono visibili, e non possiamo
-  // chiederlo a un suo membro privato. Le maniglie sono però costruite dal
-  // `SelectionOverlay` di Flutter nell'overlay radice (`_SelectionHandleOverlay`,
-  // un `StatefulWidget` privato del framework): se nessuno è presente non ci
-  // sono maniglie. Il confronto è per NOME del tipo, quindi fragile per
-  // costruzione: se Flutter lo rinominasse la risposta sarebbe sempre "no" e
-  // l'espediente [_rebuildSelectionOverlay] girerebbe a ogni richiamo (le
-  // maniglie lampeggerebbero, nient'altro si romperebbe). I build di release
-  // non usano `--obfuscate`, quindi il nome è leggibile anche lì.
-  bool _areSelectionHandlesShown() {
-    final overlay = Overlay.maybeOf(context, rootOverlay: true);
-    if (overlay == null) return false;
-    var found = false;
-    void visit(Element element) {
-      if (found) return;
-      // (Non chiamarlo `widget`: nasconderebbe `State.widget`.)
-      final candidate = element.widget;
-      if (candidate is StatefulWidget &&
-          candidate.runtimeType.toString() == '_SelectionHandleOverlay') {
-        found = true;
-        return;
-      }
-      element.visitChildren(visit);
-    }
-
-    (overlay.context as Element).visitChildren(visit);
-    return found;
+  // Serve ricostruire l'overlay per far riapparire le maniglie? Sì se se ne
+  // aspettano ([_selectionHandlesExpected]) E non ce n'è nessuna oppure NON
+  // TUTTE quelle esistenti sono DIPINTE.
+  //
+  // PERCHÉ VISIBILITÀ E NON ESISTENZA (HANDOFF A.16). Fino allo step A.15 si
+  // cercava il widget `_SelectionHandleOverlay` nell'overlay radice e se
+  // c'era si rispondeva «le maniglie ci sono». Ma quel widget resta montato
+  // anche quando non si vede (follower scollegato perché l'estremo è
+  // smontato, opacità zero: vedi [SelectionHandleStatus]): nello stato del
+  // sintomo la risposta era «ci sono» e non si ricostruiva nulla. Ora si
+  // misura se sono DIPINTE ([inspectSelectionHandles]).
+  //
+  // POLITICA DI RICOSTRUZIONE: tre candidate.
+  //  [A] ricostruire solo se NESSUNA maniglia è visibile. Sbaglia nello stato
+  //      «parziale»: un estremo non è mai uscito dal rendering (maniglia
+  //      dipinta), l'altro è uscito ed è rientrato e la sua maniglia non è
+  //      stata ricollegata (`flutter_md` 0.2.0 non ha «proxy» per le maniglie
+  //      di un estremo smontato: li introduce la PR #27, successiva alla
+  //      0.2.0 [D]). L'utente vedrebbe UNA maniglia e il richiamo non farebbe
+  //      nulla.
+  //  [B] ricostruire sempre quando gli estremi sono montati. Copre ogni caso
+  //      ma lampeggia anche quando va tutto bene (maniglie dipinte, menù
+  //      visibile) e rompe l'idempotenza voluta dallo step A (test 1: stessi
+  //      `Element`, nessun lampeggio).
+  //  [B'] SCELTA: come [B] ma SOLO se almeno una maniglia esistente non è
+  //      dipinta. Stessa copertura di [B] nello stato parziale, nessun
+  //      lampeggio nello stato sano. Il prezzo è un lampeggio quando un
+  //      estremo è legittimamente smontato (la sua maniglia non può essere
+  //      dipinta): accettato perché avviene solo su richiamo esplicito.
+  //
+  // Evidenza: il sorgente privato di `flutter_md` NON è stato letto, quindi
+  // «nello stato parziale una sola maniglia manca» è un'inferenza, non un
+  // fatto osservato; [B'] è la scelta che non ne dipende.
+  bool get _selectionHandlesNeedRebuild {
+    if (!_selectionHandlesExpected) return false;
+    final handles = inspectSelectionHandles(context);
+    return handles.isEmpty || handles.any((handle) => !handle.isPainted);
   }
 
   // ESPEDIENTE per riportare le maniglie: il pacchetto (0.2.0) non ha un API
@@ -867,11 +929,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // `null`: `selection = x` è un no-op se `x` è già il valore corrente
   // (confronto per valore), per cui senza il passaggio da `null` non
   // succederebbe nulla. È sincrono e dentro lo stesso gestore di eventi:
-  // nessun frame intermedio con la selezione sparita. Va chiamato SOLO se le
-  // maniglie mancano (vedi [_recallSelectionUi]): ricostruirle mentre sono
-  // visibili le farebbe riapparire con la dissolvenza di Flutter, cioè un
-  // lampeggio. Il flag [_rebuildingSelectionOverlay] impedisce che questo
-  // ripristino sia scambiato per un gesto (auto-scroll, riarmo aptico).
+  // nessun frame intermedio con la selezione sparita. Va chiamato SOLO se
+  // non tutte le maniglie sono dipinte (vedi [_selectionHandlesNeedRebuild]):
+  // ricostruirle mentre sono visibili le farebbe riapparire con la
+  // dissolvenza di Flutter, cioè un lampeggio. Il flag
+  // [_rebuildingSelectionOverlay] impedisce che questo ripristino sia
+  // scambiato per un gesto (auto-scroll, riarmo aptico).
+  //
+  // NON VERIFICATO (HANDOFF A.16): che il pacchetto ricolleghi davvero le
+  // maniglie a questo passaggio da `null`. La riga di diagnostica «un frame
+  // dopo la ricostruzione» dice se è andata così.
   void _rebuildSelectionOverlay() {
     final saved = _selectionController.selection;
     if (saved == null || saved.isCollapsed) return;
@@ -881,6 +948,78 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       _selectionController.selection = saved;
     } finally {
       _rebuildingSelectionOverlay = false;
+    }
+  }
+
+  // DIAGNOSTICA (solo `kDebugMode`, nessun effetto sullo stato): una riga
+  // `RECALL|<fase>|...` con quello che serve per capire PERCHÉ le maniglie non
+  // tornano (HANDOFF A.16, «come leggere i log»). Si vede con `flutter run`
+  // in debug oppure con `adb logcat -s flutter`.
+  void _debugRecall(String stage) {
+    if (!kDebugMode) return;
+    try {
+      final selection = _selectionController.selection;
+      final selectionKind = selection == null
+          ? 'null'
+          : (selection.isCollapsed ? 'collapsed' : 'range');
+      final handles = inspectSelectionHandles(context);
+      final painted = handles.where((handle) => handle.isPainted).length;
+      final viewport = _viewportGlobalRect();
+      final visibleInViewport = viewport == null
+          ? 'n/d'
+          : '${handles.where((handle) => handle.isVisibleIn(viewport)).length}';
+      final rects = _selectionController.globalSelectionRects().length;
+      final endpoints = _selectionController.selectionHandleEndpoints() != null;
+      final toolbar = _selectionScopeKey.currentState?.toolbarIsVisible;
+      final focus = _selectionFocusNode.hasFocus;
+      final offset = _scrollController.hasClients
+          ? _scrollController.offset.toStringAsFixed(1)
+          : 'n/d';
+      debugPrint(
+        'RECALL|$stage|sel=$selectionKind|expected=$_selectionHandlesExpected'
+        '|endpoints=$endpoints|rects=$rects|handles=${handles.length}'
+        '|painted=$painted|visibili-in-viewport=$visibleInViewport'
+        '|toolbar=$toolbar|focus=$focus|scroll=$offset',
+      );
+      for (var i = 0; i < handles.length; i++) {
+        debugPrint('RECALL|$stage|maniglia[$i]=${handles[i]}');
+      }
+    } catch (error) {
+      debugPrint('RECALL|$stage|diagnostica fallita: $error');
+    }
+  }
+
+  // DIAGNOSTICA (solo `kDebugMode`): perché il recognizer ha reclamato, o NON
+  // ha reclamato, questo tocco (ipotesi (c) di HANDOFF A.15). Si stampa solo
+  // con una selezione non collassata: senza, il richiamo è impossibile e ogni
+  // tocco sulla vista produrrebbe una riga inutile.
+  void _debugRecallClaim(
+    PointerDownEvent event, {
+    required bool candidate,
+    required bool topHitInside,
+  }) {
+    if (!kDebugMode) return;
+    final selection = _selectionController.selection;
+    if (selection == null || selection.isCollapsed) return;
+    try {
+      final rects = _selectionController.globalSelectionRects();
+      var nearest = double.infinity;
+      for (final rect in rects) {
+        final distance = _distanceToRect(event.position, rect);
+        if (distance < nearest) nearest = distance;
+      }
+      final otherPointers = _pendingTapPointers.keys
+          .where((other) => other != event.pointer)
+          .length;
+      debugPrint(
+        'RECALL|pointer-down|pos=${event.position}|rects=${rects.length}'
+        '|distanza-dal-rect-piu-vicino=${nearest.toStringAsFixed(1)}'
+        '|tolleranza=$_recallTouchTolerance|altri-puntatori=$otherPointers'
+        '|candidato=$candidate|primo-hit-in-questa-vista=$topHitInside'
+        '|reclamato=${candidate && topHitInside}',
+      );
+    } catch (error) {
+      debugPrint('RECALL|pointer-down|diagnostica fallita: $error');
     }
   }
 
@@ -1012,6 +1151,18 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
       BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
+}
+
+/// Distanza (0 se dentro) fra [point] e [rect]: serve solo alla diagnostica
+/// `RECALL|pointer-down` per dire quanto il dito è lontano dalla selezione.
+double _distanceToRect(Offset point, Rect rect) {
+  final dx = point.dx < rect.left
+      ? rect.left - point.dx
+      : (point.dx > rect.right ? point.dx - rect.right : 0.0);
+  final dy = point.dy < rect.top
+      ? rect.top - point.dy
+      : (point.dy > rect.bottom ? point.dy - rect.bottom : 0.0);
+  return Offset(dx, dy).distance;
 }
 
 /// Stato di un puntatore ancora "in corsa" fra `PointerDown` e `PointerUp`,

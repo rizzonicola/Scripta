@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, debugDefaultTargetPlatformOverride;
+    show TargetPlatform, debugDefaultTargetPlatformOverride, debugPrint;
 import 'package:flutter/gestures.dart'
     show
         PointerDeviceKind,
@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart';
+import 'package:scripta/features/editor/presentation/selection_handle_probe.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Test dello step A: un long-press touch DENTRO una selezione esistente la
@@ -27,11 +28,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 //    deterministica che il richiamo è scattato (o NON è scattato): nei casi
 //    "fuori dalla selezione", tap e mouse l'effetto visibile coinciderebbe con
 //    quello del pacchetto, quindi non basterebbe guardare la selezione.
-//  * Le maniglie sono contate per NOME del tipo privato di Flutter
+//  * Le maniglie si TROVANO per NOME del tipo privato di Flutter
 //    (`_SelectionHandleOverlay`): fragile, ma è l'unico modo di vederle da un
-//    test. Se Flutter lo rinominasse, il test "Precondizioni" fallisce per
-//    primo con un messaggio esplicito (e `_areSelectionHandlesShown` in
-//    produzione soffre dello stesso limite: vedi il suo commento).
+//    test. Dallo step A.16 NON basta più che esistano: i test misurano se
+//    sono DIPINTE (`_realHandles`: follower collegato, opacità effettiva > 0,
+//    nessun Offstage, rettangolo dentro la viewport). Fino all'A.15 contavano
+//    solo l'esistenza del widget, e un test verde non provava che le maniglie
+//    si vedessero (HANDOFF A.15). Se Flutter rinominasse il tipo, il test
+//    "Precondizioni" fallisce per primo con un messaggio esplicito.
 //  * `debugDefaultTargetPlatformOverride` va ripristinato DENTRO il corpo del
 //    test (try/finally in `_withPlatform`): i controlli di fine test del
 //    framework girano prima dei callback di `addTearDown`.
@@ -198,11 +202,75 @@ Offset _wordPoint(int paragraph) {
   return _wordPoints[paragraph];
 }
 
+/// Finder per ESISTENZA del widget (per nome del tipo): serve SOLO a
+/// confrontare le istanze degli `Element` prima e dopo (test 1). Non dice
+/// nulla sulla visibilità: per quella vedi [_realHandles].
 Finder get _handles => find.byWidgetPredicate(
       (widget) => widget.runtimeType.toString() == '_SelectionHandleOverlay',
     );
 
-int _handleCount() => _handles.evaluate().length;
+/// Stato REALE di ogni maniglia presente nell'overlay radice: dipinta o no.
+List<SelectionHandleStatus> _realHandles(WidgetTester tester) =>
+    inspectSelectionHandles(tester.element(find.byType(MarkdownRenderedView)));
+
+/// Rettangolo della viewport di scroll (la `ListView` della vista).
+Rect _viewport(WidgetTester tester) => tester.getRect(
+      find.byKey(const ValueKey('markdown-formatted-listview')),
+    );
+
+/// `true` se c'è almeno una maniglia e TUTTE sono dipinte e cadono dentro la
+/// viewport. È la condizione che l'utente vede: «le maniglie ci sono».
+bool _allHandlesVisible(WidgetTester tester) {
+  final handles = _realHandles(tester);
+  final viewport = _viewport(tester);
+  return handles.isNotEmpty &&
+      handles.every((handle) => handle.isVisibleIn(viewport));
+}
+
+/// Descrizione testuale per i messaggi di errore e per le righe `PROBE|`.
+String _describeHandles(WidgetTester tester) {
+  final handles = _realHandles(tester);
+  if (handles.isEmpty) return 'nessuna maniglia nell\'overlay radice';
+  return handles.map((handle) => handle.toString()).join('; ');
+}
+
+/// Lo `Scrollable` della `ListView` della vista.
+ScrollableState _listScrollable(WidgetTester tester) =>
+    tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byKey(const ValueKey('markdown-formatted-listview')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+
+/// Maniglia FINTA: stesso nome del tipo privato del framework, quindi per la
+/// sonda e per il vecchio criterio (esistenza per nome) è una maniglia vera;
+/// ma il suo `LayerLink` non ha leader, quindi il follower non dipinge nulla.
+/// Riproduce in modo DETERMINISTICO lo stato «maniglia esistente ma non
+/// visibile» senza dipendere da come `flutter_md` ricollega i leader (test 9).
+class _SelectionHandleOverlay extends StatefulWidget {
+  const _SelectionHandleOverlay({super.key, required this.link});
+
+  final LayerLink link;
+
+  @override
+  State<_SelectionHandleOverlay> createState() =>
+      _SelectionHandleOverlayState();
+}
+
+class _SelectionHandleOverlayState extends State<_SelectionHandleOverlay> {
+  @override
+  Widget build(BuildContext context) {
+    return CompositedTransformFollower(
+      link: widget.link,
+      showWhenUnlinked: false,
+      child: const FadeTransition(
+        opacity: AlwaysStoppedAnimation<double>(1.0),
+        child: SizedBox(width: 24, height: 24),
+      ),
+    );
+  }
+}
 
 /// Tiene premuto [position] oltre la soglia di long-press, poi rilascia.
 /// L'attesa reale da 560 ms serve all'orologio `DateTime.now()` dell'app (vedi
@@ -249,11 +317,19 @@ Future<MarkdownSelection> _selectWordByLongPress(
   return selection;
 }
 
-/// Punto al centro del primo rettangolo della selezione corrente.
+/// Punto al centro del primo rettangolo della selezione corrente il cui
+/// centro cade DENTRO la viewport (con blocchi montati nella `cacheExtent` il
+/// primo rettangolo può stare fuori schermo e non sarebbe toccabile).
 Offset _insideSelection(WidgetTester tester) {
   final rects = _scope(tester).controller.globalSelectionRects();
   expect(rects, isNotEmpty, reason: 'la selezione deve essere visibile');
-  return rects.first.center;
+  final viewport = _viewport(tester);
+  return rects
+      .firstWhere(
+        (rect) => viewport.contains(rect.center),
+        orElse: () => rects.first,
+      )
+      .center;
 }
 
 Future<void> _drainTimers(WidgetTester tester) =>
@@ -301,11 +377,14 @@ void main() {
             reason: 'README flutter_md: il long-press mobile mostra il menù',
           );
           expect(
-            _handleCount(),
-            greaterThan(0),
-            reason: 'su Android il pacchetto mostra le maniglie; se questa '
-                'asserzione fallisce il nome del tipo privato di Flutter è '
-                'cambiato (vedi note in testa al file)',
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'su Android il pacchetto mostra le maniglie e devono '
+                'essere DIPINTE, non solo presenti. Se fallisce: o il nome '
+                'del tipo privato di Flutter è cambiato (nessuna maniglia '
+                'trovata), o la sonda non riconosce la struttura della '
+                'maniglia vera, o il pacchetto non le collega (HANDOFF A.16). '
+                'Stato: ${_describeHandles(tester)}',
           );
           expect(MarkdownRenderedView.debugSelectionRecallCount, 0);
 
@@ -333,6 +412,14 @@ void main() {
               find.byType(AdaptiveTextSelectionToolbar).evaluate().single;
           final handlesBefore = _handles.evaluate().toList();
           expect(handlesBefore, isNotEmpty);
+          expect(
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'precondizione: subito dopo la selezione TUTTE le maniglie '
+                'devono essere dipinte e dentro la viewport (se non lo sono, '
+                'il richiamo le ricostruirebbe e questo test non misurerebbe '
+                'l\'idempotenza). Stato: ${_describeHandles(tester)}',
+          );
 
           // "Nessun frame intermedio": il controller notifica in modo
           // SINCRONO a ogni cambio, quindi se la parola sotto il dito fosse
@@ -375,6 +462,12 @@ void main() {
             );
           }
           expect(
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'dopo il richiamo le maniglie sono ancora tutte dipinte. '
+                'Stato: ${_describeHandles(tester)}',
+          );
+          expect(
             log.vibrations,
             0,
             reason: 'il gestore del long-press del pacchetto non deve partire '
@@ -398,24 +491,29 @@ void main() {
           final scope = _scope(tester);
           final controller = scope.controller;
           final initial = await _selectWordByLongPress(tester, _selectedBlock);
-          expect(_handleCount(), greaterThan(0));
+          expect(
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'precondizione: dopo la selezione le maniglie sono '
+                'dipinte. Stato: ${_describeHandles(tester)}',
+          );
 
           // Condizione 6: l'estremo esce dalla cacheExtent (blocco smontato) e
           // poi torna. Se le maniglie tornino da sole al rimontaggio non è
           // verificato sul codice del pacchetto, quindi non lo si assume (né
           // si asserisce che il blocco sia davvero smontato: dipende dalla
           // ListView); conta lo stato finale dopo il richiamo.
-          final scrollable = tester.state<ScrollableState>(
-            find.descendant(
-              of: find.byKey(const ValueKey('markdown-formatted-listview')),
-              matching: find.byType(Scrollable),
-            ),
-          );
+          final scrollable = _listScrollable(tester);
           scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
           await tester.pump();
           scrollable.position.jumpTo(0);
           await tester.pumpAndSettle();
           expect(controller.selection, initial);
+          debugPrint(
+            'PROBE|A16-test2|di ritorno, prima del richiamo: '
+            'tutte-visibili=${_allHandlesVisible(tester)}; '
+            '${_describeHandles(tester)}',
+          );
 
           // Condizioni 2 e 8: menù nascosto da codice e focus perso.
           scope.hideToolbar();
@@ -432,11 +530,14 @@ void main() {
           expect(controller.selection, initial);
           expect(scope.toolbarIsVisible, isTrue);
           expect(
-            _handleCount(),
-            greaterThan(0),
-            reason: 'le maniglie devono essere tornate (se questa asserzione '
-                'fallisce, l\'espediente _rebuildSelectionOverlay non basta '
-                'con questa versione del pacchetto: vedi HANDOFF, Step A)',
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'le maniglie devono essere tornate DIPINTE e dentro la '
+                'viewport (se questa asserzione fallisce, o il richiamo non '
+                'ha ricostruito l\'overlay, o l\'espediente '
+                '_rebuildSelectionOverlay non basta con questa versione del '
+                'pacchetto: vedi HANDOFF A.16). Stato: '
+                '${_describeHandles(tester)}',
           );
           expect(log.vibrations, 0);
           expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
@@ -632,6 +733,272 @@ void main() {
             reason: 'spostamento oltre kTouchSlop: il richiamo non scatta',
           );
 
+          await _drainTimers(tester);
+        });
+      },
+    );
+
+    // ------------------------------------------------------------------
+    // HANDOFF A.16: le maniglie devono essere VISIBILI, non solo presenti.
+    // ------------------------------------------------------------------
+
+    testWidgets(
+      '7. SINTOMO (A.16): la selezione esce dal rendering e rientra; dopo il long-press le maniglie sono DIPINTE (non solo presenti)',
+      (tester) async {
+        // Scenario dell'utente sul tablet: seleziono, scorro finché la
+        // selezione esce dalla vista o dal rendering (le maniglie spariscono),
+        // torno sulla selezione e tengo premuto.
+        //
+        // COME LEGGERE IL RISULTATO. Col codice di A.15 il richiamo guardava
+        // se il widget della maniglia ESISTEVA: nello stato del sintomo
+        // (maniglia montata ma non collegata all'estremo rimontato) rispondeva
+        // «ci sono» e non faceva nulla, quindi l'ultima asserzione qui sotto
+        // risulterebbe ROSSA. Se la riga `PROBE|A16-7|di ritorno` dice
+        // SINTOMO-RIPRODOTTO=false, il pacchetto ha già ricollegato le
+        // maniglie al rimontaggio nel banco di prova: in quel caso il test è
+        // verde anche col vecchio codice e la causa di A.16 NON è provata qui
+        // (vedi HANDOFF A.16, «Cosa NON è verificato»).
+        await _withPlatform(TargetPlatform.android, () async {
+          final log = _PlatformLog();
+          _mockPlatformChannel(tester, log);
+          await _pumpView(tester, _longNote);
+
+          final scope = _scope(tester);
+          final controller = scope.controller;
+          final initial = await _selectWordByLongPress(tester, _selectedBlock);
+          expect(
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'precondizione: subito dopo la selezione le maniglie sono '
+                'dipinte. Stato: ${_describeHandles(tester)}',
+          );
+
+          // 1) La selezione esce dal rendering (blocco fuori da viewport e
+          //    cacheExtent): nessun estremo montato.
+          final scrollable = _listScrollable(tester);
+          scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(controller.selection, initial);
+          debugPrint(
+            'PROBE|A16-7|lontano: '
+            'estremi-montati=${controller.selectionHandleEndpoints() != null} '
+            'rects=${controller.globalSelectionRects().length}; '
+            '${_describeHandles(tester)}',
+          );
+
+          // 2) Torna in vista.
+          scrollable.position.jumpTo(0);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(controller.selection, initial);
+          final backVisible = _allHandlesVisible(tester);
+          debugPrint(
+            'PROBE|A16-7|di ritorno: SINTOMO-RIPRODOTTO=${!backVisible} '
+            'estremi-montati=${controller.selectionHandleEndpoints() != null}; '
+            '${_describeHandles(tester)}',
+          );
+
+          // 3) Long-press sulla selezione.
+          log.vibrations = 0;
+          MarkdownRenderedView.debugSelectionRecallCount = 0;
+          await _holdLongPress(tester, _insideSelection(tester));
+          await tester.pumpAndSettle();
+
+          expect(
+            controller.selection,
+            initial,
+            reason: 'la selezione deve restare identica (valore) dopo il '
+                'richiamo',
+          );
+          expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
+          expect(
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'dopo il long-press le maniglie devono essere DIPINTE e '
+                'dentro la viewport. Era SINTOMO-RIPRODOTTO=${!backVisible} '
+                'prima del richiamo. Stato dopo: ${_describeHandles(tester)}; '
+                'estremi-montati=${controller.selectionHandleEndpoints() != null}',
+          );
+          expect(
+            log.vibrations,
+            0,
+            reason: 'il ripristino programmatico non deve far vibrare',
+          );
+
+          await _drainTimers(tester);
+        });
+      },
+    );
+
+    testWidgets(
+      '8. CASO (b) (A.16): entrambi gli estremi fuori dal rendering; il richiamo non tocca le maniglie (selezione mai null) e mostra il menù',
+      (tester) async {
+        // «Seleziona tutto» su una nota lunga e scroll a metà: inizio e fine
+        // della selezione (primo e ultimo blocco) sono smontati, in vista c'è
+        // solo il centro evidenziato. Le maniglie non hanno un punto a cui
+        // agganciarsi: il comportamento meno invasivo è NON ricostruire
+        // nulla (nessun passaggio da `null`, quindi nessun lampeggio) e
+        // mostrare comunque il menù.
+        await _withPlatform(TargetPlatform.android, () async {
+          final log = _PlatformLog();
+          _mockPlatformChannel(tester, log);
+          await _pumpView(tester, _longNote);
+
+          final scope = _scope(tester);
+          final controller = scope.controller;
+          scope.selectAll();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          final initial = controller.selection;
+          expect(initial, isNotNull);
+          expect(initial!.isCollapsed, isFalse);
+
+          final scrollable = _listScrollable(tester);
+          scrollable.position.jumpTo(scrollable.position.maxScrollExtent / 2);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+
+          expect(
+            controller.selectionHandleEndpoints(),
+            isNull,
+            reason: 'precondizione del banco di prova: né l\'inizio né la '
+                'fine della nota sono montati (caso (b))',
+          );
+          expect(
+            controller.globalSelectionRects(),
+            isNotEmpty,
+            reason: 'precondizione: il centro della selezione è in vista',
+          );
+          debugPrint(
+            'PROBE|A16-8|a metà nota: '
+            'rects=${controller.globalSelectionRects().length}; '
+            '${_describeHandles(tester)}',
+          );
+
+          scope.hideToolbar();
+          await tester.pump();
+          expect(scope.toolbarIsVisible, isFalse);
+
+          // Dal richiamo in poi la selezione non deve MAI assumere un valore
+          // diverso: `clear()` la porterebbe a `null`.
+          final deviations = <MarkdownSelection?>[];
+          void record() {
+            if (controller.selection != initial) {
+              deviations.add(controller.selection);
+            }
+          }
+
+          controller.addListener(record);
+          addTearDown(() => controller.removeListener(record));
+
+          log.vibrations = 0;
+          MarkdownRenderedView.debugSelectionRecallCount = 0;
+
+          await _holdLongPress(tester, _insideSelection(tester));
+          await tester.pumpAndSettle();
+
+          expect(
+            deviations,
+            isEmpty,
+            reason: 'caso (b): senza estremi montati non c\'è nulla da '
+                'ricostruire, quindi nessun clear()/riassegnazione',
+          );
+          expect(controller.selection, initial);
+          expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
+          expect(
+            scope.toolbarIsVisible,
+            isTrue,
+            reason: 'il menù compare comunque sul richiamo',
+          );
+          expect(log.vibrations, 0);
+
+          await _drainTimers(tester);
+        });
+      },
+    );
+
+    testWidgets(
+      '9. maniglia ESISTENTE ma NON dipinta: il richiamo ricostruisce l\'overlay (si guarda la visibilità, non l\'esistenza)',
+      (tester) async {
+        // Regressione DETERMINISTICA del difetto che A.15 nominava: il
+        // vecchio criterio contava l'esistenza di un `_SelectionHandleOverlay`
+        // e con una maniglia montata-ma-invisibile non faceva nulla. Qui la
+        // maniglia invisibile è una FINTA con lo stesso nome del tipo del
+        // framework e un `LayerLink` senza leader (vedi `_SelectionHandleOverlay`
+        // in questo file): non dipende da come `flutter_md` ricollega i
+        // leader. Col vecchio criterio le maniglie vere (dipinte) più la
+        // finta davano «ci sono» e la selezione non passava mai per `null`:
+        // questo test sarebbe ROSSO. Con la politica B' (ricostruisci se
+        // NON TUTTE sono dipinte) il richiamo ricostruisce.
+        await _withPlatform(TargetPlatform.android, () async {
+          final log = _PlatformLog();
+          _mockPlatformChannel(tester, log);
+          await _pumpView(tester, _note);
+
+          final scope = _scope(tester);
+          final controller = scope.controller;
+          final initial = await _selectWordByLongPress(tester, _selectedBlock);
+          expect(
+            _allHandlesVisible(tester),
+            isTrue,
+            reason: 'precondizione: maniglie vere dipinte. Stato: '
+                '${_describeHandles(tester)}',
+          );
+
+          final overlay = Overlay.of(
+            tester.element(find.byType(Scaffold)),
+            rootOverlay: true,
+          );
+          final fake = OverlayEntry(
+            builder: (_) => _SelectionHandleOverlay(link: LayerLink()),
+          );
+          overlay.insert(fake);
+          try {
+            await tester.pump();
+            expect(
+              _realHandles(tester).where((handle) => !handle.isPainted),
+              hasLength(1),
+              reason: 'precondizione: la maniglia finta esiste ed è NON '
+                  'dipinta. Stato: ${_describeHandles(tester)}',
+            );
+
+            final sequence = <MarkdownSelection?>[];
+            void record() => sequence.add(controller.selection);
+            controller.addListener(record);
+            addTearDown(() => controller.removeListener(record));
+
+            log.vibrations = 0;
+            MarkdownRenderedView.debugSelectionRecallCount = 0;
+
+            await _holdLongPress(tester, _insideSelection(tester));
+            await tester.pumpAndSettle();
+
+            expect(
+              sequence,
+              contains(isNull),
+              reason: 'una maniglia esistente ma non dipinta deve far '
+                  'ricostruire l\'overlay (la selezione passa per null); col '
+                  'criterio per esistenza non succedeva',
+            );
+            expect(
+              controller.selection,
+              initial,
+              reason: 'a ricostruzione finita la selezione è identica',
+            );
+            expect(sequence.last, initial);
+            expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
+            expect(
+              log.vibrations,
+              0,
+              reason: 'il ripristino programmatico non deve far vibrare',
+            );
+          } finally {
+            fake.remove();
+            fake.dispose();
+          }
+
+          await tester.pump();
           await _drainTimers(tester);
         });
       },
