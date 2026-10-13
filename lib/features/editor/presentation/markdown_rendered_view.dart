@@ -870,7 +870,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // riassegnazione, che farebbe solo lampeggiare il menù senza alcun
   // beneficio. Il richiamo mostra comunque il menù. Quando un estremo
   // rientra in vista un nuovo long-press sulla selezione ricostruisce le
-  // maniglie se non risultano dipinte.
+  // maniglie se non risultano dipinte. NOTA (HANDOFF A.16.9): in CI, con
+  // «Seleziona tutto» e scroll a metà di una nota di 80 paragrafi,
+  // `selectionHandleEndpoints()` risultava comunque NON null; lo stato (b)
+  // non si è riusciti a produrlo e non è stato osservato su dispositivo.
   bool get _selectionHandlesExpected {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:

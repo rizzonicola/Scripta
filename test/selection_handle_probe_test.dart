@@ -23,7 +23,6 @@ import 'package:scripta/features/editor/presentation/selection_handle_probe.dart
 
 class _SelectionHandleOverlay extends StatefulWidget {
   const _SelectionHandleOverlay({
-    super.key,
     required this.link,
     this.opacity = 1.0,
     this.offstage = false,

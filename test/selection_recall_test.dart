@@ -249,7 +249,7 @@ ScrollableState _listScrollable(WidgetTester tester) =>
 /// Riproduce in modo DETERMINISTICO lo stato «maniglia esistente ma non
 /// visibile» senza dipendere da come `flutter_md` ricollega i leader (test 9).
 class _SelectionHandleOverlay extends StatefulWidget {
-  const _SelectionHandleOverlay({super.key, required this.link});
+  const _SelectionHandleOverlay({required this.link});
 
   final LayerLink link;
 
@@ -832,14 +832,23 @@ void main() {
     );
 
     testWidgets(
-      '8. CASO (b) (A.16): entrambi gli estremi fuori dal rendering; il richiamo non tocca le maniglie (selezione mai null) e mostra il menù',
+      '8. selezione lunga con gli estremi LONTANI dalla viewport (caso (b)): il richiamo segue la politica B\' e mostra il menù',
       (tester) async {
         // «Seleziona tutto» su una nota lunga e scroll a metà: inizio e fine
-        // della selezione (primo e ultimo blocco) sono smontati, in vista c'è
-        // solo il centro evidenziato. Le maniglie non hanno un punto a cui
-        // agganciarsi: il comportamento meno invasivo è NON ricostruire
-        // nulla (nessun passaggio da `null`, quindi nessun lampeggio) e
-        // mostrare comunque il menù.
+        // della selezione (primo e ultimo blocco) sono lontani dalla viewport,
+        // in vista c'è solo il centro evidenziato.
+        //
+        // OSSERVATO IN CI (zip v7, HANDOFF A.16.9): in questo stato
+        // `selectionHandleEndpoints()` NON era null, contro la documentazione
+        // del pacchetto. Il caso (b) «nessun estremo montato» quindi non si
+        // riesce a produrre con «Seleziona tutto» in questo banco di prova, e
+        // una versione precedente di questo test (che lo pretendeva) falliva
+        // sulla precondizione. Ora il test non assume nulla sul pacchetto:
+        // ricalcola la politica B' di `_selectionHandlesNeedRebuild` con le
+        // sole API pubbliche (`expectRebuild`) e verifica che il richiamo la
+        // rispetti, cioè che NON ricostruisca (selezione mai null) quando non
+        // c'è nulla da ricostruire e ricostruisca quando serve. La riga
+        // `PROBE|A16-8` dice in quale dei due casi si è.
         await _withPlatform(TargetPlatform.android, () async {
           final log = _PlatformLog();
           _mockPlatformChannel(tester, log);
@@ -860,28 +869,32 @@ void main() {
           await tester.pump(const Duration(milliseconds: 500));
 
           expect(
-            controller.selectionHandleEndpoints(),
-            isNull,
-            reason: 'precondizione del banco di prova: né l\'inizio né la '
-                'fine della nota sono montati (caso (b))',
-          );
-          expect(
             controller.globalSelectionRects(),
             isNotEmpty,
             reason: 'precondizione: il centro della selezione è in vista',
-          );
-          debugPrint(
-            'PROBE|A16-8|a metà nota: '
-            'rects=${controller.globalSelectionRects().length}; '
-            '${_describeHandles(tester)}',
           );
 
           scope.hideToolbar();
           await tester.pump();
           expect(scope.toolbarIsVisible, isFalse);
 
-          // Dal richiamo in poi la selezione non deve MAI assumere un valore
-          // diverso: `clear()` la porterebbe a `null`.
+          // La politica B' riscritta qui con le sole API pubbliche: si
+          // ricostruisce solo se almeno un estremo è montato E non tutte le
+          // maniglie esistenti sono dipinte.
+          final endpointsMounted = controller.selectionHandleEndpoints() != null;
+          final handlesBefore = _realHandles(tester);
+          final expectRebuild = endpointsMounted &&
+              (handlesBefore.isEmpty ||
+                  handlesBefore.any((handle) => !handle.isPainted));
+          debugPrint(
+            'PROBE|A16-8|a metà nota: estremi-montati=$endpointsMounted '
+            'ricostruzione-attesa=$expectRebuild '
+            'rects=${controller.globalSelectionRects().length}; '
+            '${_describeHandles(tester)}',
+          );
+
+          // Ogni valore della selezione diverso da quello iniziale (`null`,
+          // se si ricostruisce) finisce qui.
           final deviations = <MarkdownSelection?>[];
           void record() {
             if (controller.selection != initial) {
@@ -899,10 +912,14 @@ void main() {
           await tester.pumpAndSettle();
 
           expect(
-            deviations,
-            isEmpty,
-            reason: 'caso (b): senza estremi montati non c\'è nulla da '
-                'ricostruire, quindi nessun clear()/riassegnazione',
+            deviations.isNotEmpty,
+            expectRebuild,
+            reason: expectRebuild
+                ? 'almeno un estremo è montato e non tutte le maniglie sono '
+                    'dipinte: il richiamo deve ricostruire (selezione per null)'
+                : 'nessun estremo montato (caso (b)) oppure tutte le maniglie '
+                    'sono dipinte: non c\'è nulla da ricostruire, quindi '
+                    'nessun clear()/riassegnazione. Valori visti: $deviations',
           );
           expect(controller.selection, initial);
           expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
