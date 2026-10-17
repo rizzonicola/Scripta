@@ -71,6 +71,40 @@ dependency_overrides:
   path_provider_android: 2.2.15
   url_launcher_android: 6.3.14
 
+  # ===========================================================================
+  # BLOCCO TEMPORANEO - DA SBLOCCARE IL PRIMA POSSIBILE (vedi "Come sbloccare")
+  # ===========================================================================
+  # Perche': shared_preferences_android 2.5.0 (pubblicata il 17 ott 2026)
+  # passa a Pigeon JNI. Nelle build RELEASE Android, R8 (attivo di default)
+  # rinomina kotlin.coroutines.Continuation, che package:jni cerca per nome:
+  # ogni chiamata a una funzione `suspend` fallisce quindi con
+  #   NoSuchMethodError: no non-static method
+  #   "...SharedPreferencesApiRegistrar;.getAll(...Continuation;)..."
+  # Sintomo: riquadro rosso PlatformException in Impostazioni (sync) e, piu in
+  # generale, tutto cio che legge/scrive SharedPreferences. Le build DEBUG non
+  # sono colpite. Non e' un difetto dell'app ne' del server.
+  # Riferimenti: flutter/flutter#193880, dart-lang/native#3732,
+  #              flutter/packages#13151 (PR di correzione lato pigeon).
+  #
+  # Versione scelta: 2.4.28 = ultima pubblicata PRIMA del passaggio a JNI
+  # (nessuna dipendenza da `jni`, usa Kotlin Pigeon su method channel).
+  # ATTENZIONE: "2.4.29" compare nel changelog della 2.5.0 ma NON e' mai stata
+  # pubblicata su pub.dev: non usarla, `flutter pub get` fallirebbe.
+  # Requisiti SDK: Dart >=3.12 / Flutter >=3.44, gli stessi della 2.5.0.
+  # `shared_preferences` (^2.3.4 per questo plugin) accetta la 2.4.28.
+  #
+  # Come sbloccare (TODO): rimuovere la riga qui sotto appena esce una
+  # shared_preferences_android > 2.5.0 il cui changelog dichiara la correzione
+  # per le build minificate/R8 (regole keep per kotlin.coroutines.Continuation
+  # e le altre classi Kotlin cercate per nome), oppure appena
+  # dart-lang/native#3732 e flutter/flutter#193880 risultano chiuse e il fix e'
+  # incluso in una versione del plugin. Prima di sbloccare: build RELEASE
+  # (flutter build apk --release), installare l'APK, aprire Impostazioni e
+  # verificare che il riquadro rosso non compaia piu.
+  # Se altri plugin passano a Pigeon JNI il sintomo sara' lo stesso: cercare
+  # la voce "Pigeon JNI" nei loro changelog.
+  shared_preferences_android: 2.4.28
+
 flutter:
   uses-material-design: true
   generate: true
