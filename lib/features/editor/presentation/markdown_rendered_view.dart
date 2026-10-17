@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart'
         ErrorDescription,
         FlutterError,
         FlutterErrorDetails,
+        Listenable,
         TargetPlatform,
+        ValueNotifier,
         debugPrint,
         defaultTargetPlatform,
         kDebugMode;
@@ -174,6 +176,51 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     ),
   };
 
+  // --- Step B: il menù Copia / Seleziona tutto segue la selezione ----------
+  // Il PERCHÉ (contenuto che si aggiorna da solo, coordinate di CONTENUTO,
+  // flip deciso una volta sola) è nel doc comment di
+  // [_buildSelectionToolbar]; qui solo lo stato.
+  //
+  // Ultima geometria nota della selezione in COORDINATE DI CONTENUTO
+  // (y_contenuto = y_globale - viewport.top + offset): non dipende dallo scroll
+  // e resta valida anche quando i blocchi della selezione vengono smontati
+  // (HANDOFF A.16.9: con gli estremi smontati `contextMenuAnchors` perde la
+  // direzione e `selectionHandleEndpoints()` non è affidabile). È l'«ultimo
+  // lato noto». `null` = mai misurata per la selezione corrente.
+  _TrackedExtent? _trackedExtent;
+
+  // Il menù sta SOTTO la selezione (true) o SOPRA (false)? Si decide una sola
+  // volta, quando il menù compare o la selezione cambia (vedi
+  // [_wantsBelowPlacement]), e poi resta stabile durante lo scroll: ricalcolarlo
+  // a ogni frame farebbe saltare il menù da un lato all'altro della selezione.
+  bool _trackBelow = false;
+
+  // true se il menù attualmente costruito è ancorato alla SELEZIONE (e quindi
+  // va inseguito); false per il menù posizionale (tasto destro,
+  // `showToolbar(Offset)`), che resta fermo come prima.
+  bool _toolbarTracked = false;
+
+  // Coalescenza dei ricalcoli «dalla geometria viva» (vedi
+  // [_scheduleToolbarRefresh]) e richiesta di ridecidere il lato.
+  bool _toolbarRefreshScheduled = false;
+  bool _trackRedecidePending = false;
+  bool _trackReplacePending = false;
+
+  // Ultima dimensione dello schermo vista dal builder del menù: se cambia
+  // (rotazione, finestra ridimensionata) il viewport si è spostato senza che
+  // ci sia stato uno scroll.
+  Size? _trackScreenSize;
+
+  // Contatore che fa ricostruire il menù quando il ricalcolo dalla geometria
+  // viva cambia le coordinate di contenuto (lo scroll lo ricostruisce già da
+  // sé, via `_scrollController`).
+  final ValueNotifier<int> _toolbarTrackRevision = ValueNotifier<int>(0);
+
+  // Un'unica istanza: il `ListenableBuilder` si iscrive una volta sola.
+  late final Listenable _toolbarTrackListenable = Listenable.merge(
+    <Listenable>[_scrollController, _toolbarTrackRevision],
+  );
+
   TextSelectionControls get _platformSelectionControls {
     switch (defaultTargetPlatform) {
       case TargetPlatform.iOS:
@@ -221,6 +268,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // altrimenti un normale scroll a dito potrebbe essere scambiato per un
   // trascinamento di selezione.
   void _onSelectionControllerChanged() {
+    // Step B: il controller notifica per qualunque motivo (selezione che
+    // cambia, ma anche documenti/superfici che si registrano): se il menù
+    // segue la selezione, la sua geometria va rimisurata a frame finito. Va
+    // fatto PRIMA del confronto qui sotto, che esce se il valore della
+    // selezione è identico.
+    if (_toolbarTrackingActive) _scheduleToolbarRefresh('controller');
     final selection = _selectionController.selection;
     if (selection == _lastObservedSelection) return;
     _lastObservedSelection = selection;
@@ -245,6 +298,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _selectionController.removeListener(_onSelectionControllerChanged);
     _autoScroller.dispose();
     _scrollController.dispose();
+    _toolbarTrackRevision.dispose();
     _selectionFocusNode.dispose();
     _selectionController.dispose();
     _pendingTapPointers.clear();
@@ -297,6 +351,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
 
     _items = items;
+    // Step B: coordinate e modo del menù si riferivano ai blocchi di prima.
+    _trackedExtent = null;
+    _trackBelow = false;
     _selectionController.setDocuments(documents);
   }
 
@@ -443,17 +500,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       // ancora leggere la selezione attiva) e poi chiudono la selezione.
       // "Seleziona tutto" lascia la selezione com'è, ma deve garantire che la
       // toolbar resti visibile anche se la selezione di partenza era fuori
-      // schermo (vedi [_keepToolbarVisibleAfterSelectAll]). Le ancore sono
-      // inoltre sempre riportate dentro il viewport (vedi
+      // schermo (vedi [_afterSelectAll]). Il menù ancorato alla selezione
+      // SEGUE la nota mentre scorre e si aggancia ai bordi del viewport (Step
+      // B, vedi [_buildSelectionToolbar]); quello aperto con il tasto destro
+      // resta fermo, con le ancore riportate dentro il viewport (vedi
       // [_clampAnchorsToViewport]).
-      contextMenuBuilder: (context, state) =>
-          AdaptiveTextSelectionToolbar.buttonItems(
-        anchors: _clampAnchorsToViewport(state.contextMenuAnchors),
-        buttonItems: [
-          for (final item in state.contextMenuButtonItems)
-            _wrapMenuItem(item, state),
-        ],
-      ),
+      contextMenuBuilder: (context, state) => _buildSelectionToolbar(state),
       // Il `RawGestureDetector` è un FIGLIO dello scope (quindi più profondo
       // del suo `RawGestureDetector` interno): riceve il `PointerDown` prima
       // e i suoi recognizer entrano per primi nell'arena. Contiene un solo
@@ -482,6 +534,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                 padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
                 itemCount: itemCount,
                 itemBuilder: (context, index) {
+                  // Step B: un blocco che si costruisce può portare nuovi
+                  // rettangoli della selezione (vedi [_onBlockBuilt]).
+                  _onBlockBuilt();
                   if (hasTitle && index == 0) {
                     return _buildTitleWidget(theme, selectionColor);
                   }
@@ -521,7 +576,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         label: item.label,
         onPressed: () {
           originalOnPressed();
-          _keepToolbarVisibleAfterSelectAll(state);
+          _afterSelectAll(state);
         },
       );
     }
@@ -544,7 +599,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // attiva ma la toolbar non è visibile, la ri-mostriamo con l'API pubblica
   // `showToolbar()` (che ricalcola le ancore dalla geometria corrente).
   // Si ferma da sola se nel frattempo la selezione viene annullata.
-  void _keepToolbarVisibleAfterSelectAll(MarkdownSelectionScopeState state) {
+  //
+  // STEP B: questa funzione è la vecchia `_keepToolbarVisibleAfterSelectAll`,
+  // ASSORBITA nel meccanismo di inseguimento (stesso rimedio, stessa
+  // tempistica: nessuna regressione). Cambia una cosa sola: poiché "Seleziona
+  // tutto" sostituisce la selezione (di solito con una che parte e finisce
+  // FUORI dai blocchi montati), la geometria e il lato (sopra/sotto) del menù
+  // vanno rimisurati e ridecisi; lo fa [_scheduleToolbarRefresh]. Che il menù
+  // sia poi agganciato al bordo giusto (la selezione "parte sopra") non
+  // richiede più nulla di specifico qui: è il caso generale di
+  // [_trackedToolbarAnchors].
+  void _afterSelectAll(MarkdownSelectionScopeState state) {
+    _scheduleToolbarRefresh('seleziona-tutto', redecide: true);
     void check(int retriesLeft) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !state.mounted) return;
@@ -573,6 +639,27 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   static const double _toolbarExtent = 48.0;
   static const double _toolbarEdgeMargin = 8.0;
 
+  // Sporgenza massima della toolbar rispetto alle ancore, usata SOLO dal modo
+  // `following` di [_clampAnchorsToViewport] (Step B). `_toolbarExtent` non
+  // basta lì: serve che la toolbar resti nel viewport e che Flutter non
+  // ribalti sopra/sotto in prossimità del bordo (il ribaltamento sposterebbe il
+  // menù di decine di px di colpo, cioè uno scatto). Conosco due varianti
+  // della toolbar Material [NV: da riverificare sull'SDK locale]:
+  //  * semplice: sopra occupa [P - 44, P], sotto [S, S + 44]; ci sta sopra se
+  //    `P >= padding.top + 8 + 44`;
+  //  * con distanze dal contenuto: sopra [P - 52, P - 8], sotto [S + 20,
+  //    S + 64]; ci sta sopra se `P >= padding.top + 68`.
+  // 76 e 72 reggono entrambe, con qualche px di scorta sulla soglia di ribalta-
+  // mento della seconda (68): con `P >= viewport.top + 76` la toolbar sta
+  // sempre sopra (se il viewport non parte sopra la barra di stato), e con
+  // `S <= viewport.bottom - 72` sotto non esce dal viewport. Il prezzo è
+  // qualche px in più dal bordo quando il menù è agganciato (almeno
+  // `_toolbarEdgeMargin`, in pratica 24-32 px). Se in CI `_scanForJumps` segna
+  // uno SCATTO vicino all'aggancio, la toolbar del SDK locale non coincide con
+  // nessuna delle due varianti: rivedere queste due costanti.
+  static const double _toolbarReachAbove = 76.0;
+  static const double _toolbarReachBelow = 72.0;
+
   // Le ancore di default di `flutter_md` sono calcolate sulla geometria dei
   // soli blocchi MONTATI (top/bottom del bounding box della selezione), che
   // con "Seleziona tutto" o con una selezione scrollata via possono cadere
@@ -580,12 +667,46 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // bordi dell'intero scope): la toolbar verrebbe posizionata fuori schermo
   // e risulterebbe "scomparsa". Qui le ancore che escono dalla viewport
   // vengono riportate sul bordo visibile più vicino (toolbar agganciata al
-  // bordo superiore/inferiore); quelle già dentro non vengono toccate, così
-  // il flip sopra/sotto della toolbar per selezioni vicine al bordo resta
-  // quello nativo.
+  // bordo superiore/inferiore).
+  //
+  // STEP B (generalizzazione). La funzione ha ora DUE modi, con la stessa
+  // convenzione di posizionamento (ancora primaria = toolbar SOPRA, secondaria
+  // = toolbar SOTTO, stesso margine `_toolbarEdgeMargin` dai bordi):
+  //  * `following: false` (predefinito) — il comportamento di sempre. Lo usano
+  //    il menù posizionale (tasto destro, `showToolbar(Offset)`: resta com'è) e
+  //    il ripiego quando non si conosce ancora la geometria della selezione.
+  //    Si toccano solo le ancore che escono dal viewport; quelle già dentro non
+  //    vengono toccate, così il flip sopra/sotto per selezioni vicine al bordo
+  //    resta quello nativo.
+  //  * `following: true` — [anchors] sono le ancore NATURALI della selezione
+  //    (primaria = bordo superiore, secondaria = bordo inferiore, in coordinate
+  //    globali, anche molto fuori dal viewport: arrivano dalle coordinate di
+  //    contenuto, vedi [_trackedToolbarAnchors]). Il risultato mette SEMPRE la
+  //    toolbar interamente dentro il viewport, con almeno `_toolbarEdgeMargin`
+  //    dal bordo: [below] false = sopra la selezione (ancora primaria
+  //    limitata a `top + _toolbarReachAbove` .. `bottom - margine`); [below]
+  //    true = sotto la selezione (ancora secondaria limitata a `top + margine`
+  //    .. `bottom - _toolbarReachBelow`). Le due sporgenze sono più larghe di
+  //    `_toolbarExtent` perché qui, vicino al bordo, un ribaltamento
+  //    sopra/sotto di Flutter sarebbe uno scatto (vedi i loro commenti).
+  //
+  // FLIP SOPRA/SOTTO: SCHERMO, NON VIEWPORT (HANDOFF, Punto 5). Flutter sceglie
+  // se disegnare la toolbar sopra l'ancora primaria o sotto la secondaria in
+  // base allo spazio fino al bordo alto dello SCHERMO, non del viewport della
+  // lista. Il modo `following` non lo subisce, ed è questo il motivo della sua
+  // forma:
+  //  * sopra: la secondaria è `primaria - _toolbarReachBelow`, cioè il punto
+  //    in cui finirebbe la toolbar sotto di essa se Flutter ribaltasse da solo
+  //    (viewport che parte sopra la barra di stato...): nella variante «con
+  //    distanze» il rettangolo sopra e quello sotto coincidono esattamente;
+  //  * sotto: la primaria è 0 (bordo alto dello schermo), cioè «sopra non c'è
+  //    spazio»: è il modo pubblico di far scegliere il ramo inferiore, quale
+  //    che sia la posizione del viewport sullo schermo.
   TextSelectionToolbarAnchors _clampAnchorsToViewport(
-    TextSelectionToolbarAnchors anchors,
-  ) {
+    TextSelectionToolbarAnchors anchors, {
+    bool following = false,
+    bool below = false,
+  }) {
     final viewport = _viewportGlobalRect();
     if (viewport == null ||
         viewport.height < 2 * (_toolbarExtent + _toolbarEdgeMargin)) {
@@ -595,16 +716,54 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     double clampX(double x) =>
         x.clamp(viewport.left, viewport.right).toDouble();
 
+    if (following) {
+      final x = clampX(anchors.primaryAnchor.dx);
+      if (below) {
+        final naturalBottom =
+            (anchors.secondaryAnchor ?? anchors.primaryAnchor).dy;
+        return TextSelectionToolbarAnchors(
+          primaryAnchor: Offset(x, 0.0),
+          secondaryAnchor: Offset(
+            x,
+            naturalBottom
+                .clamp(
+                  viewport.top + _toolbarEdgeMargin,
+                  viewport.bottom - _toolbarReachBelow,
+                )
+                .toDouble(),
+          ),
+        );
+      }
+      final abovePrimary = anchors.primaryAnchor.dy
+          .clamp(
+            viewport.top + _toolbarReachAbove,
+            viewport.bottom - _toolbarEdgeMargin,
+          )
+          .toDouble();
+      return TextSelectionToolbarAnchors(
+        primaryAnchor: Offset(x, abovePrimary),
+        secondaryAnchor: Offset(x, abovePrimary - _toolbarReachBelow),
+      );
+    }
+
+    // Modo storico. Limiti delle ancore dentro il viewport: primaria (toolbar
+    // SOPRA il punto) da `top + extent + margine` a `bottom - margine`;
+    // secondaria (toolbar SOTTO il punto) da `top + margine` a `bottom -
+    // extent - margine`. `_toolbarExtent` (48) è un po' più alto della toolbar
+    // Material (44): il margine effettivo dal bordo è quindi >=
+    // `_toolbarEdgeMargin`.
+    final minAbove = viewport.top + _toolbarExtent + _toolbarEdgeMargin;
+    final maxAbove = viewport.bottom - _toolbarEdgeMargin;
+    final minBelow = viewport.top + _toolbarEdgeMargin;
+    final maxBelow = viewport.bottom - _toolbarExtent - _toolbarEdgeMargin;
+
     // Ancora primaria: la toolbar viene disegnata SOPRA questo punto.
     Offset clampPrimary(Offset p) {
       if (p.dy < viewport.top) {
-        return Offset(
-          clampX(p.dx),
-          viewport.top + _toolbarExtent + _toolbarEdgeMargin,
-        );
+        return Offset(clampX(p.dx), minAbove);
       }
       if (p.dy > viewport.bottom) {
-        return Offset(clampX(p.dx), viewport.bottom - _toolbarEdgeMargin);
+        return Offset(clampX(p.dx), maxAbove);
       }
       return p;
     }
@@ -613,13 +772,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // se sopra non c'è spazio).
     Offset clampSecondary(Offset p) {
       if (p.dy > viewport.bottom) {
-        return Offset(
-          clampX(p.dx),
-          viewport.bottom - _toolbarExtent - _toolbarEdgeMargin,
-        );
+        return Offset(clampX(p.dx), maxBelow);
       }
       if (p.dy < viewport.top) {
-        return Offset(clampX(p.dx), viewport.top + _toolbarEdgeMargin);
+        return Offset(clampX(p.dx), minBelow);
       }
       return p;
     }
@@ -629,6 +785,445 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       primaryAnchor: clampPrimary(anchors.primaryAnchor),
       secondaryAnchor: secondary == null ? null : clampSecondary(secondary),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step B: il menù Copia / Seleziona tutto segue la nota
+  // ---------------------------------------------------------------------------
+
+  /// Costruisce il menù contestuale della selezione.
+  ///
+  /// IL PROBLEMA. `flutter_md` mostra il menù con un `OverlayEntry` e richiama
+  /// questo builder solo a `showToolbar()` (e alle ricostruzioni dell'entry),
+  /// NON a ogni frame di scroll [HANDOFF, Punto 4]: le ancore calcolate lì
+  /// restavano ferme mentre la nota scorreva. Il `ContextMenuController` del
+  /// pacchetto è privato (l'app non può chiedere una ricostruzione) e
+  /// richiamare `showToolbar()` a ogni frame ricreerebbe l'`OverlayEntry`:
+  /// da qui il divieto di `showToolbar()` per frame.
+  ///
+  /// LA SOLUZIONE. Per il menù ancorato alla selezione il widget restituito si
+  /// aggiorna da solo: un `ListenableBuilder` ascolta `_scrollController` (e
+  /// la «revisione» del tracking) e ricalcola le ancore nello STESSO frame
+  /// dello scroll, senza `setState` sull'intera vista.
+  ///
+  /// COORDINATE DI CONTENUTO (niente frame di ritardo). La geometria viva
+  /// (`globalSelectionRects()`, `contextMenuAnchors`) è quella dell'ULTIMO
+  /// layout: `ScrollPosition` notifica prima del layout, quindi leggerla a
+  /// ogni scroll darebbe un menù in ritardo di un frame. Si misura invece una
+  /// volta, la si converte in coordinate di CONTENUTO
+  /// (`y_contenuto = y_globale - viewport.top + offset`, che non dipendono
+  /// dallo scroll) e a ogni scroll basta l'aritmetica
+  /// `y_globale = y_contenuto - offset + viewport.top` con l'`offset` ATTUALE,
+  /// lo stesso che la `ListView` userà per il layout di questo frame. La
+  /// geometria viva si rilegge (a frame finito, [_scheduleToolbarRefresh])
+  /// solo quando può essere cambiata: selezione diversa, blocchi che si
+  /// montano, schermo ridimensionato. Le coordinate di contenuto restano
+  /// valide anche quando i blocchi della selezione vengono smontati (è
+  /// l'«ultimo lato noto»: con estremi smontati `contextMenuAnchors` perde la
+  /// direzione e `selectionHandleEndpoints()` non è affidabile, A.16.9).
+  ///
+  /// MENÙ NON ANCORATO ALLA SELEZIONE. Dopo `showToolbar(Offset)` (tasto
+  /// destro) `contextMenuAnchors` ha solo l'ancora primaria [HANDOFF, Punto 4,
+  /// E4]; senza selezione non c'è niente da seguire. In entrambi i casi si
+  /// restituisce la toolbar di sempre: ferma, con le ancore riportate nel
+  /// viewport.
+  Widget _buildSelectionToolbar(MarkdownSelectionScopeState state) {
+    final buttonItems = <ContextMenuButtonItem>[
+      for (final item in state.contextMenuButtonItems)
+        _wrapMenuItem(item, state),
+    ];
+    final anchors = state.contextMenuAnchors;
+    final selection = _selectionController.selection;
+
+    if (selection == null ||
+        selection.isCollapsed ||
+        anchors.secondaryAnchor == null) {
+      _toolbarTracked = false;
+      _debugTrack(
+        'menu-fisso',
+        primary: anchors.primaryAnchor,
+        secondary: anchors.secondaryAnchor,
+        note: 'non ancorato alla selezione: resta fermo',
+      );
+      return AdaptiveTextSelectionToolbar.buttonItems(
+        anchors: _clampAnchorsToViewport(anchors),
+        buttonItems: buttonItems,
+      );
+    }
+
+    _armToolbarTracking(selection, anchors);
+    return ListenableBuilder(
+      listenable: _toolbarTrackListenable,
+      builder: (context, _) {
+        if (!mounted) return const SizedBox.shrink();
+        return AdaptiveTextSelectionToolbar.buttonItems(
+          anchors: _trackedToolbarAnchors(context, anchors),
+          buttonItems: buttonItems,
+        );
+      },
+    );
+  }
+
+  /// Inizio di una «sessione» di inseguimento: il menù è appena comparso (o è
+  /// stato ricostruito dal pacchetto). Memorizza la geometria della selezione
+  /// in coordinate di contenuto e decide una volta sola il lato del menù.
+  ///
+  /// Se non ci sono rettangoli montati (selezione interamente fuori dalla
+  /// `cacheExtent`) si tiene l'ultima geometria nota PER QUESTA selezione;
+  /// se non ce n'è, [_trackedExtent] resta `null` e il menù ripiega sulle
+  /// ancore statiche (comportamento pre-B) finché il ricalcolo a frame
+  /// finito non trova qualcosa da misurare.
+  void _armToolbarTracking(
+    MarkdownSelection selection,
+    TextSelectionToolbarAnchors rawAnchors,
+  ) {
+    _toolbarTracked = true;
+    final offset = _scrollOffset();
+    final viewport = offset == null ? null : _viewportGlobalRect();
+    final measured = _measureSelectionExtent();
+    final remembered = _trackedExtent;
+    final extent = measured ??
+        (remembered != null && remembered.selection == selection
+            ? remembered
+            : null);
+    _trackedExtent = extent;
+    _trackBelow = extent != null &&
+        offset != null &&
+        viewport != null &&
+        _wantsBelowPlacement(extent, viewport, offset);
+
+    if (kDebugMode) {
+      final origin = measured != null
+          ? 'misura-viva'
+          : (extent != null ? 'memoria' : 'nessuna-geometria');
+      _debugTrack(
+        'menu',
+        extent: extent,
+        offset: offset,
+        viewport: viewport,
+        top: extent == null || offset == null || viewport == null
+            ? null
+            : extent.top - offset + viewport.top,
+        bottom: extent == null || offset == null || viewport == null
+            ? null
+            : extent.bottom - offset + viewport.top,
+        primary: rawAnchors.primaryAnchor,
+        secondary: rawAnchors.secondaryAnchor,
+        note: 'origine=$origin '
+            'rect=${_selectionController.globalSelectionRects().length} '
+            'montati=${_selectionController.mountedSurfaces.length}',
+      );
+    }
+    _scheduleToolbarRefresh('menu');
+  }
+
+  /// Il menù va SOTTO la selezione (true) o SOPRA (false)? Si chiama solo
+  /// quando il menù compare, la selezione cambia o il lato va ridecìso
+  /// (richiamo): durante lo scroll il lato resta quello, perché ricalcolarlo a
+  /// ogni frame farebbe saltare il menù da un lato all'altro della selezione
+  /// (e l'utente chiede «senza scatti»).
+  ///
+  /// Sotto SOLO se la selezione parte dentro il viewport ma sopra non c'è
+  /// spazio per la toolbar (`top` entro `_toolbarReachAbove` dal bordo alto) e
+  /// sotto sì (`bottom` non oltre `_toolbarReachBelow` dal bordo basso): è il
+  /// flip nativo («sotto il bordo inferiore se sopra non c'è spazio»), deciso
+  /// però rispetto al VIEWPORT e non allo schermo. Una selezione che parte
+  /// SOPRA il viewport non rientra qui: per lei vale l'aggancio al bordo
+  /// superiore, con il menù sopra (a coprirne le prime righe).
+  ///
+  /// Le toolbar desktop usano la sola ancora primaria (il menù si apre SULL'ancora,
+  /// non sopra/sotto): lì il lato inferiore non ha senso e si resta sopra.
+  bool _wantsBelowPlacement(
+    _TrackedExtent extent,
+    Rect viewport,
+    double offset,
+  ) {
+    if (!_toolbarUsesBothAnchors) return false;
+    final top = extent.top - offset + viewport.top;
+    final bottom = extent.bottom - offset + viewport.top;
+    final minAbove = viewport.top + _toolbarReachAbove;
+    final maxBelow = viewport.bottom - _toolbarReachBelow;
+    return top >= viewport.top && top < minAbove && bottom <= maxBelow;
+  }
+
+  // Le toolbar touch (Material Android, Cupertino) usano ancora primaria e
+  // secondaria; quelle desktop solo la primaria.
+  bool get _toolbarUsesBothAnchors {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return true;
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return false;
+    }
+  }
+
+  /// Ancore del menù per il frame corrente. Gira a ogni notifica dello scroll
+  /// (dentro il `ListenableBuilder`): niente geometria viva, niente
+  /// `showToolbar()`, solo aritmetica sulle coordinate di contenuto.
+  ///
+  /// Le ancore NATURALI sono il bordo superiore (primaria) e inferiore
+  /// (secondaria) della selezione in coordinate globali, anche molto fuori dal
+  /// viewport (selezione scrollata via, blocchi smontati); poi
+  /// [_clampAnchorsToViewport] in modo `following` le riporta nel viewport:
+  /// il menù si ferma sul bordo superiore se la selezione sta sopra o parte
+  /// sopra, sul bordo inferiore se sta sotto, sempre interamente visibile.
+  /// Il lato sopra/sotto lo decide il solo [_trackBelow].
+  ///
+  /// `MediaQuery.sizeOf` fa ricostruire il menù anche a rotazione o
+  /// ridimensionamento della finestra, quando il viewport cambia senza scroll;
+  /// il viewport nuovo si legge a layout finito, quindi si pianifica la
+  /// rimisura (con sostituzione delle coordinate: il testo può essere
+  /// andato a capo diversamente).
+  TextSelectionToolbarAnchors _trackedToolbarAnchors(
+    BuildContext context,
+    TextSelectionToolbarAnchors staticAnchors,
+  ) {
+    final screen = MediaQuery.sizeOf(context);
+    final previousScreen = _trackScreenSize;
+    _trackScreenSize = screen;
+    if (previousScreen != null && previousScreen != screen) {
+      _scheduleToolbarRefresh('schermo', redecide: true, replace: true);
+    }
+
+    final extent = _trackedExtent;
+    final offset = _scrollOffset();
+    final viewport = offset == null ? null : _viewportGlobalRect();
+    if (extent == null || offset == null || viewport == null) {
+      final fallback = _clampAnchorsToViewport(staticAnchors);
+      _debugTrack(
+        'frame',
+        extent: extent,
+        offset: offset,
+        viewport: viewport,
+        primary: fallback.primaryAnchor,
+        secondary: fallback.secondaryAnchor,
+        clampApplied: 'statico',
+        note: 'geometria della selezione non nota: ancore statiche',
+      );
+      return fallback;
+    }
+
+    final top = extent.top - offset + viewport.top;
+    final bottom = extent.bottom - offset + viewport.top;
+    final result = _clampAnchorsToViewport(
+      TextSelectionToolbarAnchors(
+        primaryAnchor: Offset(extent.centerX, top),
+        secondaryAnchor: Offset(extent.centerX, bottom),
+      ),
+      following: true,
+      below: _trackBelow,
+    );
+
+    if (kDebugMode) {
+      // Quanto l'aggancio ha spostato l'ancora che conta per il lato scelto:
+      // > 0 = più in basso del naturale (bordo superiore), < 0 = più in alto
+      // (bordo inferiore).
+      final moved = _trackBelow
+          ? (result.secondaryAnchor?.dy ?? bottom) - bottom
+          : result.primaryAnchor.dy - top;
+      _debugTrack(
+        'frame',
+        extent: extent,
+        offset: offset,
+        viewport: viewport,
+        top: top,
+        bottom: bottom,
+        primary: result.primaryAnchor,
+        secondary: result.secondaryAnchor,
+        clampApplied: moved.abs() < 0.01
+            ? 'nessuno'
+            : (moved > 0 ? 'bordo-superiore' : 'bordo-inferiore'),
+      );
+    }
+    return result;
+  }
+
+  // Offset di scroll attuale (`pixels`), o `null` se la lista non è montata.
+  // Non usa `ScrollController.offset`, che in debug asserisce di avere ESATTA-
+  // MENTE una posizione: durante lo smontaggio della lista possono essere 0 o 2.
+  double? _scrollOffset() {
+    if (!_scrollController.hasClients) return null;
+    final positions = _scrollController.positions;
+    if (positions.length != 1) return null;
+    return positions.first.pixels;
+  }
+
+  /// Misura la selezione corrente dalla geometria VIVA, in coordinate di
+  /// contenuto: bounding box dei rettangoli montati (`globalSelectionRects()`).
+  /// `null` se non c'è selezione, se la lista non è montata o se nessun
+  /// rettangolo è montato. Va chiamata a layout finito (builder del menù a
+  /// scroll fermo, oppure post-frame): a metà frame la geometria è quella
+  /// del frame prima.
+  _TrackedExtent? _measureSelectionExtent() {
+    final selection = _selectionController.selection;
+    if (selection == null || selection.isCollapsed) return null;
+    final offset = _scrollOffset();
+    final viewport = offset == null ? null : _viewportGlobalRect();
+    if (offset == null || viewport == null) return null;
+
+    Rect? box;
+    for (final rect in _selectionController.globalSelectionRects()) {
+      box = box == null ? rect : box.expandToInclude(rect);
+    }
+    if (box == null) return null;
+    return _TrackedExtent(
+      selection: selection,
+      top: box.top - viewport.top + offset,
+      bottom: box.bottom - viewport.top + offset,
+      centerX: box.center.dx,
+    );
+  }
+
+  // Il menù è quello inseguito (non il posizionale) ed è visibile ora.
+  bool get _toolbarTrackingActive {
+    if (!_toolbarTracked || !mounted) return false;
+    final state = _selectionScopeKey.currentState;
+    return state != null && state.mounted && state.toolbarIsVisible;
+  }
+
+  // Un blocco che si (ri)costruisce può portare nuovi rettangoli della
+  // selezione (blocchi rimontati): se il menù è inseguito, si rimisura a
+  // frame finito. Costo a menù chiuso: un `bool`.
+  void _onBlockBuilt() {
+    if (_toolbarTrackingActive) _scheduleToolbarRefresh('blocchi');
+  }
+
+  /// Pianifica la rimisura dalla geometria viva, a frame finito, e la ripete
+  /// una volta al frame dopo: se il registro del pacchetto assegna i rettangoli
+  /// ai blocchi appena montati con un callback post-frame proprio, la prima
+  /// passata può vederlo ancora vuoto [A.16.9: in CI il registro si è
+  /// assestato più tardi del previsto]. Le richieste che arrivano mentre una
+  /// rimisura è già in coda si fondono con quella.
+  ///
+  /// [redecide]: ridecidi il lato sopra/sotto («posizione naturale»: richiamo,
+  /// Seleziona tutto, schermo). [replace]: sostituisci le coordinate invece di
+  /// unirle alle note (schermo: il testo può essere andato a capo altrove).
+  void _scheduleToolbarRefresh(
+    String reason, {
+    bool redecide = false,
+    bool replace = false,
+  }) {
+    if (redecide) _trackRedecidePending = true;
+    if (replace) _trackReplacePending = true;
+    if (_toolbarRefreshScheduled) return;
+    _toolbarRefreshScheduled = true;
+    final binding = WidgetsBinding.instance;
+    binding.addPostFrameCallback((_) {
+      // La seconda passata va registrata PRIMA della prima: se questa
+      // lanciasse, la coalescenza non resterebbe bloccata per sempre.
+      binding.addPostFrameCallback((_) {
+        _toolbarRefreshScheduled = false;
+        if (mounted) _refreshToolbarTracking('$reason+1');
+      });
+      binding.ensureVisualUpdate();
+      if (mounted) _refreshToolbarTracking(reason);
+    });
+    // `addPostFrameCallback` da solo non pianifica un frame.
+    binding.ensureVisualUpdate();
+  }
+
+  /// Rimisura la selezione dalla geometria viva (a frame finito) e, se è
+  /// cambiato qualcosa, fa ricostruire il menù.
+  ///
+  /// A selezione invariata le note si UNISCONO (min dei top, max dei bottom):
+  /// una misura dopo che alcuni blocchi sono stati smontati vede solo una
+  /// parte della selezione e non deve far dimenticare l'estremo noto prima.
+  /// Se la selezione cambia (o si chiede [_trackReplacePending]) si parte da
+  /// zero, e il lato sopra/sotto si decide di nuovo.
+  void _refreshToolbarTracking(String reason) {
+    final redecide = _trackRedecidePending;
+    final replace = _trackReplacePending;
+    _trackRedecidePending = false;
+    _trackReplacePending = false;
+    if (!mounted || !_toolbarTrackingActive) return;
+
+    final measured = _measureSelectionExtent();
+    if (measured == null) {
+      _debugTrack(
+        'misura-$reason',
+        note: 'nessun rettangolo montato: tengo l\'ultima geometria nota',
+      );
+      return;
+    }
+
+    final previous = _trackedExtent;
+    final next = (previous != null &&
+            previous.selection == measured.selection &&
+            !replace)
+        ? previous.unionWith(measured)
+        : measured;
+    final decideAgain =
+        redecide || previous == null || previous.selection != next.selection;
+    if (previous != null && !decideAgain && next.sameGeometryAs(previous)) {
+      return;
+    }
+
+    final offset = _scrollOffset();
+    final viewport = offset == null ? null : _viewportGlobalRect();
+    _trackedExtent = next;
+    if (decideAgain && offset != null && viewport != null) {
+      _trackBelow = _wantsBelowPlacement(next, viewport, offset);
+    }
+    _debugTrack(
+      'misura-$reason',
+      extent: next,
+      offset: offset,
+      viewport: viewport,
+      note: 'cambiata ridecisione=$decideAgain',
+    );
+    _toolbarTrackRevision.value++;
+  }
+
+  // Riga di diagnostica `TRACK|...` (solo debug), come le righe `RECALL|`:
+  // una per ogni ricalcolo delle ancore del menù. Campi: fase; `modo` = il menù
+  // sta sopra o sotto la selezione; `lato` = dove sta la selezione rispetto al
+  // viewport (sopra, inizia-sopra, dentro, finisce-sotto, attraversa, sotto);
+  // `sel` = bordi della selezione in coordinate globali; `contenuto` = gli
+  // stessi in coordinate di contenuto; `offset`; `vp` = bordi del viewport;
+  // `clamp` = aggancio applicato (nessuno, bordo-superiore, bordo-inferiore,
+  // statico); `prim`/`sec` = ancore passate alla toolbar.
+  void _debugTrack(
+    String phase, {
+    _TrackedExtent? extent,
+    double? offset,
+    Rect? viewport,
+    double? top,
+    double? bottom,
+    String? clampApplied,
+    Offset? primary,
+    Offset? secondary,
+    String? note,
+  }) {
+    if (!kDebugMode) return;
+    final parts = <String>[
+      'TRACK',
+      phase,
+      'modo=${_trackBelow ? 'sotto' : 'sopra'}',
+    ];
+    if (top != null && bottom != null) {
+      if (viewport != null) {
+        parts.add('lato=${_selectionSide(top, bottom, viewport)}');
+      }
+      parts.add('sel=[${_trackNum(top)},${_trackNum(bottom)}]');
+    }
+    if (extent != null) {
+      parts.add(
+        'contenuto=[${_trackNum(extent.top)},${_trackNum(extent.bottom)}]',
+      );
+    }
+    if (offset != null) parts.add('offset=${_trackNum(offset)}');
+    if (viewport != null) {
+      parts.add('vp=[${_trackNum(viewport.top)},${_trackNum(viewport.bottom)}]');
+    }
+    if (clampApplied != null) parts.add('clamp=$clampApplied');
+    if (primary != null) parts.add('prim=${_trackOffset(primary)}');
+    if (secondary != null) parts.add('sec=${_trackOffset(secondary)}');
+    if (note != null) parts.add(note);
+    debugPrint(parts.join('|'));
   }
 
   void _handleBackgroundPointerDown(PointerDownEvent event) {
@@ -855,6 +1450,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // pacchetto la nasconde quando la selezione passa per `null`): si
     // controlla per ultima.
     if (!state.toolbarIsVisible) state.showToolbar();
+
+    // Step B: «ri-arma» l'inseguimento del menù. Se era già visibile NON lo si
+    // ricrea (niente `showToolbar()`: resterebbe lo stesso widget), ma si
+    // rimisura la geometria e si ridecide il lato sopra/sotto: così il
+    // richiamo lo riporta in posizione naturale anche se era rimasto agganciato
+    // a un bordo. Se invece è stato appena ri-mostrato, il suo builder ha già
+    // iniziato una nuova sessione e questa rimisura è solo una conferma.
+    _scheduleToolbarRefresh('richiamo', redecide: true);
     _debugRecall('richiamo-fine');
   }
 
@@ -1331,3 +1934,60 @@ final class _MathItem extends _ViewItem {
     return _parseError;
   }
 }
+
+/// Geometria della selezione in COORDINATE DI CONTENUTO
+/// (`y_contenuto = y_globale - viewport.top + offset`), misurata a frame
+/// finito dalla geometria viva e poi usata, a ogni scroll, per ricavare per
+/// sola aritmetica dove deve stare il menù (Step B). Non dipende dallo scroll:
+/// resta valida anche quando i blocchi della selezione sono smontati.
+///
+/// [centerX] è invece globale: lo scroll è verticale e il centro orizzontale
+/// della selezione non cambia con esso.
+@immutable
+class _TrackedExtent {
+  const _TrackedExtent({
+    required this.selection,
+    required this.top,
+    required this.bottom,
+    required this.centerX,
+  });
+
+  /// La selezione a cui si riferisce la misura: se cambia, la memoria non vale.
+  final MarkdownSelection selection;
+  final double top;
+  final double bottom;
+  final double centerX;
+
+  /// Stessa geometria entro mezzo pixel (rumore di virgola mobile).
+  bool sameGeometryAs(_TrackedExtent other) =>
+      (top - other.top).abs() < 0.5 &&
+      (bottom - other.bottom).abs() < 0.5 &&
+      (centerX - other.centerX).abs() < 0.5;
+
+  /// Unisce due misure della STESSA selezione: gli estremi noti non vengono
+  /// dimenticati se una misura successiva vede solo i blocchi ancora montati.
+  /// Il centro orizzontale resta quello della prima misura, per non far
+  /// muovere il menù di lato durante lo scroll.
+  _TrackedExtent unionWith(_TrackedExtent other) => _TrackedExtent(
+        selection: other.selection,
+        top: top < other.top ? top : other.top,
+        bottom: bottom > other.bottom ? bottom : other.bottom,
+        centerX: centerX,
+      );
+}
+
+// Dove sta la selezione [top, bottom] (coordinate globali) rispetto al
+// viewport: solo per le righe `TRACK|`.
+String _selectionSide(double top, double bottom, Rect viewport) {
+  if (bottom <= viewport.top) return 'sopra';
+  if (top >= viewport.bottom) return 'sotto';
+  if (top < viewport.top) {
+    return bottom > viewport.bottom ? 'attraversa' : 'inizia-sopra';
+  }
+  return bottom > viewport.bottom ? 'finisce-sotto' : 'dentro';
+}
+
+String _trackNum(double value) => value.toStringAsFixed(1);
+
+String _trackOffset(Offset value) =>
+    '(${_trackNum(value.dx)},${_trackNum(value.dy)})';
