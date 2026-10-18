@@ -6,9 +6,7 @@ import 'package:flutter/foundation.dart'
         Listenable,
         TargetPlatform,
         ValueNotifier,
-        debugPrint,
-        defaultTargetPlatform,
-        kDebugMode;
+        defaultTargetPlatform;
 import 'package:flutter/gestures.dart'
     show
         GestureDisposition,
@@ -38,7 +36,7 @@ import 'package:flutter_math_fork/tex.dart'
     show SyntaxTree, TexParser, TexParserSettings;
 import 'code_block_with_copy.dart';
 import 'display_math_block.dart';
-import 'selection_handle_probe.dart';
+import 'selection_handle_visibility.dart';
 
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste più una modalità "testo grezzo" separata.
@@ -53,6 +51,19 @@ import 'selection_handle_probe.dart';
 /// `RenderObject` a schermo, quindi resta corretta — "Seleziona tutto"
 /// incluso — anche per blocchi mai costruiti o già scomparsi dalla
 /// `cacheExtent` di default.
+///
+/// DUE COMPORTAMENTI DELLA SELEZIONE TOUCH CHE IL PACCHETTO NON OFFRE
+/// (nessun hook in 0.2.0: li realizza questa vista con sole API pubbliche):
+///  * RICHIAMO: un long-press DENTRO una selezione esistente la lascia
+///    invariata e riporta maniglie e menù Copia / Seleziona tutto, se erano
+///    scomparsi (vedi `_SelectionRecallRecognizer` e `_recallSelectionUi`);
+///  * INSEGUIMENTO: il menù segue la nota mentre scorre e si aggancia al bordo
+///    superiore/inferiore finché la selezione non finisce (vedi
+///    `_buildSelectionToolbar`).
+/// Entrambi sono stati scritti e ragionati senza poter eseguire Flutter: la
+/// CI e la prova su dispositivo sono l'unico banco di prova, e i limiti noti
+/// sono elencati nei doc comment di `_buildSelectionToolbar` e
+/// `_recallTouchTolerance`.
 class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
@@ -138,16 +149,25 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   static const Duration _tapMaxDuration = Duration(milliseconds: 500); // ~kLongPressTimeout
   final Map<int, _PendingTap> _pendingTapPointers = <int, _PendingTap>{};
 
-  // --- Step A: long-press DENTRO la selezione = "richiamo" di maniglie e menù
+  // --- Richiamo: long-press DENTRO la selezione = maniglie e menù ----------
   // Il perché della scelta (un recognizer che vince l'arena prima di quello
   // del pacchetto) e i dettagli del gesto sono nel doc comment di
   // [_SelectionRecallRecognizer]; qui solo lo stato necessario.
   //
   // Tolleranza (px) attorno ai rettangoli della selezione entro cui un
   // long-press touch conta come "sulla selezione": `globalSelectionRects()`
-  // restituisce i box delle righe, quindi senza margine l'interlinea, i 16px
-  // fra un blocco e l'altro e un dito che sfiora il bordo del testo
-  // cadrebbero "fuori". Con 10px per lato i 16px fra blocchi sono coperti.
+  // restituisce i box delle righe, quindi senza margine l'interlinea e un dito
+  // che sfiora il bordo del testo cadrebbero "fuori".
+  //
+  // LIMITE NOTO. Tra due paragrafi `flutter_md` inserisce un blocco VUOTO (una
+  // nota di 5 paragrafi produce 9 `MarkdownWidget`, passo di 32 px con altezza
+  // di 16: osservato in CI), quindi fra i box di testo di due paragrafi
+  // consecutivi ci sono 16 + 16 + 16 = 48 px. Con 10 px per lato ne restano
+  // scoperti circa 28: un long-press in quella fascia, anche se la selezione
+  // ricopre entrambi i paragrafi, conta come "fuori" e agisce il pacchetto
+  // (nuova selezione per parola). Allargare la tolleranza o unire i rettangoli
+  // dei blocchi selezionati è una scelta di design non fatta: i rettangoli dei
+  // blocchi vuoti non sono stati ispezionati.
   static const double _recallTouchTolerance = 10.0;
 
   // true SOLO mentre [_rebuildSelectionOverlay] riassegna la selezione: un
@@ -176,7 +196,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     ),
   };
 
-  // --- Step B: il menù Copia / Seleziona tutto segue la selezione ----------
+  // --- Inseguimento: il menù Copia / Seleziona tutto segue la selezione ----
   // Il PERCHÉ (contenuto che si aggiorna da solo, coordinate di CONTENUTO,
   // flip deciso una volta sola) è nel doc comment di
   // [_buildSelectionToolbar]; qui solo lo stato.
@@ -184,7 +204,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // Ultima geometria nota della selezione in COORDINATE DI CONTENUTO
   // (y_contenuto = y_globale - viewport.top + offset): non dipende dallo scroll
   // e resta valida anche quando i blocchi della selezione vengono smontati
-  // (HANDOFF A.16.9: con gli estremi smontati `contextMenuAnchors` perde la
+  // (osservato in CI: con gli estremi smontati `contextMenuAnchors` perde la
   // direzione e `selectionHandleEndpoints()` non è affidabile). È l'«ultimo
   // lato noto». `null` = mai misurata per la selezione corrente.
   _TrackedExtent? _trackedExtent;
@@ -268,12 +288,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // altrimenti un normale scroll a dito potrebbe essere scambiato per un
   // trascinamento di selezione.
   void _onSelectionControllerChanged() {
-    // Step B: il controller notifica per qualunque motivo (selezione che
+    // Il controller notifica per qualunque motivo (selezione che
     // cambia, ma anche documenti/superfici che si registrano): se il menù
     // segue la selezione, la sua geometria va rimisurata a frame finito. Va
     // fatto PRIMA del confronto qui sotto, che esce se il valore della
     // selezione è identico.
-    if (_toolbarTrackingActive) _scheduleToolbarRefresh('controller');
+    if (_toolbarTrackingActive) _scheduleToolbarRefresh();
     final selection = _selectionController.selection;
     if (selection == _lastObservedSelection) return;
     _lastObservedSelection = selection;
@@ -351,7 +371,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
 
     _items = items;
-    // Step B: coordinate e modo del menù si riferivano ai blocchi di prima.
+    // Coordinate e modo del menù si riferivano ai blocchi di prima.
     _trackedExtent = null;
     _trackBelow = false;
     _selectionController.setDocuments(documents);
@@ -534,8 +554,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                 padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
                 itemCount: itemCount,
                 itemBuilder: (context, index) {
-                  // Step B: un blocco che si costruisce può portare nuovi
-                  // rettangoli della selezione (vedi [_onBlockBuilt]).
+                  // Un blocco che si costruisce può portare nuovi rettangoli
+                  // della selezione (vedi [_onBlockBuilt]).
                   _onBlockBuilt();
                   if (hasTitle && index == 0) {
                     return _buildTitleWidget(theme, selectionColor);
@@ -600,17 +620,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // `showToolbar()` (che ricalcola le ancore dalla geometria corrente).
   // Si ferma da sola se nel frattempo la selezione viene annullata.
   //
-  // STEP B: questa funzione è la vecchia `_keepToolbarVisibleAfterSelectAll`,
-  // ASSORBITA nel meccanismo di inseguimento (stesso rimedio, stessa
-  // tempistica: nessuna regressione). Cambia una cosa sola: poiché "Seleziona
-  // tutto" sostituisce la selezione (di solito con una che parte e finisce
-  // FUORI dai blocchi montati), la geometria e il lato (sopra/sotto) del menù
-  // vanno rimisurati e ridecisi; lo fa [_scheduleToolbarRefresh]. Che il menù
-  // sia poi agganciato al bordo giusto (la selezione "parte sopra") non
-  // richiede più nulla di specifico qui: è il caso generale di
-  // [_trackedToolbarAnchors].
+  // Con il menù che insegue la selezione c'è un passo in più: "Seleziona
+  // tutto" SOSTITUISCE la selezione (di solito con una che parte e finisce
+  // FUORI dai blocchi montati), quindi la geometria e il lato (sopra/sotto) del
+  // menù vanno rimisurati e ridecisi; lo fa [_scheduleToolbarRefresh]. Che il
+  // menù finisca agganciato al bordo giusto (la selezione "parte sopra") non
+  // richiede altro codice: è il caso generale di [_trackedToolbarAnchors].
   void _afterSelectAll(MarkdownSelectionScopeState state) {
-    _scheduleToolbarRefresh('seleziona-tutto', redecide: true);
+    _scheduleToolbarRefresh(redecide: true);
     void check(int retriesLeft) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !state.mounted) return;
@@ -640,11 +657,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   static const double _toolbarEdgeMargin = 8.0;
 
   // Sporgenza massima della toolbar rispetto alle ancore, usata SOLO dal modo
-  // `following` di [_clampAnchorsToViewport] (Step B). `_toolbarExtent` non
+  // `following` di [_clampAnchorsToViewport]. `_toolbarExtent` non
   // basta lì: serve che la toolbar resti nel viewport e che Flutter non
   // ribalti sopra/sotto in prossimità del bordo (il ribaltamento sposterebbe il
   // menù di decine di px di colpo, cioè uno scatto). Conosco due varianti
-  // della toolbar Material [NV: da riverificare sull'SDK locale]:
+  // della toolbar Material (a memoria, NON verificate sull'SDK locale):
   //  * semplice: sopra occupa [P - 44, P], sotto [S, S + 44]; ci sta sopra se
   //    `P >= padding.top + 8 + 44`;
   //  * con distanze dal contenuto: sopra [P - 52, P - 8], sotto [S + 20,
@@ -669,7 +686,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // vengono riportate sul bordo visibile più vicino (toolbar agganciata al
   // bordo superiore/inferiore).
   //
-  // STEP B (generalizzazione). La funzione ha ora DUE modi, con la stessa
+  // DUE MODI, con la stessa
   // convenzione di posizionamento (ancora primaria = toolbar SOPRA, secondaria
   // = toolbar SOTTO, stesso margine `_toolbarEdgeMargin` dai bordi):
   //  * `following: false` (predefinito) — il comportamento di sempre. Lo usano
@@ -690,7 +707,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   //    `_toolbarExtent` perché qui, vicino al bordo, un ribaltamento
   //    sopra/sotto di Flutter sarebbe uno scatto (vedi i loro commenti).
   //
-  // FLIP SOPRA/SOTTO: SCHERMO, NON VIEWPORT (HANDOFF, Punto 5). Flutter sceglie
+  // FLIP SOPRA/SOTTO: SCHERMO, NON VIEWPORT (fissato da un test di contratto in
+  // selection_contract_test.dart). Flutter sceglie
   // se disegnare la toolbar sopra l'ancora primaria o sotto la secondaria in
   // base allo spazio fino al bordo alto dello SCHERMO, non del viewport della
   // lista. Il modo `following` non lo subisce, ed è questo il motivo della sua
@@ -788,15 +806,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   // ---------------------------------------------------------------------------
-  // Step B: il menù Copia / Seleziona tutto segue la nota
+  // Inseguimento: il menù Copia / Seleziona tutto segue la nota
   // ---------------------------------------------------------------------------
 
   /// Costruisce il menù contestuale della selezione.
   ///
   /// IL PROBLEMA. `flutter_md` mostra il menù con un `OverlayEntry` e richiama
   /// questo builder solo a `showToolbar()` (e alle ricostruzioni dell'entry),
-  /// NON a ogni frame di scroll [HANDOFF, Punto 4]: le ancore calcolate lì
-  /// restavano ferme mentre la nota scorreva. Il `ContextMenuController` del
+  /// NON a ogni frame di scroll (dedotto dall'API pubblica, non dal sorgente
+  /// privato del pacchetto): le ancore calcolate lì restavano ferme mentre la
+  /// nota scorreva. Il `ContextMenuController` del
   /// pacchetto è privato (l'app non può chiedere una ricostruzione) e
   /// richiamare `showToolbar()` a ogni frame ricreerebbe l'`OverlayEntry`:
   /// da qui il divieto di `showToolbar()` per frame.
@@ -820,13 +839,38 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// montano, schermo ridimensionato. Le coordinate di contenuto restano
   /// valide anche quando i blocchi della selezione vengono smontati (è
   /// l'«ultimo lato noto»: con estremi smontati `contextMenuAnchors` perde la
-  /// direzione e `selectionHandleEndpoints()` non è affidabile, A.16.9).
+  /// direzione e `selectionHandleEndpoints()` non è affidabile: osservato in
+  /// CI).
   ///
   /// MENÙ NON ANCORATO ALLA SELEZIONE. Dopo `showToolbar(Offset)` (tasto
-  /// destro) `contextMenuAnchors` ha solo l'ancora primaria [HANDOFF, Punto 4,
-  /// E4]; senza selezione non c'è niente da seguire. In entrambi i casi si
+  /// destro) `contextMenuAnchors` ha solo l'ancora primaria (dal dartdoc
+  /// pubblicato del pacchetto; il test 6 di selection_toolbar_tracking_test.dart
+  /// ne verifica l'effetto: menù fermo); senza selezione non c'è niente da
+  /// seguire. In entrambi i casi si
   /// restituisce la toolbar di sempre: ferma, con le ancore riportate nel
   /// viewport.
+  ///
+  /// LIMITI NOTI E NON VERIFICATI (nessuno è coperto da test):
+  ///  * Overflow: a ogni notifica di scroll i pulsanti vengono ricreati e
+  ///    `_TextSelectionToolbarOverflowable` chiude il menù «⋮» se i figli
+  ///    cambiano. Con due voci l'overflow non esiste; se se ne aggiungessero,
+  ///    andrebbero passati i figli già costruiti
+  ///    (`AdaptiveTextSelectionToolbar.getAdaptiveButtons`) invece di
+  ///    `buttonItems`.
+  ///  * Pulsanti stantii: l'elenco è calcolato quando il menù compare; se la
+  ///    selezione cambia a menù aperto (Seleziona tutto) non si aggiorna.
+  ///  * Testo che cambia a menù aperto: le coordinate memorizzate sarebbero
+  ///    stantie; `_updateBlocks` le azzera. Lo stesso vale se cambia solo la
+  ///    larghezza del pannello (tablet a due pannelli con divisore mobile) o
+  ///    la dimensione del carattere: la rimisura parte da blocchi che si
+  ///    costruiscono, da notifiche del controller e da cambi di dimensione
+  ///    dello SCHERMO, non da un cambio di larghezza del solo viewport.
+  ///  * Scroll fulmineo: se in un frame si supera la `cacheExtent` (250 px) la
+  ///    rimisura arriva uno-due frame dopo; nel frattempo vale la memoria.
+  ///  * Cupertino e desktop: le costanti `_toolbarReach*` sono tarate sulla
+  ///    toolbar Material; la toolbar desktop usa la sola ancora primaria.
+  ///  * Tabelle a scroll orizzontale: il centro orizzontale del menù è
+  ///    misurato una volta; scorrere la tabella non lo aggiorna.
   Widget _buildSelectionToolbar(MarkdownSelectionScopeState state) {
     final buttonItems = <ContextMenuButtonItem>[
       for (final item in state.contextMenuButtonItems)
@@ -839,19 +883,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         selection.isCollapsed ||
         anchors.secondaryAnchor == null) {
       _toolbarTracked = false;
-      _debugTrack(
-        'menu-fisso',
-        primary: anchors.primaryAnchor,
-        secondary: anchors.secondaryAnchor,
-        note: 'non ancorato alla selezione: resta fermo',
-      );
       return AdaptiveTextSelectionToolbar.buttonItems(
         anchors: _clampAnchorsToViewport(anchors),
         buttonItems: buttonItems,
       );
     }
 
-    _armToolbarTracking(selection, anchors);
+    _armToolbarTracking(selection);
     return ListenableBuilder(
       listenable: _toolbarTrackListenable,
       builder: (context, _) {
@@ -871,12 +909,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// Se non ci sono rettangoli montati (selezione interamente fuori dalla
   /// `cacheExtent`) si tiene l'ultima geometria nota PER QUESTA selezione;
   /// se non ce n'è, [_trackedExtent] resta `null` e il menù ripiega sulle
-  /// ancore statiche (comportamento pre-B) finché il ricalcolo a frame
+  /// ancore statiche del pacchetto finché il ricalcolo a frame
   /// finito non trova qualcosa da misurare.
-  void _armToolbarTracking(
-    MarkdownSelection selection,
-    TextSelectionToolbarAnchors rawAnchors,
-  ) {
+  void _armToolbarTracking(MarkdownSelection selection) {
     _toolbarTracked = true;
     final offset = _scrollOffset();
     final viewport = offset == null ? null : _viewportGlobalRect();
@@ -892,29 +927,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         viewport != null &&
         _wantsBelowPlacement(extent, viewport, offset);
 
-    if (kDebugMode) {
-      final origin = measured != null
-          ? 'misura-viva'
-          : (extent != null ? 'memoria' : 'nessuna-geometria');
-      _debugTrack(
-        'menu',
-        extent: extent,
-        offset: offset,
-        viewport: viewport,
-        top: extent == null || offset == null || viewport == null
-            ? null
-            : extent.top - offset + viewport.top,
-        bottom: extent == null || offset == null || viewport == null
-            ? null
-            : extent.bottom - offset + viewport.top,
-        primary: rawAnchors.primaryAnchor,
-        secondary: rawAnchors.secondaryAnchor,
-        note: 'origine=$origin '
-            'rect=${_selectionController.globalSelectionRects().length} '
-            'montati=${_selectionController.mountedSurfaces.length}',
-      );
-    }
-    _scheduleToolbarRefresh('menu');
+    _scheduleToolbarRefresh();
   }
 
   /// Il menù va SOTTO la selezione (true) o SOPRA (false)? Si chiama solo
@@ -986,30 +999,22 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final previousScreen = _trackScreenSize;
     _trackScreenSize = screen;
     if (previousScreen != null && previousScreen != screen) {
-      _scheduleToolbarRefresh('schermo', redecide: true, replace: true);
+      _scheduleToolbarRefresh(redecide: true, replace: true);
     }
 
     final extent = _trackedExtent;
     final offset = _scrollOffset();
     final viewport = offset == null ? null : _viewportGlobalRect();
     if (extent == null || offset == null || viewport == null) {
-      final fallback = _clampAnchorsToViewport(staticAnchors);
-      _debugTrack(
-        'frame',
-        extent: extent,
-        offset: offset,
-        viewport: viewport,
-        primary: fallback.primaryAnchor,
-        secondary: fallback.secondaryAnchor,
-        clampApplied: 'statico',
-        note: 'geometria della selezione non nota: ancore statiche',
-      );
-      return fallback;
+      // Geometria della selezione non nota (mai misurata e nessun
+      // rettangolo montato): ancore statiche del pacchetto, cioè il
+      // comportamento senza inseguimento, finché non c'è da misurare.
+      return _clampAnchorsToViewport(staticAnchors);
     }
 
     final top = extent.top - offset + viewport.top;
     final bottom = extent.bottom - offset + viewport.top;
-    final result = _clampAnchorsToViewport(
+    return _clampAnchorsToViewport(
       TextSelectionToolbarAnchors(
         primaryAnchor: Offset(extent.centerX, top),
         secondaryAnchor: Offset(extent.centerX, bottom),
@@ -1017,29 +1022,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       following: true,
       below: _trackBelow,
     );
-
-    if (kDebugMode) {
-      // Quanto l'aggancio ha spostato l'ancora che conta per il lato scelto:
-      // > 0 = più in basso del naturale (bordo superiore), < 0 = più in alto
-      // (bordo inferiore).
-      final moved = _trackBelow
-          ? (result.secondaryAnchor?.dy ?? bottom) - bottom
-          : result.primaryAnchor.dy - top;
-      _debugTrack(
-        'frame',
-        extent: extent,
-        offset: offset,
-        viewport: viewport,
-        top: top,
-        bottom: bottom,
-        primary: result.primaryAnchor,
-        secondary: result.secondaryAnchor,
-        clampApplied: moved.abs() < 0.01
-            ? 'nessuno'
-            : (moved > 0 ? 'bordo-superiore' : 'bordo-inferiore'),
-      );
-    }
-    return result;
   }
 
   // Offset di scroll attuale (`pixels`), o `null` se la lista non è montata.
@@ -1089,21 +1071,20 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // selezione (blocchi rimontati): se il menù è inseguito, si rimisura a
   // frame finito. Costo a menù chiuso: un `bool`.
   void _onBlockBuilt() {
-    if (_toolbarTrackingActive) _scheduleToolbarRefresh('blocchi');
+    if (_toolbarTrackingActive) _scheduleToolbarRefresh();
   }
 
   /// Pianifica la rimisura dalla geometria viva, a frame finito, e la ripete
   /// una volta al frame dopo: se il registro del pacchetto assegna i rettangoli
   /// ai blocchi appena montati con un callback post-frame proprio, la prima
-  /// passata può vederlo ancora vuoto [A.16.9: in CI il registro si è
-  /// assestato più tardi del previsto]. Le richieste che arrivano mentre una
+  /// passata può vederlo ancora vuoto (osservato in CI: il registro si è
+  /// assestato più tardi del previsto). Le richieste che arrivano mentre una
   /// rimisura è già in coda si fondono con quella.
   ///
   /// [redecide]: ridecidi il lato sopra/sotto («posizione naturale»: richiamo,
   /// Seleziona tutto, schermo). [replace]: sostituisci le coordinate invece di
   /// unirle alle note (schermo: il testo può essere andato a capo altrove).
-  void _scheduleToolbarRefresh(
-    String reason, {
+  void _scheduleToolbarRefresh({
     bool redecide = false,
     bool replace = false,
   }) {
@@ -1117,10 +1098,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       // lanciasse, la coalescenza non resterebbe bloccata per sempre.
       binding.addPostFrameCallback((_) {
         _toolbarRefreshScheduled = false;
-        if (mounted) _refreshToolbarTracking('$reason+1');
+        if (mounted) _refreshToolbarTracking();
       });
       binding.ensureVisualUpdate();
-      if (mounted) _refreshToolbarTracking(reason);
+      if (mounted) _refreshToolbarTracking();
     });
     // `addPostFrameCallback` da solo non pianifica un frame.
     binding.ensureVisualUpdate();
@@ -1134,7 +1115,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// parte della selezione e non deve far dimenticare l'estremo noto prima.
   /// Se la selezione cambia (o si chiede [_trackReplacePending]) si parte da
   /// zero, e il lato sopra/sotto si decide di nuovo.
-  void _refreshToolbarTracking(String reason) {
+  void _refreshToolbarTracking() {
     final redecide = _trackRedecidePending;
     final replace = _trackReplacePending;
     _trackRedecidePending = false;
@@ -1142,13 +1123,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     if (!mounted || !_toolbarTrackingActive) return;
 
     final measured = _measureSelectionExtent();
-    if (measured == null) {
-      _debugTrack(
-        'misura-$reason',
-        note: 'nessun rettangolo montato: tengo l\'ultima geometria nota',
-      );
-      return;
-    }
+    // Nessun rettangolo montato: si tiene l'ultima geometria nota.
+    if (measured == null) return;
 
     final previous = _trackedExtent;
     final next = (previous != null &&
@@ -1168,62 +1144,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     if (decideAgain && offset != null && viewport != null) {
       _trackBelow = _wantsBelowPlacement(next, viewport, offset);
     }
-    _debugTrack(
-      'misura-$reason',
-      extent: next,
-      offset: offset,
-      viewport: viewport,
-      note: 'cambiata ridecisione=$decideAgain',
-    );
     _toolbarTrackRevision.value++;
-  }
-
-  // Riga di diagnostica `TRACK|...` (solo debug), come le righe `RECALL|`:
-  // una per ogni ricalcolo delle ancore del menù. Campi: fase; `modo` = il menù
-  // sta sopra o sotto la selezione; `lato` = dove sta la selezione rispetto al
-  // viewport (sopra, inizia-sopra, dentro, finisce-sotto, attraversa, sotto);
-  // `sel` = bordi della selezione in coordinate globali; `contenuto` = gli
-  // stessi in coordinate di contenuto; `offset`; `vp` = bordi del viewport;
-  // `clamp` = aggancio applicato (nessuno, bordo-superiore, bordo-inferiore,
-  // statico); `prim`/`sec` = ancore passate alla toolbar.
-  void _debugTrack(
-    String phase, {
-    _TrackedExtent? extent,
-    double? offset,
-    Rect? viewport,
-    double? top,
-    double? bottom,
-    String? clampApplied,
-    Offset? primary,
-    Offset? secondary,
-    String? note,
-  }) {
-    if (!kDebugMode) return;
-    final parts = <String>[
-      'TRACK',
-      phase,
-      'modo=${_trackBelow ? 'sotto' : 'sopra'}',
-    ];
-    if (top != null && bottom != null) {
-      if (viewport != null) {
-        parts.add('lato=${_selectionSide(top, bottom, viewport)}');
-      }
-      parts.add('sel=[${_trackNum(top)},${_trackNum(bottom)}]');
-    }
-    if (extent != null) {
-      parts.add(
-        'contenuto=[${_trackNum(extent.top)},${_trackNum(extent.bottom)}]',
-      );
-    }
-    if (offset != null) parts.add('offset=${_trackNum(offset)}');
-    if (viewport != null) {
-      parts.add('vp=[${_trackNum(viewport.top)},${_trackNum(viewport.bottom)}]');
-    }
-    if (clampApplied != null) parts.add('clamp=$clampApplied');
-    if (primary != null) parts.add('prim=${_trackOffset(primary)}');
-    if (secondary != null) parts.add('sec=${_trackOffset(secondary)}');
-    if (note != null) parts.add(note);
-    debugPrint(parts.join('|'));
   }
 
   void _handleBackgroundPointerDown(PointerDownEvent event) {
@@ -1265,7 +1186,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   // ---------------------------------------------------------------------------
-  // Step A: richiamo di maniglie e menù con un long-press DENTRO la selezione.
+  // Richiamo di maniglie e menù con un long-press DENTRO la selezione.
   // ---------------------------------------------------------------------------
 
   // Un tocco touch appena iniziato in `position` (globale), col puntatore
@@ -1316,16 +1237,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       for (RenderObject? node = target; node != null; node = node.parent) {
         if (identical(node, root)) return true;
       }
-      if (kDebugMode) {
-        // Diagnostica (HANDOFF A.16, ipotesi (c)): chi sta in cima al tocco?
-        // Di solito una maniglia (ipotesi non verificata: l'hit-test non
-        // guarda se è dipinta, quindi potrebbe bloccare il richiamo anche da
-        // invisibile), la toolbar o il magnifier.
-        debugPrint(
-          'RECALL|primo-hit|FUORI da questa vista: ${target.runtimeType} '
-          '(maniglia, toolbar o magnifier?): il richiamo non parte',
-        );
-      }
+      // In cima al tocco c'è un'altra cosa: di solito una maniglia, la toolbar
+      // o il magnifier. NON VERIFICATO su dispositivo: l'hit-test non guarda
+      // se una maniglia è dipinta, quindi una maniglia invisibile con l'area
+      // di tocco sopra la selezione potrebbe far rifiutare il richiamo.
       return false;
     }
     return true;
@@ -1353,28 +1268,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
   }
 
-  bool _claimsRecallAt(PointerDownEvent event) => _failSafe(() {
-        final candidate = _isRecallCandidate(event.position, event.pointer);
-        final topHitInside = candidate && _isTopHitInsideThisView(event);
-        _debugRecallClaim(
-          event,
-          candidate: candidate,
-          topHitInside: topHitInside,
-        );
-        return candidate && topHitInside;
-      });
+  bool _claimsRecallAt(PointerDownEvent event) => _failSafe(
+        () =>
+            _isRecallCandidate(event.position, event.pointer) &&
+            _isTopHitInsideThisView(event),
+      );
 
   // Ricontrollo alla scadenza del long-press (la selezione o un secondo dito
   // possono essere comparsi nei 480 ms di attesa).
-  bool _stillClaimsRecallAt(Offset position, int pointer) => _failSafe(() {
-        final stillValid = _isRecallCandidate(position, pointer);
-        if (kDebugMode) {
-          debugPrint(
-            'RECALL|scadenza-480ms|ancora-valido=$stillValid|pos=$position',
-          );
-        }
-        return stillValid;
-      });
+  bool _stillClaimsRecallAt(Offset position, int pointer) =>
+      _failSafe(() => _isRecallCandidate(position, pointer));
 
   // Il long-press di richiamo è stato RICONOSCIUTO (il dito è fermo da
   // 480 ms). Da questo momento quel puntatore non può più essere un tap: va
@@ -1385,11 +1288,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // sembrerebbe un tap. Dopo il richiamo il tocco non fa altro: un
   // trascinamento successivo non estende né sposta la selezione.
   void _handleRecallLongPressStart(LongPressStartDetails details) {
-    if (kDebugMode) {
-      debugPrint(
-        'RECALL|long-press-riconosciuto|pos=${details.globalPosition}',
-      );
-    }
     _pendingTapPointers.removeWhere(
       (_, tap) =>
           (tap.origin - details.globalPosition).distance <= _tapTouchSlop,
@@ -1402,11 +1300,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _recallSelectionUi();
   }
 
-  /// PUNTO DI AGGANCIO dello step B (menù che segue la nota e si aggancia ai
-  /// bordi): è l'unico posto in cui la UI della selezione viene riportata in
-  /// vista dopo un long-press sulla selezione. Lo step B vi si può innestare
-  /// (ricalcolo delle ancore, aggancio al bordo, ri-armo dell'inseguimento)
-  /// senza toccare il riconoscimento del gesto.
+  /// È l'unico posto in cui la UI della selezione viene riportata in vista
+  /// dopo un long-press sulla selezione: qui si innesta anche il ri-armo
+  /// dell'inseguimento del menù (ultimo passo), senza toccare il
+  /// riconoscimento del gesto.
   ///
   /// È IDEMPOTENTE: ogni passo agisce solo se manca qualcosa, quindi se
   /// maniglie e menù sono già visibili non cambia nulla (nessun
@@ -1416,7 +1313,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   ///  2. maniglie (solo piattaforme touch con almeno un estremo montato): si
   ///     ricostruisce l'overlay con [_rebuildSelectionOverlay] se NON TUTTE le
   ///     maniglie esistenti sono DIPINTE ([_selectionHandlesNeedRebuild]:
-  ///     controlla la visibilità, non l'esistenza del widget; HANDOFF A.16);
+  ///     controlla la visibilità, non l'esistenza del widget);
   ///  3. menù: `showToolbar()` solo se `toolbarIsVisible` è false. La
   ///     posizione "naturale" vicino alla selezione arriva dal
   ///     `contextMenuBuilder` (`_clampAnchorsToViewport`), come per ogni
@@ -1429,21 +1326,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     if (selection == null || selection.isCollapsed) return;
 
     MarkdownRenderedView.debugSelectionRecallCount++;
-    _debugRecall('richiamo-inizio');
 
     if (!_selectionFocusNode.hasFocus) _selectionFocusNode.requestFocus();
 
     if (_selectionHandlesNeedRebuild) {
       _rebuildSelectionOverlay();
-      if (kDebugMode) {
-        // Le maniglie ricostruite si dipingono nel frame SUCCESSIVO: lo stato
-        // subito dopo la ricostruzione non dice se hanno funzionato. Questa
-        // riga (un frame dopo) è la prova che serve (HANDOFF A.16, passo 5).
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _debugRecall('richiamo-un-frame-dopo-la-ricostruzione');
-        });
-        WidgetsBinding.instance.ensureVisualUpdate();
-      }
     }
 
     // Dopo `_rebuildSelectionOverlay` la toolbar può essere sparita (il
@@ -1451,14 +1338,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // controlla per ultima.
     if (!state.toolbarIsVisible) state.showToolbar();
 
-    // Step B: «ri-arma» l'inseguimento del menù. Se era già visibile NON lo si
+    // «Ri-arma» l'inseguimento del menù. Se era già visibile NON lo si
     // ricrea (niente `showToolbar()`: resterebbe lo stesso widget), ma si
     // rimisura la geometria e si ridecide il lato sopra/sotto: così il
     // richiamo lo riporta in posizione naturale anche se era rimasto agganciato
     // a un bordo. Se invece è stato appena ri-mostrato, il suo builder ha già
     // iniziato una nuova sessione e questa rimisura è solo una conferma.
-    _scheduleToolbarRefresh('richiamo', redecide: true);
-    _debugRecall('richiamo-fine');
+    _scheduleToolbarRefresh(redecide: true);
   }
 
   // Le maniglie esistono solo sulle piattaforme touch (su desktop il
@@ -1466,14 +1352,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // due estremi della selezione è montato (`selectionHandleEndpoints()` è
   // null altrimenti): fuori da questi casi non c'è nulla da ripristinare.
   //
-  // CASO (b) di HANDOFF A.15, ENTRAMBI gli estremi smontati (selezione molto
-  // lunga: in vista c'è solo il suo centro). Le maniglie non hanno un punto
+  // CASO «ENTRAMBI gli estremi smontati» (selezione molto lunga: in vista c'è
+  // solo il suo centro). Le maniglie non hanno un punto
   // a cui agganciarsi (il loro leader è il render object dell'estremo), quindi
   // il comportamento MENO INVASIVO è non toccarle: niente `clear()` né
   // riassegnazione, che farebbe solo lampeggiare il menù senza alcun
   // beneficio. Il richiamo mostra comunque il menù. Quando un estremo
   // rientra in vista un nuovo long-press sulla selezione ricostruisce le
-  // maniglie se non risultano dipinte. NOTA (HANDOFF A.16.9): in CI, con
+  // maniglie se non risultano dipinte. NOTA: in CI, con
   // «Seleziona tutto» e scroll a metà di una nota di 80 paragrafi,
   // `selectionHandleEndpoints()` risultava comunque NON null; lo stato (b)
   // non si è riusciti a produrlo e non è stato osservato su dispositivo.
@@ -1494,9 +1380,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // aspettano ([_selectionHandlesExpected]) E non ce n'è nessuna oppure NON
   // TUTTE quelle esistenti sono DIPINTE.
   //
-  // PERCHÉ VISIBILITÀ E NON ESISTENZA (HANDOFF A.16). Fino allo step A.15 si
-  // cercava il widget `_SelectionHandleOverlay` nell'overlay radice e se
-  // c'era si rispondeva «le maniglie ci sono». Ma quel widget resta montato
+  // PERCHÉ VISIBILITÀ E NON ESISTENZA. Una versione precedente cercava il
+  // widget `_SelectionHandleOverlay` nell'overlay radice e, se c'era,
+  // rispondeva «le maniglie ci sono»: sul dispositivo non riapparivano. Quel
+  // widget resta montato
   // anche quando non si vede (follower scollegato perché l'estremo è
   // smontato, opacità zero: vedi [SelectionHandleStatus]): nello stato del
   // sintomo la risposta era «ci sono» e non si ricostruiva nulla. Ora si
@@ -1507,12 +1394,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   //      «parziale»: un estremo non è mai uscito dal rendering (maniglia
   //      dipinta), l'altro è uscito ed è rientrato e la sua maniglia non è
   //      stata ricollegata (`flutter_md` 0.2.0 non ha «proxy» per le maniglie
-  //      di un estremo smontato: li introduce la PR #27, successiva alla
-  //      0.2.0 [D]). L'utente vedrebbe UNA maniglia e il richiamo non farebbe
-  //      nulla.
+  //      di un estremo smontato: li introduce la PR #27 del repository
+  //      upstream, successiva alla 0.2.0 e letta solo come indizio).
+  //      L'utente vedrebbe UNA maniglia e il richiamo non farebbe nulla.
   //  [B] ricostruire sempre quando gli estremi sono montati. Copre ogni caso
   //      ma lampeggia anche quando va tutto bene (maniglie dipinte, menù
-  //      visibile) e rompe l'idempotenza voluta dallo step A (test 1: stessi
+  //      visibile) e rompe l'idempotenza voluta dal richiamo (test 1: stessi
   //      `Element`, nessun lampeggio).
   //  [B'] SCELTA: come [B] ma SOLO se almeno una maniglia esistente non è
   //      dipinta. Stessa copertura di [B] nello stato parziale, nessun
@@ -1542,9 +1429,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // [_rebuildingSelectionOverlay] impedisce che questo ripristino sia
   // scambiato per un gesto (auto-scroll, riarmo aptico).
   //
-  // NON VERIFICATO (HANDOFF A.16): che il pacchetto ricolleghi davvero le
-  // maniglie a questo passaggio da `null`. La riga di diagnostica «un frame
-  // dopo la ricostruzione» dice se è andata così.
+  // NON VERIFICATO: che il pacchetto ricolleghi davvero le maniglie a questo
+  // passaggio da `null` (il test 7 di selection_recall_test.dart lo asserisce,
+  // ma solo la prova su dispositivo dice se vale anche con i blocchi veri).
   void _rebuildSelectionOverlay() {
     final saved = _selectionController.selection;
     if (saved == null || saved.isCollapsed) return;
@@ -1554,78 +1441,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       _selectionController.selection = saved;
     } finally {
       _rebuildingSelectionOverlay = false;
-    }
-  }
-
-  // DIAGNOSTICA (solo `kDebugMode`, nessun effetto sullo stato): una riga
-  // `RECALL|<fase>|...` con quello che serve per capire PERCHÉ le maniglie non
-  // tornano (HANDOFF A.16, «come leggere i log»). Si vede con `flutter run`
-  // in debug oppure con `adb logcat -s flutter`.
-  void _debugRecall(String stage) {
-    if (!kDebugMode) return;
-    try {
-      final selection = _selectionController.selection;
-      final selectionKind = selection == null
-          ? 'null'
-          : (selection.isCollapsed ? 'collapsed' : 'range');
-      final handles = inspectSelectionHandles(context);
-      final painted = handles.where((handle) => handle.isPainted).length;
-      final viewport = _viewportGlobalRect();
-      final visibleInViewport = viewport == null
-          ? 'n/d'
-          : '${handles.where((handle) => handle.isVisibleIn(viewport)).length}';
-      final rects = _selectionController.globalSelectionRects().length;
-      final endpoints = _selectionController.selectionHandleEndpoints() != null;
-      final toolbar = _selectionScopeKey.currentState?.toolbarIsVisible;
-      final focus = _selectionFocusNode.hasFocus;
-      final offset = _scrollController.hasClients
-          ? _scrollController.offset.toStringAsFixed(1)
-          : 'n/d';
-      debugPrint(
-        'RECALL|$stage|sel=$selectionKind|expected=$_selectionHandlesExpected'
-        '|endpoints=$endpoints|rects=$rects|handles=${handles.length}'
-        '|painted=$painted|visibili-in-viewport=$visibleInViewport'
-        '|toolbar=$toolbar|focus=$focus|scroll=$offset',
-      );
-      for (var i = 0; i < handles.length; i++) {
-        debugPrint('RECALL|$stage|maniglia[$i]=${handles[i]}');
-      }
-    } catch (error) {
-      debugPrint('RECALL|$stage|diagnostica fallita: $error');
-    }
-  }
-
-  // DIAGNOSTICA (solo `kDebugMode`): perché il recognizer ha reclamato, o NON
-  // ha reclamato, questo tocco (ipotesi (c) di HANDOFF A.15). Si stampa solo
-  // con una selezione non collassata: senza, il richiamo è impossibile e ogni
-  // tocco sulla vista produrrebbe una riga inutile.
-  void _debugRecallClaim(
-    PointerDownEvent event, {
-    required bool candidate,
-    required bool topHitInside,
-  }) {
-    if (!kDebugMode) return;
-    final selection = _selectionController.selection;
-    if (selection == null || selection.isCollapsed) return;
-    try {
-      final rects = _selectionController.globalSelectionRects();
-      var nearest = double.infinity;
-      for (final rect in rects) {
-        final distance = _distanceToRect(event.position, rect);
-        if (distance < nearest) nearest = distance;
-      }
-      final otherPointers = _pendingTapPointers.keys
-          .where((other) => other != event.pointer)
-          .length;
-      debugPrint(
-        'RECALL|pointer-down|pos=${event.position}|rects=${rects.length}'
-        '|distanza-dal-rect-piu-vicino=${nearest.toStringAsFixed(1)}'
-        '|tolleranza=$_recallTouchTolerance|altri-puntatori=$otherPointers'
-        '|candidato=$candidate|primo-hit-in-questa-vista=$topHitInside'
-        '|reclamato=${candidate && topHitInside}',
-      );
-    } catch (error) {
-      debugPrint('RECALL|pointer-down|diagnostica fallita: $error');
     }
   }
 
@@ -1757,18 +1572,6 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
       BuildContext context, Widget child, ScrollableDetails details) {
     return child;
   }
-}
-
-/// Distanza (0 se dentro) fra [point] e [rect]: serve solo alla diagnostica
-/// `RECALL|pointer-down` per dire quanto il dito è lontano dalla selezione.
-double _distanceToRect(Offset point, Rect rect) {
-  final dx = point.dx < rect.left
-      ? rect.left - point.dx
-      : (point.dx > rect.right ? point.dx - rect.right : 0.0);
-  final dy = point.dy < rect.top
-      ? rect.top - point.dy
-      : (point.dy > rect.bottom ? point.dy - rect.bottom : 0.0);
-  return Offset(dx, dy).distance;
 }
 
 /// Stato di un puntatore ancora "in corsa" fra `PointerDown` e `PointerUp`,
@@ -1938,7 +1741,7 @@ final class _MathItem extends _ViewItem {
 /// Geometria della selezione in COORDINATE DI CONTENUTO
 /// (`y_contenuto = y_globale - viewport.top + offset`), misurata a frame
 /// finito dalla geometria viva e poi usata, a ogni scroll, per ricavare per
-/// sola aritmetica dove deve stare il menù (Step B). Non dipende dallo scroll:
+/// sola aritmetica dove deve stare il menù. Non dipende dallo scroll:
 /// resta valida anche quando i blocchi della selezione sono smontati.
 ///
 /// [centerX] è invece globale: lo scroll è verticale e il centro orizzontale
@@ -1975,19 +1778,3 @@ class _TrackedExtent {
         centerX: centerX,
       );
 }
-
-// Dove sta la selezione [top, bottom] (coordinate globali) rispetto al
-// viewport: solo per le righe `TRACK|`.
-String _selectionSide(double top, double bottom, Rect viewport) {
-  if (bottom <= viewport.top) return 'sopra';
-  if (top >= viewport.bottom) return 'sotto';
-  if (top < viewport.top) {
-    return bottom > viewport.bottom ? 'attraversa' : 'inizia-sopra';
-  }
-  return bottom > viewport.bottom ? 'finisce-sotto' : 'dentro';
-}
-
-String _trackNum(double value) => value.toStringAsFixed(1);
-
-String _trackOffset(Offset value) =>
-    '(${_trackNum(value.dx)},${_trackNum(value.dy)})';

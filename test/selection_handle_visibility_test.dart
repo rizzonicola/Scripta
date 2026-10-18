@@ -1,21 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:scripta/features/editor/presentation/selection_handle_probe.dart';
+import 'package:scripta/features/editor/presentation/selection_handle_visibility.dart';
 
-// Test della sonda `inspectSelectionHandles` (HANDOFF A.16) con alberi
+// Test di `inspectSelectionHandles` (selection_handle_visibility.dart) con alberi
 // SINTETICI: nessuna dipendenza da `flutter_md` né dal gesto di selezione,
 // quindi sono deterministici e non hanno bisogno di attese reali.
 //
-// COME FUNZIONA IL TRUCCO. La sonda trova le maniglie per NOME del tipo
+// COME FUNZIONA IL TRUCCO. `inspectSelectionHandles` trova le maniglie per NOME del tipo
 // (`_SelectionHandleOverlay`, un widget privato del framework). Qui si
 // definisce un widget privato con lo STESSO nome, costruito come il
 // framework costruisce una maniglia (follower con `showWhenUnlinked: false`
 // > `FadeTransition` > foglia): per `runtimeType.toString()` è
 // indistinguibile dall'originale. È la forma che il framework ha secondo la
-// memoria dell'autore, NON riletta dal sorgente (vedi HANDOFF A.16): se
-// queste prove passano ma sulla maniglia vera la sonda sbaglia, sarà la
-// prova che la forma vera è diversa (lo dicono i test del file
-// `selection_recall_test.dart`, che usano le maniglie vere).
+// memoria dell'autore, NON riletta dal sorgente: se queste prove passano ma
+// sulla maniglia vera la misura sbaglia, la forma vera è diversa (lo dicono i
+// test di `selection_recall_test.dart`, che usano le maniglie vere).
 //
 // COSA DIMOSTRANO. Il vecchio criterio (esistenza del widget) risponderebbe
 // «presente» in TUTTI i casi sotto, compresi quelli in cui la maniglia non
@@ -55,7 +54,7 @@ class _SelectionHandleOverlayState extends State<_SelectionHandleOverlay> {
 
 const Key _targetKey = ValueKey('leader-target');
 
-/// Contesto (un `Element`) da passare alla sonda. Si ricava al momento
+/// Contesto (un `Element`) da passare a `inspectSelectionHandles`. Si ricava al momento
 /// dell'uso, subito prima di chiamarla, e non si conserva attraverso un `await`.
 BuildContext _context(WidgetTester tester) =>
     tester.element(find.byType(Scaffold));

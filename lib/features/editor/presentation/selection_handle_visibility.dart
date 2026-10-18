@@ -16,7 +16,7 @@ import 'package:flutter/rendering.dart'
 /// Flutter lo rinominasse non si troverebbe più nessuna maniglia e
 /// `_MarkdownRenderedViewState._selectionHandlesNeedRebuild` risponderebbe
 /// «ricostruisci» a ogni richiamo (al peggio un lampeggio, nient'altro si
-/// romperebbe). È lo stesso criterio che usava lo step A; cambia COSA si
+/// romperebbe). È lo stesso criterio di una versione precedente; cambia COSA si
 /// guarda una volta trovato il widget (vedi [SelectionHandleStatus]). I build
 /// di release non usano `--obfuscate`, quindi il nome è leggibile anche lì.
 const String _kSelectionHandleTypeName = '_SelectionHandleOverlay';
@@ -25,27 +25,27 @@ const String _kSelectionHandleTypeName = '_SelectionHandleOverlay';
 /// esiste soltanto come widget?
 ///
 /// PERCHÉ NON BASTA SAPERE CHE LA MANIGLIA ESISTE (causa più probabile del
-/// bug «le maniglie non riappaiono», vedi HANDOFF A.16)
+/// sintomo «le maniglie non riappaiono» visto sul tablet)
 /// -----------------------------------------------------------------------
-/// Fino allo step A.15 `_areSelectionHandlesShown()` rispondeva «sì» appena
+/// Una versione precedente della vista rispondeva «sì» appena
 /// nell'overlay radice c'era un widget `_SelectionHandleOverlay`. Ma quel
 /// widget resta montato per tutta la vita del `SelectionOverlay` anche quando
 /// NON si vede, per almeno tre motivi indipendenti:
 ///  * **non è collegato** ([isLinked]): la maniglia è un follower
 ///    (`CompositedTransformFollower`) il cui `LayerLink` ha per leader il
-///    render object dell'ESTREMO della selezione (changelog `flutter_md`
-///    0.2.0: «Selection endpoints push `LeaderLayer`s from the render
-///    objects» [D]). Se quel render object non è montato (blocco fuori da
-///    viewport + `cacheExtent`) o è stato rimontato e nessuno ha ricollegato
-///    il link, `LayerLink.leader` è `null` [V, api.flutter.dev] e, con
-///    `showWhenUnlinked: false` (come il framework costruisce le maniglie
-///    [I, da memoria: `_SelectionHandleOverlay` non è stato riletto]), il
-///    follower non dipinge nulla [V, doc di `showWhenUnlinked`];
+///    render object dell'ESTREMO della selezione (dal changelog di
+///    `flutter_md` 0.2.0: «Selection endpoints push `LeaderLayer`s from the
+///    render objects»; il codice del pacchetto non è stato letto). Se quel
+///    render object non è montato (blocco fuori da viewport + `cacheExtent`)
+///    o è stato rimontato e nessuno ha ricollegato il link, `LayerLink.leader`
+///    è `null` (doc API di Flutter) e, con `showWhenUnlinked: false` (come il
+///    framework costruisce le maniglie: ricordato a memoria,
+///    `_SelectionHandleOverlay` non è stato riletto), il follower non dipinge
+///    nulla (doc di `showWhenUnlinked`);
 ///  * **opacità zero** ([opacity]): `startHandlesVisible` /
 ///    `endHandlesVisible` di `SelectionOverlay` pilotano una `FadeTransition`
-///    che dissolve la maniglia senza smontarla [V, doc di
-///    `SelectionOverlay.startHandlesVisible`, `text_selection.dart` riga 1275
-///    su `main`];
+///    che dissolve la maniglia senza smontarla (doc API di
+///    `SelectionOverlay.startHandlesVisible`);
 ///  * **`Offstage`** ([isOffstage]) in un antenato.
 ///
 /// Per questo qui si risale la catena dei `RenderObject` dalla foglia della

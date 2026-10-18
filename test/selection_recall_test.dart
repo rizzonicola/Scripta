@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, debugDefaultTargetPlatformOverride, debugPrint;
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart'
     show
         PointerDeviceKind,
@@ -15,10 +15,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart';
-import 'package:scripta/features/editor/presentation/selection_handle_probe.dart';
+import 'package:scripta/features/editor/presentation/selection_handle_visibility.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// Test dello step A: un long-press touch DENTRO una selezione esistente la
+// Test del RICHIAMO: un long-press touch DENTRO una selezione esistente la
 // lascia identica e riporta maniglie e menù (vedi
 // `_MarkdownRenderedViewState._recallSelectionUi` e
 // `_SelectionRecallRecognizer` in markdown_rendered_view.dart).
@@ -30,12 +30,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 //    quello del pacchetto, quindi non basterebbe guardare la selezione.
 //  * Le maniglie si TROVANO per NOME del tipo privato di Flutter
 //    (`_SelectionHandleOverlay`): fragile, ma è l'unico modo di vederle da un
-//    test. Dallo step A.16 NON basta più che esistano: i test misurano se
-//    sono DIPINTE (`_realHandles`: follower collegato, opacità effettiva > 0,
-//    nessun Offstage, rettangolo dentro la viewport). Fino all'A.15 contavano
-//    solo l'esistenza del widget, e un test verde non provava che le maniglie
-//    si vedessero (HANDOFF A.15). Se Flutter rinominasse il tipo, il test
-//    "Precondizioni" fallisce per primo con un messaggio esplicito.
+//    test. NON basta che esistano: i test misurano se sono DIPINTE
+//    (`_realHandles`: follower collegato, opacità effettiva > 0, nessun
+//    Offstage, rettangolo dentro la viewport). Contare solo l'esistenza del
+//    widget lasciava i test verdi anche con le maniglie invisibili sul
+//    tablet. Se Flutter rinominasse il tipo, il test "Precondizioni"
+//    fallisce per primo con un messaggio esplicito.
 //  * `debugDefaultTargetPlatformOverride` va ripristinato DENTRO il corpo del
 //    test (try/finally in `_withPlatform`): i controlli di fine test del
 //    framework girano prima dei callback di `addTearDown`.
@@ -52,11 +52,12 @@ const String _note = 'Primo paragrafo con alcune parole.\n\n'
     'Quarto paragrafo da selezionare.\n\n'
     'Quinto paragrafo finale.';
 
-// Paragrafo (con testo, 0 = il primo) della parola selezionata: il QUARTO, non il primo. Il menù compare
-// SOPRA la selezione (con la selezione in cima alla vista verrebbe spinto
-// sulla riga stessa e coprirebbe il punto che i test toccano), mentre le
-// maniglie stanno sotto la riga: la riga del quarto blocco ha spazio libero
-// sopra e il punto toccato (centro della riga) non è coperto da nulla.
+// Paragrafo (con testo, 0 = il primo) della parola selezionata: il QUARTO, non
+// il primo. Il menù compare SOPRA la selezione (con la selezione in cima alla
+// vista verrebbe spinto sulla riga stessa e coprirebbe il punto che i test
+// toccano), mentre le maniglie stanno sotto la riga: la riga del quarto blocco
+// ha spazio libero sopra e il punto toccato (centro della riga) non è coperto
+// da nulla.
 const int _selectedBlock = 3;
 const String _selectedWord = 'Quarto';
 
@@ -227,7 +228,7 @@ bool _allHandlesVisible(WidgetTester tester) {
       handles.every((handle) => handle.isVisibleIn(viewport));
 }
 
-/// Descrizione testuale per i messaggi di errore e per le righe `PROBE|`.
+/// Descrizione testuale per i messaggi di errore.
 String _describeHandles(WidgetTester tester) {
   final handles = _realHandles(tester);
   if (handles.isEmpty) return 'nessuna maniglia nell\'overlay radice';
@@ -244,7 +245,8 @@ ScrollableState _listScrollable(WidgetTester tester) =>
     );
 
 /// Maniglia FINTA: stesso nome del tipo privato del framework, quindi per la
-/// sonda e per il vecchio criterio (esistenza per nome) è una maniglia vera;
+/// misura di visibilità e per un criterio basato sull'esistenza (per nome) è
+/// una maniglia vera;
 /// ma il suo `LayerLink` non ha leader, quindi il follower non dipinge nulla.
 /// Riproduce in modo DETERMINISTICO lo stato «maniglia esistente ma non
 /// visibile» senza dipendere da come `flutter_md` ricollega i leader (test 9).
@@ -382,9 +384,9 @@ void main() {
             reason: 'su Android il pacchetto mostra le maniglie e devono '
                 'essere DIPINTE, non solo presenti. Se fallisce: o il nome '
                 'del tipo privato di Flutter è cambiato (nessuna maniglia '
-                'trovata), o la sonda non riconosce la struttura della '
-                'maniglia vera, o il pacchetto non le collega (HANDOFF A.16). '
-                'Stato: ${_describeHandles(tester)}',
+                'trovata), o `inspectSelectionHandles` non riconosce la '
+                'struttura della maniglia vera, o il pacchetto non le '
+                'collega. Stato: ${_describeHandles(tester)}',
           );
           expect(MarkdownRenderedView.debugSelectionRecallCount, 0);
 
@@ -481,7 +483,7 @@ void main() {
     );
 
     testWidgets(
-      '2. stato "maniglie/menù scomparsi" (HANDOFF, Punto 3, condizioni 2, 6 e 8: hideToolbar, estremo smontato e rimontato, focus perso): il long-press li ripristina',
+      '2. stato "maniglie/menù scomparsi" (menù nascosto, estremo smontato e rimontato, focus perso): il long-press li ripristina',
       (tester) async {
         await _withPlatform(TargetPlatform.android, () async {
           final log = _PlatformLog();
@@ -509,11 +511,6 @@ void main() {
           scrollable.position.jumpTo(0);
           await tester.pumpAndSettle();
           expect(controller.selection, initial);
-          debugPrint(
-            'PROBE|A16-test2|di ritorno, prima del richiamo: '
-            'tutte-visibili=${_allHandlesVisible(tester)}; '
-            '${_describeHandles(tester)}',
-          );
 
           // Condizioni 2 e 8: menù nascosto da codice e focus perso.
           scope.hideToolbar();
@@ -536,8 +533,7 @@ void main() {
                 'viewport (se questa asserzione fallisce, o il richiamo non '
                 'ha ricostruito l\'overlay, o l\'espediente '
                 '_rebuildSelectionOverlay non basta con questa versione del '
-                'pacchetto: vedi HANDOFF A.16). Stato: '
-                '${_describeHandles(tester)}',
+                'pacchetto). Stato: ${_describeHandles(tester)}',
           );
           expect(log.vibrations, 0);
           expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
@@ -739,25 +735,24 @@ void main() {
     );
 
     // ------------------------------------------------------------------
-    // HANDOFF A.16: le maniglie devono essere VISIBILI, non solo presenti.
+    // Le maniglie devono essere VISIBILI, non solo presenti.
     // ------------------------------------------------------------------
 
     testWidgets(
-      '7. SINTOMO (A.16): la selezione esce dal rendering e rientra; dopo il long-press le maniglie sono DIPINTE (non solo presenti)',
+      '7. SINTOMO: la selezione esce dal rendering e rientra; dopo il long-press le maniglie sono DIPINTE (non solo presenti)',
       (tester) async {
         // Scenario dell'utente sul tablet: seleziono, scorro finché la
         // selezione esce dalla vista o dal rendering (le maniglie spariscono),
         // torno sulla selezione e tengo premuto.
         //
-        // COME LEGGERE IL RISULTATO. Col codice di A.15 il richiamo guardava
-        // se il widget della maniglia ESISTEVA: nello stato del sintomo
-        // (maniglia montata ma non collegata all'estremo rimontato) rispondeva
-        // «ci sono» e non faceva nulla, quindi l'ultima asserzione qui sotto
-        // risulterebbe ROSSA. Se la riga `PROBE|A16-7|di ritorno` dice
-        // SINTOMO-RIPRODOTTO=false, il pacchetto ha già ricollegato le
-        // maniglie al rimontaggio nel banco di prova: in quel caso il test è
-        // verde anche col vecchio codice e la causa di A.16 NON è provata qui
-        // (vedi HANDOFF A.16, «Cosa NON è verificato»).
+        // COME LEGGERE IL RISULTATO. Un richiamo che guardasse solo se il
+        // widget della maniglia ESISTE, nello stato del sintomo (maniglia
+        // montata ma non collegata all'estremo rimontato) risponderebbe «ci
+        // sono» e non farebbe nulla: l'ultima asserzione qui sotto sarebbe
+        // ROSSA. Se invece il pacchetto ricollega da solo le maniglie al
+        // rimontaggio (`backVisible` vero prima del richiamo), il test è verde
+        // anche con quel criterio e la causa del sintomo NON è provata qui:
+        // resta da verificare sul dispositivo.
         await _withPlatform(TargetPlatform.android, () async {
           final log = _PlatformLog();
           _mockPlatformChannel(tester, log);
@@ -780,12 +775,6 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 500));
           expect(controller.selection, initial);
-          debugPrint(
-            'PROBE|A16-7|lontano: '
-            'estremi-montati=${controller.selectionHandleEndpoints() != null} '
-            'rects=${controller.globalSelectionRects().length}; '
-            '${_describeHandles(tester)}',
-          );
 
           // 2) Torna in vista.
           scrollable.position.jumpTo(0);
@@ -793,11 +782,6 @@ void main() {
           await tester.pump(const Duration(milliseconds: 500));
           expect(controller.selection, initial);
           final backVisible = _allHandlesVisible(tester);
-          debugPrint(
-            'PROBE|A16-7|di ritorno: SINTOMO-RIPRODOTTO=${!backVisible} '
-            'estremi-montati=${controller.selectionHandleEndpoints() != null}; '
-            '${_describeHandles(tester)}',
-          );
 
           // 3) Long-press sulla selezione.
           log.vibrations = 0;
@@ -816,8 +800,8 @@ void main() {
             _allHandlesVisible(tester),
             isTrue,
             reason: 'dopo il long-press le maniglie devono essere DIPINTE e '
-                'dentro la viewport. Era SINTOMO-RIPRODOTTO=${!backVisible} '
-                'prima del richiamo. Stato dopo: ${_describeHandles(tester)}; '
+                'dentro la viewport. Prima del richiamo erano visibili: '
+                '$backVisible. Stato dopo: ${_describeHandles(tester)}; '
                 'estremi-montati=${controller.selectionHandleEndpoints() != null}',
           );
           expect(
@@ -838,7 +822,7 @@ void main() {
         // della selezione (primo e ultimo blocco) sono lontani dalla viewport,
         // in vista c'è solo il centro evidenziato.
         //
-        // OSSERVATO IN CI (zip v7, HANDOFF A.16.9): in questo stato
+        // OSSERVATO IN CI: in questo stato
         // `selectionHandleEndpoints()` NON era null, contro la documentazione
         // del pacchetto. Il caso (b) «nessun estremo montato» quindi non si
         // riesce a produrre con «Seleziona tutto» in questo banco di prova, e
@@ -847,8 +831,7 @@ void main() {
         // ricalcola la politica B' di `_selectionHandlesNeedRebuild` con le
         // sole API pubbliche (`expectRebuild`) e verifica che il richiamo la
         // rispetti, cioè che NON ricostruisca (selezione mai null) quando non
-        // c'è nulla da ricostruire e ricostruisca quando serve. La riga
-        // `PROBE|A16-8` dice in quale dei due casi si è.
+        // c'è nulla da ricostruire e ricostruisca quando serve.
         await _withPlatform(TargetPlatform.android, () async {
           final log = _PlatformLog();
           _mockPlatformChannel(tester, log);
@@ -886,12 +869,6 @@ void main() {
           final expectRebuild = endpointsMounted &&
               (handlesBefore.isEmpty ||
                   handlesBefore.any((handle) => !handle.isPainted));
-          debugPrint(
-            'PROBE|A16-8|a metà nota: estremi-montati=$endpointsMounted '
-            'ricostruzione-attesa=$expectRebuild '
-            'rects=${controller.globalSelectionRects().length}; '
-            '${_describeHandles(tester)}',
-          );
 
           // Ogni valore della selezione diverso da quello iniziale (`null`,
           // se si ricostruisce) finisce qui.
@@ -938,9 +915,9 @@ void main() {
     testWidgets(
       '9. maniglia ESISTENTE ma NON dipinta: il richiamo ricostruisce l\'overlay (si guarda la visibilità, non l\'esistenza)',
       (tester) async {
-        // Regressione DETERMINISTICA del difetto che A.15 nominava: il
-        // vecchio criterio contava l'esistenza di un `_SelectionHandleOverlay`
-        // e con una maniglia montata-ma-invisibile non faceva nulla. Qui la
+        // Regressione DETERMINISTICA di un difetto passato: un criterio che
+        // contasse l'esistenza di un `_SelectionHandleOverlay` con una
+        // maniglia montata-ma-invisibile non faceva nulla. Qui la
         // maniglia invisibile è una FINTA con lo stesso nome del tipo del
         // framework e un `LayerLink` senza leader (vedi `_SelectionHandleOverlay`
         // in questo file): non dipende da come `flutter_md` ricollega i

@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, debugDefaultTargetPlatformOverride, debugPrint;
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart'
     show
         PointerDeviceKind,
@@ -17,7 +17,7 @@ import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// Test dello step B: il menù Copia / Seleziona tutto SEGUE la selezione mentre
+// Test dell'INSEGUIMENTO: il menù Copia / Seleziona tutto SEGUE la selezione mentre
 // la nota scorre, si aggancia ai bordi del viewport e sparisce solo quando la
 // selezione finisce (vedi `_MarkdownRenderedViewState._buildSelectionToolbar`
 // in markdown_rendered_view.dart).
@@ -25,12 +25,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 // NOTE SU COME SONO SCRITTI (leggere prima di "aggiustare" un'asserzione):
 //  * Si misura il comportamento VISIBILE: la posizione reale del menù, non
 //    l'esistenza dei widget (è l'errore che ha nascosto il difetto delle
-//    maniglie, HANDOFF A.15). Il menù si misura con l'unione dei rettangoli
+//    maniglie). Il menù si misura con l'unione dei rettangoli
 //    dei SUOI PULSANTI, non con `tester.getRect(find.byType(
 //    AdaptiveTextSelectionToolbar))`: il RenderObject di quel widget è il
 //    `Padding` che riempie l'intero overlay, quindi il suo rettangolo è lo
 //    schermo e non cambierebbe mai (stesso criterio di `_toolbarRect()` in
-//    selection_overlay_probe_test.dart). Il finder del menù resta
+//    selection_contract_test.dart). Il finder del menù resta
 //    `find.byType(AdaptiveTextSelectionToolbar)`: i pulsanti si cercano al
 //    suo interno.
 //  * "Il menù segue la nota" si esprime come INVARIANTE: la posizione del menù
@@ -48,8 +48,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 //    un eventuale ribaltamento sopra/sotto è cercato da `_scanForJumps`.
 //  * Gli helper `_wordPoint`, `_holdLongPress` & C. sono COPIE di quelli di
 //    selection_recall_test.dart: in Dart i membri con `_` sono privati al file
-//    e non si possono importare. Il file dello step A non è stato toccato, per
-//    non rischiare regressioni (requisito 7). `_holdLongPress` attende 520 ms
+//    e non si possono importare. `_holdLongPress` attende 520 ms
 //    REALI (non 560): l'app misura la durata di un tap con `DateTime.now()` e
 //    il long-press scatta a 500 ms.
 //  * `debugDefaultTargetPlatformOverride` va ripristinato DENTRO il corpo del
@@ -58,13 +57,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 //  * Dopo ogni selezione che collassa parte un Timer da 200 ms di
 //    `HapticsHelper.reportSelectionState`: ogni test lascia scorrere un
 //    secondo a fine corpo.
-//  * Le righe `PROBE|B...|` stampano i valori misurati (rettangoli, offset):
-//    se un'asserzione fallisce in CI, sono la prima cosa da leggere, insieme
-//    alle righe `TRACK|` che l'app stampa in debug.
+//  * Se un'asserzione fallisce, i messaggi riportano i rettangoli misurati
+//    (menù, selezione, viewport) e l'offset: sono la prima cosa da leggere.
+//    Cause probabili: nome del tipo dei pulsanti cambiato (`_toolbarButtonTypes`),
+//    toolbar dell'SDK diversa dalle due varianti ricordate in
+//    `_toolbarReachAbove`/`_toolbarReachBelow` (lo dice `_scanForJumps` con
+//    SCATTO), `secondaryAnchor != null` anche per il tasto destro (test 6).
 
 // Nota LUNGA: 160 paragrafi, quindi almeno 160 blocchi (con i blocchi vuoti
-// tra un paragrafo e l'altro i `MarkdownWidget` sono circa il doppio, HANDOFF
-// A.12). I blocchi in cima escono dalla `cacheExtent` della ListView appena si
+// tra un paragrafo e l'altro i `MarkdownWidget` sono circa il doppio). I
+// blocchi in cima escono dalla `cacheExtent` della ListView appena si
 // scorre di qualche migliaio di pixel: la selezione resta ad estremi smontati.
 final String _longNote = List<String>.generate(
   160,
@@ -239,11 +241,6 @@ Future<Offset?> _wordPointWithin(WidgetTester tester, Rect area) async {
       return point;
     }
   }
-  _probe(
-    'helper',
-    'nessun paragrafo con testo interamente dentro $area su $count '
-        'MarkdownWidget montati (offset=${_pixels(tester)})',
-  );
   return null;
 }
 
@@ -312,8 +309,6 @@ Rect? _selectionBox(WidgetTester tester) {
 bool _farFromEdges(Rect toolbar, Rect viewport) =>
     toolbar.top >= viewport.top + _edgeMargin + 24 &&
     toolbar.bottom <= viewport.bottom - _edgeMargin - 24;
-
-void _probe(String tag, String message) => debugPrint('PROBE|$tag|$message');
 
 /// Il menù sta INTERAMENTE dentro il viewport, con almeno `_edgeMargin` dal
 /// bordo (tolleranza 1 px).
@@ -549,7 +544,7 @@ void main() {
     MarkdownRenderedView.debugSelectionRecallCount = 0;
   });
 
-  group('Step B: il menù Copia / Seleziona tutto segue la selezione', () {
+  group('Il menù Copia / Seleziona tutto segue la selezione', () {
     testWidgets(
       '0. Precondizioni: nota lunga, menù misurabile e attaccato SOPRA la selezione',
       (tester) async {
@@ -571,7 +566,6 @@ void main() {
           expect(find.byType(AdaptiveTextSelectionToolbar), findsOneWidget);
           final toolbar = _toolbarRect(tester);
           final box = _selectionBox(tester);
-          _probe('B0', 'menù=$toolbar selezione=$box viewport=$viewport');
           expect(
             toolbar,
             isNotNull,
@@ -624,7 +618,6 @@ void main() {
           final reference = rect0.top + start;
           final toolbarElement =
               find.byType(AdaptiveTextSelectionToolbar).evaluate().single;
-          _probe('B1', 'menù=$rect0 offset=$start riferimento=$reference');
           var checked = 0;
 
           // (a) Scroll programmatico di Δ, un solo frame per volta.
@@ -695,7 +688,6 @@ void main() {
               checked++;
             }
           }
-          _probe('B1', 'inerzia: $frames frame, offset=${_pixels(tester)}');
 
           // (d) animateTo, un frame da 16 ms alla volta.
           await _scrollTo(tester, start);
@@ -755,7 +747,6 @@ void main() {
           final rect0 = _toolbarRect(tester);
           expect(rect0, isNotNull, reason: 'menù non misurabile');
           final reference = rect0!.top + start;
-          _probe('B2', 'menù=$rect0 offset=$start');
 
           // `room` = di quanto il menù può ancora salire prima di fermarsi sul
           // bordo (MISURATO, non assunto). I primi due passi restano in zona
@@ -796,10 +787,6 @@ void main() {
               _expectFollowing(tester, reference, 'offset=$offset');
               sawFollowing = true;
             }
-            _probe(
-              'B2',
-              'offset=$offset menù=$rect selezione=${_selectionBox(tester)}',
-            );
             previous = rect;
             previousPixels = _pixels(tester);
           }
@@ -870,7 +857,6 @@ void main() {
           final rect0 = _toolbarRect(tester);
           expect(rect0, isNotNull, reason: 'menù non misurabile');
           expect(box0, isNotNull);
-          _probe('B2b', 'menù=$rect0 selezione=$box0 viewport=$viewport');
           // Il primo paragrafo parte a ~24 px dal bordo alto: sopra non c'è
           // spazio per la toolbar, quindi (flip nativo) sta sotto la riga.
           expect(
@@ -941,14 +927,8 @@ void main() {
           final rect0 = _toolbarRect(tester);
           expect(rect0, isNotNull, reason: 'menù non misurabile');
           final reference = rect0!.top + selectedAt;
-          _probe('B3', 'menù=$rect0 offset=$selectedAt');
 
           await _scrollTo(tester, 0);
-          _probe(
-            'B3',
-            'in cima: selezione viva=${_selectionBox(tester)} '
-                'menù=${_toolbarRect(tester)}',
-          );
           final pinned = _toolbarRect(tester);
           expect(
             pinned,
@@ -1071,12 +1051,6 @@ void main() {
           await tester.pumpAndSettle();
 
           final selection = controller.selection;
-          _probe(
-            'B4',
-            'dopo Seleziona tutto: menù=${_toolbarRect(tester)} '
-                'selezioneViva=${_selectionBox(tester)} '
-                'visibile=${scope.toolbarIsVisible} offset=${_pixels(tester)}',
-          );
           expect(
             selection,
             isNot(equals(initial)),
@@ -1091,12 +1065,12 @@ void main() {
           );
 
           // VISIBILE: il menù deve esserci, anche se la selezione di partenza
-          // era fuori schermo (la vecchia `_keepToolbarVisibleAfterSelectAll`).
+          // era fuori schermo (`_afterSelectAll` ri-mostra il menù se sparisce).
           expect(
             scope.toolbarIsVisible,
             isTrue,
             reason: 'Seleziona tutto con partenza fuori schermo: il menù non '
-                'deve sparire (HANDOFF A.16.9)',
+                'deve sparire',
           );
           final after = _toolbarRect(tester);
           expect(after, isNotNull, reason: 'menù non misurabile dopo il tap');
@@ -1247,7 +1221,6 @@ void main() {
                 'Seleziona tutto): è il comportamento di sempre',
           );
           final before = _toolbarRect(tester);
-          _probe('B6', 'menù=$before viewport=$viewport punto=$point');
           expect(
             before,
             isNotNull,
@@ -1309,7 +1282,7 @@ void main() {
             MarkdownRenderedView.debugSelectionRecallCount,
             1,
             reason: 'il long-press sulla selezione deve far scattare il '
-                'richiamo (step A)',
+                'richiamo',
           );
           expect(controller.selection, initial, reason: 'selezione cambiata');
           expect(
