@@ -15,6 +15,7 @@ import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
 import '../../../core/services/secure_storage_service.dart';
 import '../../../core/services/sync_api_service.dart';
+import '../../../core/utils/perf_marks.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../../notes/providers/notes_provider.dart';
 import '../../settings/providers/settings_provider.dart';
@@ -145,9 +146,15 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       lastSyncTime: () => lastSyncTime,
     );
 
-    // Initial health check if server url is present
+    // Controllo di raggiungibilità iniziale, se c'è un server. Serve SOLO
+    // all'indicatore Online/Offline: né triggerSync né _runSync leggono
+    // `isOnline`, quindi non è una precondizione della sync. Attenderlo qui
+    // ritardava watchdog, impostazioni e sync di fino a 3×4 s + 2×1,5 s = 15 s
+    // su rete morta; ora parte subito, in parallelo (non lancia mai: vedi
+    // SyncApiService.checkHealth). Il caso "esito negativo tardivo dopo una
+    // sync riuscita" è gestito in [checkConnection].
     if (savedServerUrl.isNotEmpty && mounted) {
-      await checkConnection();
+      unawaited(PerfMarks.timeAsync('scripta.sync.health', checkConnection));
     }
 
     if (hasToken) {
@@ -157,11 +164,18 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // If authenticated and launch sync enabled, trigger sync & fetch remote settings
     if (hasToken && launchSync && mounted) {
       // Defer slightly to let UI settle
-      unawaited(Future.delayed(const Duration(milliseconds: 500), () async {
+      unawaited(Future.delayed(const Duration(milliseconds: 500), () {
         if (!mounted) return;
-        await fetchRemoteUserSettings();
-        if (!mounted) return;
-        await triggerSync();
+        // Impostazioni di aspetto e sync dei dati sono indipendenti (le prime
+        // non toccano note/cartelle, la seconda non legge le impostazioni):
+        // lanciarle in serie sommava le loro attese (fino a 33 s + una sync)
+        // sulla stessa rete lenta. Se le impostazioni rispondono 401 la sync
+        // fa comunque la sua richiesta e riceve lo stesso 401, che ripulisce
+        // le credenziali come prima: nessun dato locale viene toccato.
+        // Marker per DevTools (vedi PerfMarks): non cambiano il comportamento.
+        PerfMarks.instant('scripta.sync.launchRequests');
+        unawaited(PerfMarks.timeAsync('scripta.sync.settings', fetchRemoteUserSettings));
+        unawaited(PerfMarks.timeAsync('scripta.sync.firstRound', triggerSync));
       }));
     }
   }
@@ -237,6 +251,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// immediately, without requiring an app restart.
   Future<bool> checkConnection() async {
     bool isOnline = false;
+    // Ultima sync riuscita al momento della partenza: vedi sotto.
+    final lastSyncAtStart = state.lastSyncTime;
 
     for (int attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
       isOnline = await _apiService.checkHealth(state.serverUrl);
@@ -247,7 +263,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
 
     if (!mounted) return isOnline;
-    state = state.copyWith(isOnline: isOnline);
+    // All'avvio questo controllo gira IN PARALLELO alla prima sync: se mentre
+    // falliva (fino a 15 s) una sync è riuscita, il suo esito negativo è più
+    // vecchio della prova di raggiungibilità e non deve riportare
+    // l'indicatore a Offline. Un esito positivo vale sempre. Senza sync
+    // concorrenti il comportamento è quello di prima.
+    if (isOnline || state.lastSyncTime == lastSyncAtStart) {
+      state = state.copyWith(isOnline: isOnline);
+    }
     return isOnline;
   }
 
@@ -737,6 +760,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!state.isAuthenticated) return;
     final token = await _secureStorage.getAuthToken();
     if (token == null) return;
+    // Ultima sync riuscita al momento della partenza: vedi il ramo di errore.
+    final lastSyncAtStart = state.lastSyncTime;
 
     try {
       final remoteSettings = await _withNetworkRetry(
@@ -751,7 +776,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         state = state.copyWith(isAuthenticated: false);
         await _secureStorage.clearAuth();
         _stopConnectivityWatchdog();
-      } else {
+      } else if (state.lastSyncTime == lastSyncAtStart) {
+        // Se invece una sync è riuscita mentre questa richiesta falliva (all'avvio
+        // girano in parallelo), il server è raggiungibile: non si scrive Offline.
         state = state.copyWith(isOnline: false);
       }
     }

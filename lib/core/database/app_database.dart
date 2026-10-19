@@ -1,9 +1,12 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../utils/perf_marks.dart';
 
 /// Punto di accesso unico al database locale SQLite: la SINGOLA fonte di
 /// verità che la UI legge tramite i provider Riverpod (mai direttamente).
@@ -85,9 +88,34 @@ class AppDatabase {
     return _opening ??= _openOnce();
   }
 
+  /// Avvia l'apertura del database SENZA attenderla, per sovrapporla alla
+  /// lettura delle SharedPreferences che `main()` attende prima del primo
+  /// frame. Prima il database si apriva solo al primo build, quando i provider
+  /// lo leggono, e l'apertura (cartella dati + `openDatabase` + 4 PRAGMA, ognuno
+  /// un viaggio su platform channel) partiva solo allora.
+  ///
+  /// Sicura perché riusa l'apertura condivisa di [db]: il primo chiamante vero
+  /// riceve lo STESSO Future (o l'istanza già aperta) e `onCreate`/`onUpgrade`
+  /// girano identici, solo prima. Non scrive nulla di suo.
+  ///
+  /// Un errore di apertura NON diventa un'eccezione asincrona non gestita: qui
+  /// si registra e basta. [_openOnce] azzera comunque l'apertura in corso,
+  /// quindi la prima lettura vera riprova da capo e vede (e gestisce) l'errore
+  /// come prima.
+  static void warmUp() {
+    unawaited(
+      instance.db.then<void>(
+        (_) {},
+        onError: (Object e) {
+          debugPrint('AppDatabase: apertura anticipata non riuscita, si riproverà: $e');
+        },
+      ),
+    );
+  }
+
   Future<Database> _openOnce() async {
     try {
-      final database = await _open();
+      final database = await PerfMarks.timeAsync('scripta.db.open', _open);
       _db = database;
       return database;
     } finally {

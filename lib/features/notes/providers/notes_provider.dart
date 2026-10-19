@@ -20,6 +20,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/services/session_state_service.dart';
+import '../../../core/utils/perf_marks.dart';
 import '../../folders/models/folder_node.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../models/note_model.dart';
@@ -239,7 +240,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       : _dao = dao ?? NotesDao(),
         _restoreActiveNoteId = initialActiveNoteId,
         super(const NotesState()) {
-    _loadFromDb();
+    PerfMarks.timeAsync('scripta.notes.loadFromDb', _loadFromDb);
   }
 
   @override
