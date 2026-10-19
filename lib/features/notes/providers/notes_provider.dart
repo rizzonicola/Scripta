@@ -240,7 +240,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       : _dao = dao ?? NotesDao(),
         _restoreActiveNoteId = initialActiveNoteId,
         super(const NotesState()) {
-    PerfMarks.timeAsync('scripta.notes.loadFromDb', _loadFromDb);
+    PerfMarks.timeAsync('notes.load', _loadFromDb);
   }
 
   @override

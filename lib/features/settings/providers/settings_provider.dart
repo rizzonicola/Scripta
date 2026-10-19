@@ -17,42 +17,11 @@ import '../../sync/models/sync_models.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/app_settings.dart';
 
-/// Impostazioni lette da disco PRIMA del primo frame (vedi `main()`), per lo
-/// stesso motivo di `sessionSnapshotProvider`: `SettingsNotifier` partiva con i
-/// default e caricava da SharedPreferences in modo asincrono, quindi chi ha
-/// tema, font o lingua personalizzati vedeva un primo frame coi default e poi
-/// la ricostruzione di `MaterialApp` e dei due `ThemeData` (seconda volta).
-///
-/// `null` = nessuna istantanea (test, o lettura fallita in `main()`): il
-/// notifier ripiega sul caricamento asincrono di sempre.
-///
-/// CACHE: l'istantanea è solo il valore INIZIALE dello stato e non si
-/// invalida: da lì in poi vale lo stato del notifier, aggiornato come prima
-/// dai setter e da `applyRemoteSettings`. Se il dato è "vecchio" l'utente vede,
-/// al più, per qualche istante le impostazioni locali precedenti, finché le
-/// remote (che arrivano dopo ≥ 500 ms) le aggiornano come già accadeva. Non può
-/// causare perdite né sovrascritture: sono 7 preferenze di aspetto (non note né
-/// cartelle), la lettura non scrive nulla e il push al server parte solo dai
-/// setter, mai dalla costruzione dello stato.
-final settingsSnapshotProvider = Provider<AppSettings?>((ref) => null);
-
-/// Legge le impostazioni salvate, per `main()`. Non lancia mai: con preferenze
-/// illeggibili o di tipo inatteso restituisce `null` e il notifier ricade sul
-/// caricamento asincrono (che rilegge, e se il problema persiste si comporta
-/// come prima).
-Future<AppSettings?> loadSettingsSnapshot() async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    return _readSettingsFromPrefs(prefs);
-  } catch (_) {
-    return null;
-  }
-}
-
-/// Costruisce le impostazioni dalle preferenze salvate. UNICA fonte sia per
-/// [loadSettingsSnapshot] sia per il caricamento asincrono di
-/// [SettingsNotifier]: chiavi e default non possono divergere tra i due.
-AppSettings _readSettingsFromPrefs(SharedPreferences prefs) {
+/// Legge le impostazioni di aspetto da SharedPreferences. Funzione PURA e unica
+/// fonte di chiavi e valori di default: la usano sia il caricamento prima del
+/// primo frame ([loadSettingsSnapshot]) sia quello asincrono di
+/// [SettingsNotifier], così i due non possono divergere.
+AppSettings readAppSettingsFromPrefs(SharedPreferences prefs) {
   final themeStr = prefs.getString(AppConstants.prefThemeMode);
   final themeMode = themeStr == 'dark'
       ? ThemeMode.dark
@@ -87,6 +56,41 @@ AppSettings _readSettingsFromPrefs(SharedPreferences prefs) {
   );
 }
 
+/// Legge le impostazioni PRIMA del primo frame (chiamata da `main()`, come
+/// `SessionStateService.load`). Usa la stessa `SharedPreferences.getInstance()`
+/// già attesa per la sessione (l'istanza è in cache: nessun I/O in più).
+///
+/// PERCHÉ: `SettingsNotifier` è sincrono. Se partisse sempre dai default e
+/// caricasse dopo, chi ha tema, lingua o font personalizzati vedrebbe un primo
+/// frame col tema di default (flash) e poi un secondo, con due costruzioni
+/// complete dei temi e di `MaterialApp`.
+///
+/// Non lancia mai: con preferenze illeggibili restituisce `null` e il notifier
+/// ripiega sul caricamento asincrono di prima.
+Future<AppSettings?> loadSettingsSnapshot() async {
+  try {
+    return readAppSettingsFromPrefs(await SharedPreferences.getInstance());
+  } catch (_) {
+    // Nessun log: è lo stesso errore che incontrerebbe `_loadSettings`, che
+    // viene eseguito comunque quando l'istantanea manca.
+    return null;
+  }
+}
+
+/// Impostazioni lette all'avvio da `main()`. `null` (default, anche nei test
+/// senza override) = nessuna istantanea: il notifier parte dai default e
+/// carica da SharedPreferences in modo asincrono, come prima.
+///
+/// CACHE: l'istantanea è solo il valore INIZIALE dello stato e non si invalida
+/// mai: da lì in poi vale lo stato del notifier, aggiornato come prima dai
+/// setter e da `applyRemoteSettings`. Se il dato è "vecchio" l'utente vede, al
+/// più, per qualche istante le impostazioni locali precedenti, finché le
+/// remote (che arrivano dopo ≥ 500 ms) le aggiornano, come già accadeva. Non
+/// può causare perdite né sovrascritture: sono 7 preferenze di aspetto (non
+/// note né cartelle), la lettura non scrive nulla e il push al server parte
+/// solo dai setter, mai dalla costruzione dello stato.
+final settingsSnapshotProvider = Provider<AppSettings?>((ref) => null);
+
 class SettingsNotifier extends StateNotifier<AppSettings> {
   /// Attesa prima di inviare al server le impostazioni "di aspetto". Gli
   /// slider (dimensione font, interlinea) chiamano il setter a ogni
@@ -104,11 +108,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   /// scartare l'invio.
   bool _remotePushPending = false;
 
+  /// [initial]: impostazioni già lette prima del primo frame (vedi
+  /// [loadSettingsSnapshot]). Se presenti il notifier parte già dallo stato
+  /// giusto e NON ricarica (rileggerebbe gli stessi valori); se assenti carica
+  /// in modo asincrono partendo dai default, come sempre.
   SettingsNotifier([this._ref, AppSettings? initial])
       : super(initial ?? const AppSettings()) {
-    // Con l'istantanea di main() lo stato è già quello salvato: ricaricarlo
-    // dopo il primo frame produrrebbe un secondo stato (e un secondo giro di
-    // temi). Senza istantanea resta il caricamento asincrono di sempre.
     if (initial == null) _loadSettings();
   }
 
@@ -120,7 +125,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    state = _readSettingsFromPrefs(prefs);
+    state = readAppSettingsFromPrefs(prefs);
   }
 
   /// Pianifica l'invio al server dello stato CORRENTE (debounced: vince
@@ -266,8 +271,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
 final settingsProvider =
     StateNotifierProvider<SettingsNotifier, AppSettings>((ref) {
-  // `read` e non `watch`: l'istantanea è solo il valore iniziale, e non deve
-  // far ricreare il notifier (perdendo lo stato) se mai venisse sostituita.
+  // `read` e non `watch`: l'istantanea è fissata una volta all'avvio e non
+  // cambia mai; osservarla ricreerebbe il notifier (e perderebbe lo stato).
   return SettingsNotifier(ref, ref.read(settingsSnapshotProvider));
 });
 

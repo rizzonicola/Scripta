@@ -30,6 +30,10 @@ final syncApiServiceProvider = Provider<SyncApiService>((ref) {
   return SyncApiService();
 });
 
+/// Istantanea di "quanto è già riuscito" per la regola sull'indicatore
+/// Online/Offline: vedi [SyncNotifier._reachabilityMark].
+typedef _ReachabilityMark = ({int successes, DateTime? lastSync});
+
 /// Motore di sincronizzazione Local-First: Delta Sync Push/Pull con
 /// risoluzione dei conflitti Last-Write-Wins, speculare 1:1 al protocollo
 /// implementato da `SyncHandler.Sync` nel backend Go.
@@ -87,6 +91,36 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// interagire). Ora la richiesta viene ricordata e, a sync riuscita, si
   /// esegue un solo giro di recupero (vedi [triggerSync]).
   bool _resyncRequested = false;
+
+  /// Quante richieste di rete "leggere" (health check e impostazioni) sono
+  /// riuscite finora. Serve SOLO all'indicatore Online/Offline, insieme a
+  /// `lastSyncTime` (che `_runSync` aggiorna solo a giro riuscito): vedi
+  /// [_reachabilityMark].
+  int _networkSuccessCount = 0;
+
+  /// Istantanea di "quanto è già riuscito", da prendere PRIMA di inviare una
+  /// richiesta che potrebbe scrivere `isOnline: false`.
+  ///
+  /// PERCHÉ: all'avvio health check, impostazioni e sync partono insieme e
+  /// terminano in ordine imprevedibile. Un health check che fallisce dopo 15 s
+  /// non deve riportare a Offline un indicatore che nel frattempo una sync (o
+  /// un'altra richiesta) riuscita ha già messo Online: il server era
+  /// raggiungibile. Chi sta per scrivere `isOnline: false` verifica con
+  /// [_reachedServerSince]: se qualcosa è riuscito dopo la partenza della sua
+  /// richiesta, il suo esito negativo è "vecchio" e non si scrive. Un
+  /// fallimento senza alcun successo nel frattempo abbassa l'indicatore come
+  /// sempre.
+  ///
+  /// La sync si riconosce da `lastSyncTime`, che cambia solo quando un giro
+  /// riesce: così la regola non richiede NESSUNA modifica dentro `_runSync`
+  /// (LWW, `dirty`, cursore e tombstone restano intatti).
+  _ReachabilityMark _reachabilityMark() =>
+      (successes: _networkSuccessCount, lastSync: state.lastSyncTime);
+
+  /// Vero se, da quando è stata presa [mark], una richiesta è riuscita.
+  bool _reachedServerSince(_ReachabilityMark mark) =>
+      _networkSuccessCount != mark.successes ||
+      state.lastSyncTime != mark.lastSync;
 
   late final Future<void> initialized;
 
@@ -146,15 +180,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       lastSyncTime: () => lastSyncTime,
     );
 
-    // Controllo di raggiungibilità iniziale, se c'è un server. Serve SOLO
-    // all'indicatore Online/Offline: né triggerSync né _runSync leggono
-    // `isOnline`, quindi non è una precondizione della sync. Attenderlo qui
-    // ritardava watchdog, impostazioni e sync di fino a 3×4 s + 2×1,5 s = 15 s
-    // su rete morta; ora parte subito, in parallelo (non lancia mai: vedi
-    // SyncApiService.checkHealth). Il caso "esito negativo tardivo dopo una
-    // sync riuscita" è gestito in [checkConnection].
+    // Controllo di raggiungibilità iniziale (se c'è un URL): NON si attende.
+    // Prima `await checkConnection()` poteva durare fino a 15 s su rete morta
+    // (3 tentativi da 4 s + 2 pause da 1,5 s) e ritardava di altrettanto
+    // watchdog, impostazioni e sync, che non lo leggono nemmeno: l'esito serve
+    // solo all'indicatore online/offline (vedi [_reachabilityMark]).
     if (savedServerUrl.isNotEmpty && mounted) {
-      unawaited(PerfMarks.timeAsync('scripta.sync.health', checkConnection));
+      unawaited(PerfMarks.timeAsync('sync.health', checkConnection));
     }
 
     if (hasToken) {
@@ -166,16 +198,23 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // Defer slightly to let UI settle
       unawaited(Future.delayed(const Duration(milliseconds: 500), () {
         if (!mounted) return;
-        // Impostazioni di aspetto e sync dei dati sono indipendenti (le prime
-        // non toccano note/cartelle, la seconda non legge le impostazioni):
-        // lanciarle in serie sommava le loro attese (fino a 33 s + una sync)
-        // sulla stessa rete lenta. Se le impostazioni rispondono 401 la sync
-        // fa comunque la sua richiesta e riceve lo stesso 401, che ripulisce
-        // le credenziali come prima: nessun dato locale viene toccato.
+        // Indipendenti: le impostazioni cambiano solo l'aspetto, la sync solo
+        // i dati. Attendere le prime (fino a 33 s su rete morta) prima di
+        // avviare la seconda ritardava l'invio di modifiche locali senza
+        // alcun motivo. Un errore dell'una non impedisce più l'altra (prima,
+        // se il fetch delle impostazioni lanciava, la sync non partiva).
+        // Se le impostazioni rispondono 401 la sync fa comunque la sua
+        // richiesta e riceve lo stesso 401, che ripulisce le credenziali come
+        // prima: nessun dato locale viene toccato (il 401 non scrive righe).
+        //
         // Marker per DevTools (vedi PerfMarks): non cambiano il comportamento.
-        PerfMarks.instant('scripta.sync.launchRequests');
-        unawaited(PerfMarks.timeAsync('scripta.sync.settings', fetchRemoteUserSettings));
-        unawaited(PerfMarks.timeAsync('scripta.sync.firstRound', triggerSync));
+        // `launchRequests` segna il momento in cui partono insieme; per il
+        // momento esatto del POST vale il protocollo M8 (`tshark`).
+        PerfMarks.mark('sync.launchRequests');
+        unawaited(PerfMarks.timeAsync('sync.settings', fetchRemoteUserSettings));
+        // `sync.initial` copre l'intera `triggerSync`, compresi gli eventuali
+        // giri di recupero (fino a 3 giri): non è il tempo sul filo.
+        unawaited(PerfMarks.timeAsync('sync.initial', triggerSync));
       }));
     }
   }
@@ -251,8 +290,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// immediately, without requiring an app restart.
   Future<bool> checkConnection() async {
     bool isOnline = false;
-    // Ultima sync riuscita al momento della partenza: vedi sotto.
-    final lastSyncAtStart = state.lastSyncTime;
+    final mark = _reachabilityMark();
 
     for (int attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
       isOnline = await _apiService.checkHealth(state.serverUrl);
@@ -263,14 +301,16 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
 
     if (!mounted) return isOnline;
-    // All'avvio questo controllo gira IN PARALLELO alla prima sync: se mentre
-    // falliva (fino a 15 s) una sync è riuscita, il suo esito negativo è più
-    // vecchio della prova di raggiungibilità e non deve riportare
-    // l'indicatore a Offline. Un esito positivo vale sempre. Senza sync
-    // concorrenti il comportamento è quello di prima.
-    if (isOnline || state.lastSyncTime == lastSyncAtStart) {
-      state = state.copyWith(isOnline: isOnline);
+    if (isOnline) {
+      _networkSuccessCount++;
+    } else if (_reachedServerSince(mark)) {
+      // Mentre questo controllo falliva, un'altra richiesta (sync o
+      // impostazioni) è riuscita: il server era raggiungibile e l'indicatore
+      // non va riportato a Offline da un esito ormai vecchio. Il valore di
+      // ritorno resta quello del controllo.
+      return isOnline;
     }
+    state = state.copyWith(isOnline: isOnline);
     return isOnline;
   }
 
@@ -760,9 +800,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!state.isAuthenticated) return;
     final token = await _secureStorage.getAuthToken();
     if (token == null) return;
-    // Ultima sync riuscita al momento della partenza: vedi il ramo di errore.
-    final lastSyncAtStart = state.lastSyncTime;
 
+    final mark = _reachabilityMark();
     try {
       final remoteSettings = await _withNetworkRetry(
         () => _apiService.getUserSettings(
@@ -770,15 +809,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           token: token,
         ),
       );
+      _networkSuccessCount++;
       unawaited(_ref.read(settingsProvider.notifier).applyRemoteSettings(remoteSettings));
     } catch (e) {
       if (e is SyncApiException && e.statusCode == 401) {
         state = state.copyWith(isAuthenticated: false);
         await _secureStorage.clearAuth();
         _stopConnectivityWatchdog();
-      } else if (state.lastSyncTime == lastSyncAtStart) {
-        // Se invece una sync è riuscita mentre questa richiesta falliva (all'avvio
-        // girano in parallelo), il server è raggiungibile: non si scrive Offline.
+      } else if (!_reachedServerSince(mark)) {
+        // Se nel frattempo un'altra richiesta è riuscita (all'avvio gira in
+        // parallelo alla sync), questo fallimento è vecchio: vedi
+        // [_reachabilityMark].
         state = state.copyWith(isOnline: false);
       }
     }

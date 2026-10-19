@@ -4,94 +4,89 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
 
-// Apertura anticipata del database (AppDatabase.warmUp, chiamata da main()):
-// deve partire da sola, restare UNA sola apertura condivisa con chi chiede `db`
-// e, se fallisce, non lasciare un'eccezione asincrona né impedire il tentativo
-// successivo.
-
-Future<void> _waitUntil(
-  bool Function() condition, {
-  Duration timeout = const Duration(seconds: 10),
-  String reason = 'condizione non raggiunta in tempo',
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (!condition()) {
-    if (DateTime.now().isAfter(deadline)) fail(reason);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  }
-}
+// A-05 — apertura anticipata del database (`AppDatabase.warmUp`, chiamata da
+// `main()` prima di `runApp` senza attenderla).
+//
+// Garanzie che servono perché l'anticipo sia innocuo:
+//  * un'apertura anticipata e una "vera" concorrenti condividono la STESSA
+//    apertura (non due `openDatabase` in parallelo sullo stesso file);
+//  * lo schema creato è quello di sempre;
+//  * un errore dell'apertura anticipata non esce come eccezione non gestita e
+//    non impedisce il tentativo successivo, che vede il proprio esito.
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late String dbPath;
+  late Directory tempDir;
+
+  String newDbPath(String name) => p.join(tempDir.path, name);
 
   setUp(() async {
     AppDatabase.ensureFactoryInitialized();
     await AppDatabase.instance.close();
-    dbPath = p.join(
-      Directory.systemTemp.path,
-      'scripta_warmup_${DateTime.now().microsecondsSinceEpoch}.db',
-    );
-    AppDatabase.debugDatabasePathOverride = dbPath;
+    tempDir = Directory.systemTemp.createTempSync('scripta_warmup_');
+    AppDatabase.debugDatabasePathOverride = newDbPath('ok.db');
   });
 
   tearDown(() async {
     await AppDatabase.instance.close();
     AppDatabase.debugDatabasePathOverride = null;
+    try {
+      tempDir.deleteSync(recursive: true);
+    } catch (_) {
+      // Su Windows il file può restare bloccato un istante: è solo un temporaneo.
+    }
   });
 
-  test('warmUp apre il database senza che nessuno chieda `db`', () async {
-    expect(File(dbPath).existsSync(), isFalse);
+  test('warmUp e db concorrenti condividono la stessa apertura', () async {
+    final warm = AppDatabase.instance.warmUp();
+    // `db` richiesto mentre l'apertura anticipata è ancora in corso.
+    final first = AppDatabase.instance.db;
+    final second = AppDatabase.instance.db;
 
-    AppDatabase.warmUp();
+    expect(identical(first, second), isTrue,
+        reason: 'due richieste concorrenti devono ricevere lo stesso Future');
 
-    // Nessun chiamante ha letto `db`: il file compare solo se l'apertura è
-    // partita davvero da warmUp.
-    await _waitUntil(
-      () => File(dbPath).existsSync(),
-      reason: 'warmUp non ha avviato l\'apertura del database',
-    );
+    await warm;
+    final opened = await first;
+    expect(identical(opened, await AppDatabase.instance.db), isTrue);
+  });
+
+  test('warmUp avvia davvero l\'apertura: il file compare senza altre richieste di `db`', () async {
+    final path = AppDatabase.debugDatabasePathOverride!;
+    expect(File(path).existsSync(), isFalse, reason: 'premessa: nessuno ha ancora aperto il database');
+
+    await AppDatabase.instance.warmUp();
+
+    expect(File(path).existsSync(), isTrue);
+  });
+
+  test('dopo warmUp lo schema è quello di sempre', () async {
+    await AppDatabase.instance.warmUp();
 
     final db = await AppDatabase.instance.db;
-    expect(db.isOpen, isTrue);
+    final tables = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('notes', 'folders')",
+    );
+    expect(tables.map((r) => r['name']).toSet(), {'notes', 'folders'});
   });
 
-  test('warmUp e chiamanti concorrenti condividono UNA sola apertura', () async {
-    final prima = AppDatabase.instance.db;
-    AppDatabase.warmUp();
-    final dopo = AppDatabase.instance.db;
+  test('un errore di apertura anticipata non lancia e non blocca il tentativo successivo', () async {
+    // Un file che NON è un database: l'apertura fallisce al primo PRAGMA
+    // ("file is not a database"), su ogni piattaforma.
+    final broken = File(newDbPath('rotto.db'))..writeAsStringSync('questo non è un database sqlite' * 20);
+    AppDatabase.debugDatabasePathOverride = broken.path;
 
-    final risultati = await Future.wait([prima, dopo]);
-    expect(identical(risultati[0], risultati[1]), isTrue);
+    // L'apertura anticipata NON deve lanciare.
+    await AppDatabase.instance.warmUp();
 
-    // Anche una lettura successiva, a database già aperto, è la stessa istanza.
-    expect(identical(await AppDatabase.instance.db, risultati[0]), isTrue);
-  });
-
-  test('un errore di apertura anticipata non sfugge e la lettura vera riprova', () async {
-    // Il "genitore" del percorso è un FILE: il database non può essere aperto.
-    final blocco = File(p.join(
-      Directory.systemTemp.path,
-      'scripta_warmup_blocco_${DateTime.now().microsecondsSinceEpoch}',
-    ))
-      ..writeAsStringSync('non è una cartella');
-    addTearDown(() {
-      if (blocco.existsSync()) blocco.deleteSync();
-    });
-    AppDatabase.debugDatabasePathOverride = p.join(blocco.path, 'scripta.db');
-
-    // Non lancia e non produce eccezioni asincrone non gestite (altrimenti il
-    // test fallirebbe da solo).
-    AppDatabase.warmUp();
-    // `close` attende l'apertura in volo: dopo questa riga il tentativo anticipato è finito.
-    await AppDatabase.instance.close();
-
-    // La prima lettura vera ritenta davvero, e vede l'errore come prima.
+    // Il primo chiamante vero riprova da capo e vede il proprio errore
+    // (se `_opening` non fosse stato azzerato otterrebbe quello vecchio e,
+    // soprattutto, nessun nuovo tentativo sarebbe possibile).
     await expectLater(AppDatabase.instance.db, throwsA(anything));
 
-    // Rimosso l'ostacolo, il tentativo successivo riesce.
-    AppDatabase.debugDatabasePathOverride = dbPath;
+    // Risolto il problema, un nuovo tentativo riesce.
+    AppDatabase.debugDatabasePathOverride = newDbPath('sano.db');
     final db = await AppDatabase.instance.db;
     expect(db.isOpen, isTrue);
   });

@@ -1,31 +1,36 @@
-import 'dart:developer' as developer;
+import 'dart:developer' show Timeline, TimelineTask;
 
-/// Marker per DevTools → Performance (Timeline), per misurare l'avvio e le fasi
-/// di rete senza cambiare il comportamento dell'app.
+/// Marker di prestazione per DevTools → Performance (vista Timeline).
 ///
-/// PERCHÉ: nel codice non c'era alcuna strumentazione, quindi "tempo a lista
-/// utilizzabile" e le fasi di `SyncNotifier._init` non si potevano misurare
-/// senza modificare il codice a mano. Tutti i nomi iniziano con `scripta.`, così
-/// in DevTools si filtrano con quel prefisso.
+/// PERCHÉ esiste: senza marker, "tempo a lista utilizzabile" e le fasi di
+/// rete dell'avvio non si possono misurare senza modificare il codice a mano.
+/// Con questi, `flutter run --profile` + DevTools mostrano quando partono e
+/// quanto durano apertura del database, caricamento delle note, health check,
+/// impostazioni e prima sync.
 ///
-/// Solo `dart:developer`: nessuna dipendenza e nessuna stampa. I metodi non
-/// alterano i valori restituiti e le eccezioni della callback passano
-/// invariate. Fuori da una sessione di profilazione il costo atteso è il
-/// controllo di un flag nel runtime (da confermare confrontando il tempo al
-/// primo frame, protocollo M2 del REPORT_APP).
+/// Non cambia il comportamento dell'app: restituisce lo stesso valore (o
+/// rilancia lo stesso errore) di ciò che avvolge, non scrive su console e non
+/// usa dipendenze. Fuori da una sessione di profiling gli eventi non vengono
+/// registrati; il costo residuo è una chiamata per evento (IPOTESI: il
+/// controllo di un flag nel runtime. Da confermare confrontando il tempo al
+/// primo frame, protocollo M2 del REPORT_APP, con e senza marker).
 class PerfMarks {
   const PerfMarks._();
 
-  /// Evento istantaneo: un punto sulla timeline.
-  static void instant(String name) => developer.Timeline.instantSync(name);
+  /// Prefisso comune: in DevTools basta filtrare per "scripta." per vedere
+  /// solo questi eventi.
+  static const String _prefix = 'scripta.';
 
-  /// Intervallo asincrono: dall'avvio di [body] al suo completamento, con
-  /// valore o con errore. Restituisce il risultato di [body] e ne rilancia
-  /// l'eventuale errore senza modificarlo (anche se [body] lancia in modo
-  /// sincrono).
+  /// Evento istantaneo: "qui è successo X" (es. subito prima di `runApp`).
+  static void mark(String name) => Timeline.instantSync('$_prefix$name');
+
+  /// Esegue [body] dentro un intervallo con durata. Adatto alle fasi
+  /// ASINCRONE (apertura DB, richieste di rete), dove `Timeline.timeSync`
+  /// non basterebbe perché misurerebbe solo la parte sincrona. L'intervallo
+  /// si chiude anche se [body] lancia, e l'errore arriva al chiamante
+  /// invariato.
   static Future<T> timeAsync<T>(String name, Future<T> Function() body) async {
-    final task = developer.TimelineTask();
-    task.start(name);
+    final task = TimelineTask()..start('$_prefix$name');
     try {
       return await body();
     } finally {

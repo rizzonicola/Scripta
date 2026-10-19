@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
@@ -24,11 +26,11 @@ void main() async {
   // costruttore, eseguito alla prima lettura del provider).
   AppDatabase.ensureFactoryInitialized();
 
-  // Apre il database ORA, in parallelo alla lettura delle preferenze più sotto
-  // (unico `await` prima del primo frame): quando i provider lo chiederanno
-  // sarà già aperto o a metà strada. Non attende e non propaga errori: vedi
-  // AppDatabase.warmUp. Va DOPO la riga sopra, che sceglie il factory.
-  AppDatabase.warmUp();
+  // Apre il database SUBITO, in parallelo alla lettura delle preferenze qui
+  // sotto, senza attenderlo: la lista note non deve aspettare che l'apertura
+  // parta solo al primo build. Non lancia mai; un errore lo rivede (e riprova)
+  // il primo chiamante vero di `AppDatabase.db`.
+  unawaited(AppDatabase.instance.warmUp());
 
   // Listener globale per il fullscreen "di sistema" (F11): registrato a
   // livello di HardwareKeyboard, quindi prima di runApp, così funziona
@@ -42,14 +44,15 @@ void main() async {
   // il default (vedi SessionStateService.load).
   final session = await SessionStateService.load();
 
-  // Impostazioni (tema, font, lingua, aptica), lette come la sessione PRIMA del
-  // primo frame: il primo build usa già quelle salvate invece dei default.
-  // `SharedPreferences.getInstance()` è memoizzato dal pacchetto, quindi dopo
-  // la riga precedente non c'è altro I/O. Non lancia mai (vedi la funzione).
+  // Impostazioni di aspetto (tema, lingua, font), pure prima del primo frame:
+  // la `SharedPreferences.getInstance()` è già in cache, quindi nessun I/O in
+  // più. Senza, chi le ha personalizzate vedrebbe un frame col tema di default
+  // e poi un secondo, con due costruzioni dei temi. Non lancia mai.
   final settings = await loadSettingsSnapshot();
 
-  // Fine dell'unico lavoro prima del primo frame (vedi PerfMarks).
-  PerfMarks.instant('scripta.main.beforeRunApp');
+  // Fine dell'avvio "bloccante": da qui al primo frame resta solo il lavoro
+  // del framework (vedi DevTools → Performance, filtro "scripta.").
+  PerfMarks.mark('main.beforeRunApp');
 
   runApp(
     ProviderScope(

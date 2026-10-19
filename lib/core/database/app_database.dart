@@ -1,4 +1,3 @@
-import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, visibleForTesting;
@@ -88,34 +87,31 @@ class AppDatabase {
     return _opening ??= _openOnce();
   }
 
-  /// Avvia l'apertura del database SENZA attenderla, per sovrapporla alla
-  /// lettura delle SharedPreferences che `main()` attende prima del primo
-  /// frame. Prima il database si apriva solo al primo build, quando i provider
-  /// lo leggono, e l'apertura (cartella dati + `openDatabase` + 4 PRAGMA, ognuno
-  /// un viaggio su platform channel) partiva solo allora.
+  /// Avvia l'apertura del database e NON propaga mai l'errore.
   ///
-  /// Sicura perché riusa l'apertura condivisa di [db]: il primo chiamante vero
-  /// riceve lo STESSO Future (o l'istanza già aperta) e `onCreate`/`onUpgrade`
-  /// girano identici, solo prima. Non scrive nulla di suo.
+  /// PERCHÉ: `main()` lo chiama prima di `runApp`, senza attenderlo, così
+  /// l'apertura (cartella dati + `openDatabase` + 4 PRAGMA, ognuno un viaggio
+  /// su platform channel) si sovrappone alla lettura delle SharedPreferences e
+  /// al primo frame invece di partire solo al primo build dei provider. Il
+  /// lavoro è identico (stesse `onCreate`/`onUpgrade`), solo anticipato; non
+  /// scrive nulla di suo.
   ///
-  /// Un errore di apertura NON diventa un'eccezione asincrona non gestita: qui
-  /// si registra e basta. [_openOnce] azzera comunque l'apertura in corso,
-  /// quindi la prima lettura vera riprova da capo e vede (e gestisce) l'errore
-  /// come prima.
-  static void warmUp() {
-    unawaited(
-      instance.db.then<void>(
-        (_) {},
-        onError: (Object e) {
-          debugPrint('AppDatabase: apertura anticipata non riuscita, si riproverà: $e');
-        },
-      ),
-    );
+  /// Se l'apertura fallisce qui, l'errore non va perso né diventare
+  /// un'eccezione non gestita all'avvio: [_openOnce] azzera `_opening`, quindi
+  /// il primo chiamante vero di [db] riprova da capo e vede il SUO errore.
+  Future<void> warmUp() async {
+    try {
+      await db;
+    } catch (e) {
+      // Vedi sopra: il chiamante successivo di `db` riprova e lo riceve. Qui
+      // basta una traccia per chi guarda il log all'avvio.
+      debugPrint('AppDatabase.warmUp: apertura anticipata fallita ($e); riproverà il primo chiamante di db.');
+    }
   }
 
   Future<Database> _openOnce() async {
     try {
-      final database = await PerfMarks.timeAsync('scripta.db.open', _open);
+      final database = await PerfMarks.timeAsync('db.open', _open);
       _db = database;
       return database;
     } finally {
