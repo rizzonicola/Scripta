@@ -1,6 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../theme/color_schemes.dart';
+
 /// Voce di un menu contestuale (tasto destro / pulsante "...").
 class ContextMenuEntry {
   final String label;
@@ -75,23 +77,22 @@ Future<void> showContextMenu(
     }
     if (e.isHeader) {
       items.add(PopupMenuItem<int>(
-        enabled: false,
-        height: 28,
-        child: Text(
-          e.label,
-          style: theme.textTheme.labelSmall?.copyWith(
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.4,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
-          ),
-        ),
-      ));
+          enabled: false,
+          height: 28,
+          child: Text(
+            e.label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+              color: theme.mutedTextColor,
+            ),
+          )));
       continue;
     }
-    final color = e.isDestructive ? Colors.red.shade400 : null;
+    final color = e.isDestructive ? theme.dangerColor : null;
     items.add(PopupMenuItem<int>(
       value: i,
-      height: 38,
+      height: 44,
       enabled: e.onSelected != null,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 200),
@@ -115,8 +116,8 @@ Future<void> showContextMenu(
               Text(
                 e.shortcut!,
                 style: TextStyle(
-                  fontSize: 11,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  fontSize: 12,
+                  color: theme.subtleTextColor,
                 ),
               ),
             ],

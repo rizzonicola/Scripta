@@ -168,7 +168,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     // sincronamente DURANTE il build di questo widget rischierebbe un
     // "setState durante il build" in quel campo — `ref.listen` esegue
     // invece il callback subito DOPO che il build corrente è completato.
-    ref.listen<NoteSearchHighlightData>(noteSearchHighlightDataProvider, (previous, next) {
+    ref.listen<NoteSearchHighlightData>(noteSearchHighlightDataProvider,
+        (previous, next) {
       _contentController.setMatches(next.$1, next.$2);
     });
 
@@ -182,8 +183,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     // non visibile — non c'è alcuna garanzia sincrona che quel listener
     // abbia già propagato l'aggiornamento nel momento esatto in cui si
     // passa a "Modifica" e il campo di testo torna a montarsi. Questo
-    // controllo, eseguito ad ogni build PRIMA che l'AnimatedSwitcher scelga
-    // quale ramo costruire, elimina quella finestra: se `activeNoteId` e
+    // controllo, eseguito ad ogni build PRIMA che il ramo Modifica/Lettura
+    // venga scelto, elimina quella finestra: se `activeNoteId` e
     // `_currentNoteId` sono già allineati (il caso comune) è un no-op.
     if (activeNoteId != _currentNoteId) {
       _syncControllersToNoteId(activeNoteId);
@@ -197,7 +198,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _ensureControllersMatchNote(activeNoteId);
     }
     final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
-    final isNoteSearchActive = ref.watch(noteSearchProvider.select((s) => s.isActive));
+    final isNoteSearchActive =
+        ref.watch(noteSearchProvider.select((s) => s.isActive));
     final activeSearchMatch = ref.watch(activeNoteSearchMatchProvider);
 
     final l10n = AppLocalizations.of(context);
@@ -279,13 +281,16 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               () => MarkdownToolbarActions.insertLink(_contentController),
             ),
         editorActivatorFor(EditorCommand.heading1): () => formatShortcut(
-              () => MarkdownToolbarActions.prependLine(_contentController, '# '),
+              () =>
+                  MarkdownToolbarActions.prependLine(_contentController, '# '),
             ),
         editorActivatorFor(EditorCommand.heading2): () => formatShortcut(
-              () => MarkdownToolbarActions.prependLine(_contentController, '## '),
+              () =>
+                  MarkdownToolbarActions.prependLine(_contentController, '## '),
             ),
         editorActivatorFor(EditorCommand.heading3): () => formatShortcut(
-              () => MarkdownToolbarActions.prependLine(_contentController, '### '),
+              () => MarkdownToolbarActions.prependLine(
+                  _contentController, '### '),
             ),
       },
     };
@@ -293,72 +298,58 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     return CallbackShortcuts(
       bindings: formattingBindings,
       child: Stack(
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Barra di ricerca interna alla nota (vedi note_search_bar.dart):
-            // funziona identicamente sopra a entrambe le modalità sotto,
-            // quindi vive qui, fuori dall'AnimatedSwitcher Modifica/Lettura.
-            if (isNoteSearchActive) const NoteSearchBar(),
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Barra di ricerca interna alla nota (vedi note_search_bar.dart):
+              // funziona identicamente sopra a entrambe le modalità sotto,
+              // quindi vive qui, fuori dal ramo Modifica/Lettura.
+              if (isNoteSearchActive) const NoteSearchBar(),
 
-            // Toolbar (visible only in Edit Mode when NOT in Focus Mode)
-            if (editorMode == EditorMode.edit && !isFocusMode) ...[
-              MarkdownToolbar(
-                contentController: _contentController,
-                undoController: _undoController,
-                onContentChanged: handleContentChanged,
-              ),
-            ],
+              // Toolbar (visible only in Edit Mode when NOT in Focus Mode)
+              if (editorMode == EditorMode.edit && !isFocusMode) ...[
+                MarkdownToolbar(
+                  contentController: _contentController,
+                  undoController: _undoController,
+                  onContentChanged: handleContentChanged,
+                ),
+              ],
 
-            // Content Area: Either Rendered View (Read-Only) or Editable Text Field (Edit)
-            Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
+              // Content Area: Either Rendered View (Read-Only) or Editable Text Field (Edit)
+              Expanded(
                 child: editorMode == EditorMode.readOnly
-                    ? const KeyedSubtree(
-                        key: ValueKey('readOnlyMode'),
-                        child: _ReadOnlyNoteView(),
-                      )
-                    : KeyedSubtree(
-                        key: const ValueKey('editMode'),
-                        child: MarkdownEditorField(
-                          // Un campo di modifica NUOVO per ogni nota: stack
-                          // di undo, scroll e stato interno non "sanguinano"
-                          // da una nota all'altra. La chiave sta dentro il
-                          // KeyedSubtree, quindi l'AnimatedSwitcher non fa
-                          // dissolvenza al cambio nota.
-                          key: ValueKey('editor-$activeNoteId'),
-                          titleController: _titleController,
-                          contentController: _contentController,
-                          undoController: _undoController,
-                          contentFocusNode: _contentFocusNode,
-                          activeSearchMatch: activeSearchMatch,
-                          onTitleChanged: (val) {
-                            ref.read(notesProvider.notifier).updateNote(
-                                  activeNoteId,
-                                  title: val,
-                                );
-                            ref
-                                .read(syncProvider.notifier)
-                                .notifyEditorActivity();
-                          },
-                          onContentChanged: handleContentChanged,
-                        ),
+                    ? const _ReadOnlyNoteView()
+                    : MarkdownEditorField(
+                        key: ValueKey('editor-$activeNoteId'),
+                        titleController: _titleController,
+                        contentController: _contentController,
+                        undoController: _undoController,
+                        contentFocusNode: _contentFocusNode,
+                        activeSearchMatch: activeSearchMatch,
+                        onTitleChanged: (val) {
+                          ref.read(notesProvider.notifier).updateNote(
+                                activeNoteId,
+                                title: val,
+                              );
+                          ref
+                              .read(syncProvider.notifier)
+                              .notifyEditorActivity();
+                        },
+                        onContentChanged: handleContentChanged,
                       ),
               ),
-            ),
-          ],
-        ),
-
-        // Discrete Floating Exit Button when in Focus Mode
-        if (isFocusMode)
-          const Positioned(
-            top: 24,
-            right: 24,
-            child: FocusModeExitButton(),
+            ],
           ),
-      ],
+
+          // Discrete Floating Exit Button when in Focus Mode
+          if (isFocusMode)
+            const Positioned(
+              top: 24,
+              right: 24,
+              child: FocusModeExitButton(),
+            ),
+        ],
       ),
     );
   }
@@ -407,4 +398,3 @@ class _ReadOnlyNoteView extends ConsumerWidget {
     );
   }
 }
-

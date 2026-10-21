@@ -42,7 +42,7 @@ class AppThemePalettes {
     surface: Color(0xFF20242A),
     surfaceElevated: Color(0xFF282D35),
     border: Color(0xFF323842),
-    primary: Color(0xFF2DD4BF),      // Verde Acqua / Teal
+    primary: Color(0xFF2DD4BF), // Verde Acqua / Teal
     primaryHover: Color(0xFF5EEAD4),
     accent: Color(0xFF0D9488),
     textPrimary: Color(0xFFF1F5F9),
@@ -55,11 +55,11 @@ class AppThemePalettes {
     id: 'oled',
     name: 'OLED Pure Black',
     brightness: Brightness.dark,
-    background: Color(0xFF000000),   // Pure Black
+    background: Color(0xFF000000), // Pure Black
     surface: Color(0xFF0D0F12),
     surfaceElevated: Color(0xFF16181D),
     border: Color(0xFF252A32),
-    primary: Color(0xFF2DD4BF),      // Neon Teal
+    primary: Color(0xFF2DD4BF), // Neon Teal
     primaryHover: Color(0xFF5EEAD4),
     accent: Color(0xFF14B8A6),
     textPrimary: Color(0xFFFFFFFF),
@@ -76,7 +76,7 @@ class AppThemePalettes {
     surface: Color(0xFF2E3440),
     surfaceElevated: Color(0xFF3B4252),
     border: Color(0xFF434C5E),
-    primary: Color(0xFF88C0D0),      // Frost Blue
+    primary: Color(0xFF88C0D0), // Frost Blue
     primaryHover: Color(0xFF81A1C1),
     accent: Color(0xFF8FBCBB),
     textPrimary: Color(0xFFECEFF4),
@@ -93,7 +93,7 @@ class AppThemePalettes {
     surface: Color(0xFF1B1827),
     surfaceElevated: Color(0xFF242034),
     border: Color(0xFF352F4B),
-    primary: Color(0xFFA78BFA),      // Iris Purple
+    primary: Color(0xFFA78BFA), // Iris Purple
     primaryHover: Color(0xFFC4B5FD),
     accent: Color(0xFF818CF8),
     textPrimary: Color(0xFFF5F3FF),
@@ -110,7 +110,7 @@ class AppThemePalettes {
     surface: Color(0xFF1A221E),
     surfaceElevated: Color(0xFF232D28),
     border: Color(0xFF2E3B34),
-    primary: Color(0xFF34D399),      // Emerald Sage
+    primary: Color(0xFF34D399), // Emerald Sage
     primaryHover: Color(0xFF6EE7B7),
     accent: Color(0xFF10B981),
     textPrimary: Color(0xFFECFDF5),
@@ -127,7 +127,7 @@ class AppThemePalettes {
     surface: Color(0xFF211C19),
     surfaceElevated: Color(0xFF2C2622),
     border: Color(0xFF3B342E),
-    primary: Color(0xFFF59E0B),      // Amber
+    primary: Color(0xFFF59E0B), // Amber
     primaryHover: Color(0xFFFBBF24),
     accent: Color(0xFFD97706),
     textPrimary: Color(0xFFFFFBEB),
@@ -144,7 +144,7 @@ class AppThemePalettes {
     surface: Color(0xFFFFFFFF),
     surfaceElevated: Color(0xFFF1F5F9),
     border: Color(0xFFE2E8F0),
-    primary: Color(0xFF0D9488),      // Deep Teal
+    primary: Color(0xFF0D9488), // Deep Teal
     primaryHover: Color(0xFF0F766E),
     accent: Color(0xFF14B8A6),
     textPrimary: Color(0xFF0F172A),
@@ -161,7 +161,7 @@ class AppThemePalettes {
     surface: Color(0xFFEEE8D5),
     surfaceElevated: Color(0xFFE4DEC9),
     border: Color(0xFFD3C7AE),
-    primary: Color(0xFF2AA198),      // Solarized Teal
+    primary: Color(0xFF2AA198), // Solarized Teal
     primaryHover: Color(0xFF268BD2),
     accent: Color(0xFFB58900),
     textPrimary: Color(0xFF073642),
@@ -180,7 +180,8 @@ class AppThemePalettes {
     solarizedLight,
   ];
 
-  static AppThemePalette getById(String? id, {required Brightness fallbackBrightness}) {
+  static AppThemePalette getById(String? id,
+      {required Brightness fallbackBrightness}) {
     if (id != null) {
       for (final p in all) {
         if (p.id == id) return p;
@@ -194,4 +195,25 @@ extension ScriptaThemeExtension on ThemeData {
   Color get surfaceElevated {
     return colorScheme.surfaceContainerHighest;
   }
+
+  /// Verde leggibile sia su superfici chiare sia su quelle scure.
+  Color get successColor => brightness == Brightness.dark
+      ? const Color(0xFF34D399)
+      : const Color(0xFF047857);
+
+  /// Ambra per stati di avviso (offline, sync in attesa).
+  Color get warningColor => brightness == Brightness.dark
+      ? const Color(0xFFFBBF24)
+      : const Color(0xFFB45309);
+
+  /// Rosso per errori testuali e azioni distruttive.
+  Color get dangerColor => brightness == Brightness.dark
+      ? const Color(0xFFF87171)
+      : const Color(0xFFB91C1C);
+
+  /// Testo secondario con contrasto AA anche nelle palette chiare.
+  Color get mutedTextColor => colorScheme.onSurface.withValues(alpha: 0.68);
+
+  /// Testo terziario: abbastanza scuro da restare leggibile, ma più quieto.
+  Color get subtleTextColor => colorScheme.onSurface.withValues(alpha: 0.58);
 }

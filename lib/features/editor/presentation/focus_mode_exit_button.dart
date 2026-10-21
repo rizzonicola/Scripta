@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../providers/editor_provider.dart';
 
 class FocusModeExitButton extends ConsumerStatefulWidget {
@@ -13,6 +14,7 @@ class FocusModeExitButton extends ConsumerStatefulWidget {
 
 class _FocusModeExitButtonState extends ConsumerState<FocusModeExitButton> {
   bool _isHovered = false;
+  bool _hasFocus = false;
 
   @override
   Widget build(BuildContext context) {
@@ -24,8 +26,9 @@ class _FocusModeExitButtonState extends ConsumerState<FocusModeExitButton> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 250),
-        opacity: _isHovered ? 1.0 : 0.35,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        opacity: !isDesktopPlatform || _isHovered || _hasFocus ? 1.0 : 0.35,
         child: Tooltip(
           message: l10n.exitFocusMode,
           child: Material(
@@ -34,6 +37,8 @@ class _FocusModeExitButtonState extends ConsumerState<FocusModeExitButton> {
             color: isDark ? const Color(0xFF222533) : Colors.white,
             child: InkWell(
               customBorder: const CircleBorder(),
+              focusColor: theme.colorScheme.primary.withValues(alpha: 0.16),
+              onFocusChange: (value) => setState(() => _hasFocus = value),
               onTap: () {
                 ref.read(editorProvider.notifier).exitFocusMode();
               },

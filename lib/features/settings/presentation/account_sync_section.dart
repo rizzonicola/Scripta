@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/theme/color_schemes.dart';
 import '../../sync/providers/sync_provider.dart';
 
 class AccountSyncSection extends ConsumerStatefulWidget {
@@ -115,8 +116,8 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 Text(
                   '${l10n.lastSync}: ${_formatTimestamp(syncConfig.lastSyncTime, l10n.never)}',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
-                    fontSize: 11,
+                    color: theme.mutedTextColor,
+                    fontSize: 12,
                   ),
                 ),
               ],
@@ -144,7 +145,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                         syncConfig.lastSyncMessage!,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.primary,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -160,26 +161,26 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.1),
+                  color: theme.dangerColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: Colors.red.withValues(alpha: 0.3),
+                    color: theme.dangerColor.withValues(alpha: 0.35),
                   ),
                 ),
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.error_outline_rounded,
                       size: 14,
-                      color: Colors.redAccent,
+                      color: theme.dangerColor,
                     ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         syncConfig.lastError!,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: Colors.redAccent,
-                          fontSize: 11,
+                          color: theme.dangerColor,
+                          fontSize: 12,
                         ),
                       ),
                     ),
@@ -236,9 +237,9 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                     icon: const Icon(Icons.logout_rounded, size: 16),
                     label: Text(l10n.disconnect),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.redAccent,
+                      foregroundColor: theme.dangerColor,
                       side: BorderSide(
-                        color: Colors.redAccent.withValues(alpha: 0.5),
+                        color: theme.dangerColor.withValues(alpha: 0.5),
                       ),
                     ),
                     onPressed: () {
@@ -288,8 +289,8 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                   labelText: l10n.passwordLabel,
                   prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20),
                   border: const OutlineInputBorder(),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   suffixIcon: IconButton(
                     icon: Icon(
                       _obscurePassword
@@ -319,9 +320,8 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                           ),
                         )
                       : const Icon(Icons.login_rounded, size: 18),
-                  label: Text(syncConfig.isSyncing
-                      ? l10n.syncing
-                      : l10n.connectLogin),
+                  label: Text(
+                      syncConfig.isSyncing ? l10n.syncing : l10n.connectLogin),
                   onPressed: syncConfig.isSyncing
                       ? null
                       : () async {
@@ -377,11 +377,10 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
 
     final Color badgeColor = isSyncing
         ? theme.colorScheme.primary
-        : (isOnline ? const Color(0xFF10B981) : const Color(0xFF94A3B8));
+        : (isOnline ? theme.successColor : theme.warningColor);
 
-    final String statusText = isSyncing
-        ? l10n.syncing
-        : (isOnline ? l10n.online : l10n.offline);
+    final String statusText =
+        isSyncing ? l10n.syncing : (isOnline ? l10n.online : l10n.offline);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -409,7 +408,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
             style: TextStyle(
               color: badgeColor,
               fontWeight: FontWeight.bold,
-              fontSize: 11,
+              fontSize: 12,
             ),
           ),
         ],
@@ -472,21 +471,22 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                           )
                         : const Icon(Icons.sync_rounded, size: 16),
                     label: Text(l10n.syncNow),
-                    onPressed: (syncConfig.isAuthenticated && !syncConfig.isSyncing)
-                        ? () async {
-                            final success = await notifier.triggerSync();
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(success
-                                      ? l10n.syncSuccess
-                                      : l10n.syncFailed),
-                                  behavior: SnackBarBehavior.floating,
-                                ),
-                              );
-                            }
-                          }
-                        : null,
+                    onPressed:
+                        (syncConfig.isAuthenticated && !syncConfig.isSyncing)
+                            ? () async {
+                                final success = await notifier.triggerSync();
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(success
+                                          ? l10n.syncSuccess
+                                          : l10n.syncFailed),
+                                      behavior: SnackBarBehavior.floating,
+                                    ),
+                                  );
+                                }
+                              }
+                            : null,
                   ),
                 ],
               ),
@@ -550,7 +550,8 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
 
             if (syncConfig.syncOnInactivity) ...[
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -596,9 +597,8 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                       child: Text(
                         l10n.inactivityMinDefault,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.5),
-                          fontSize: 10,
+                          color: theme.mutedTextColor,
+                          fontSize: 12,
                         ),
                       ),
                     ),

@@ -113,11 +113,12 @@ class _CodeBlockWithCopyState extends State<CodeBlockWithCopy> {
                       const SizedBox(width: 2),
                     ],
                     IconButton(
-                      tooltip: MaterialLocalizations.of(context).copyButtonLabel,
+                      tooltip:
+                          MaterialLocalizations.of(context).copyButtonLabel,
                       iconSize: 16,
                       padding: EdgeInsets.zero,
                       constraints:
-                          const BoxConstraints.tightFor(width: 32, height: 32),
+                          const BoxConstraints.tightFor(width: 44, height: 44),
                       visualDensity: VisualDensity.compact,
                       color: _copied ? theme.colorScheme.primary : muted,
                       onPressed: _copy,

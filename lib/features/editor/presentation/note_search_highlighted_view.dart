@@ -63,8 +63,8 @@ class _NoteSearchHighlightedViewState
       Scrollable.ensureVisible(
         matchContext,
         alignment: 0.3,
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeInOut,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
       );
     });
   }
@@ -90,8 +90,9 @@ class _NoteSearchHighlightedViewState
 
     final matches = ref.watch(noteSearchMatchesProvider);
     final activeIndex = ref.watch(noteSearchActiveMatchIndexProvider);
-    final activeMatch =
-        (activeIndex >= 0 && activeIndex < matches.length) ? matches[activeIndex] : null;
+    final activeMatch = (activeIndex >= 0 && activeIndex < matches.length)
+        ? matches[activeIndex]
+        : null;
 
     _scheduleScrollIfNeeded(activeMatch);
 
@@ -103,7 +104,8 @@ class _NoteSearchHighlightedViewState
     );
 
     final normalHighlight =
-        (isDark ? Colors.amber.shade700 : Colors.amber.shade300).withValues(alpha: 0.55);
+        (isDark ? Colors.amber.shade700 : Colors.amber.shade300)
+            .withValues(alpha: 0.55);
     const activeHighlight = Color(0xFFFB923C); // Orange 400, alto contrasto
 
     final text = widget.content;
@@ -117,7 +119,8 @@ class _NoteSearchHighlightedViewState
       if (start >= end) continue;
 
       if (start > cursor) {
-        spans.add(TextSpan(text: text.substring(cursor, start), style: baseStyle));
+        spans.add(
+            TextSpan(text: text.substring(cursor, start), style: baseStyle));
       }
 
       final matchText = text.substring(start, end);
@@ -130,7 +133,8 @@ class _NoteSearchHighlightedViewState
             color: activeHighlight,
             child: Text(
               matchText,
-              style: baseStyle.copyWith(color: Colors.black, fontWeight: FontWeight.w700),
+              style: baseStyle.copyWith(
+                  color: Colors.black, fontWeight: FontWeight.w700),
             ),
           ),
         ));

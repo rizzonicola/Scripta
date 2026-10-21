@@ -47,7 +47,8 @@ class NoteCard extends ConsumerWidget {
 
   /// Dialog "Sposta in cartella": pubblico perché usato anche dal menu
   /// contestuale e dalla scorciatoia Ctrl+Shift+M.
-  static void showMoveNoteDialog(BuildContext context, WidgetRef ref, NoteModel note) {
+  static void showMoveNoteDialog(
+      BuildContext context, WidgetRef ref, NoteModel note) {
     // Notifier e messenger si leggono PRIMA di aprire il dialog: dopo la
     // scelta non si usa più `ref`/`context` (la card potrebbe nel frattempo
     // essere stata ricostruita o rimossa dalla lista).
@@ -187,13 +188,13 @@ class NoteCard extends ConsumerWidget {
       child: Material(
         color: isSelected
             ? theme.colorScheme.primary.withValues(alpha: 0.12)
-            : (isDark
-                ? theme.colorScheme.surface
-                : theme.surfaceElevated),
+            : (isDark ? theme.colorScheme.surface : theme.surfaceElevated),
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(12),
+          focusColor: theme.colorScheme.primary.withValues(alpha: 0.12),
+          hoverColor: theme.colorScheme.primary.withValues(alpha: 0.05),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -250,8 +251,8 @@ class NoteCard extends ConsumerWidget {
                               Localizations.localeOf(context).toString(),
                             ),
                             style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                              fontSize: 11,
+                              color: theme.mutedTextColor,
+                              fontSize: 12,
                             ),
                           ),
                         ],
@@ -262,8 +263,8 @@ class NoteCard extends ConsumerWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                          height: 1.3,
+                          color: theme.mutedTextColor,
+                          height: 1.35,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -276,13 +277,13 @@ class NoteCard extends ConsumerWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
-                                fontSize: 10,
+                                color: theme.mutedTextColor,
+                                fontSize: 12,
                               ),
                             ),
                           ),
                           const SizedBox(width: 4),
-                          _NoteCardActions(note: note),
+                          _NoteCardMenuButton(note: note),
                         ],
                       ),
                     ],
@@ -301,77 +302,33 @@ class NoteCard extends ConsumerWidget {
   }
 }
 
-/// Pulsanti rapidi in fondo alla card: fissa, sposta, esporta, elimina.
-class _NoteCardActions extends ConsumerWidget {
-  const _NoteCardActions({required this.note});
+class _NoteCardMenuButton extends ConsumerWidget {
+  const _NoteCardMenuButton({required this.note});
 
   final NoteModel note;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: Icon(
-            note.isPinned
-                ? Icons.push_pin_rounded
-                : Icons.push_pin_outlined,
-            size: 14,
-            color: note.isPinned
-                ? theme.colorScheme.primary
-                : theme.colorScheme.onSurface.withValues(alpha: 0.4),
-          ),
-          visualDensity: VisualDensity.compact,
-          splashRadius: 12,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-          onPressed: () => ref
-              .read(notesProvider.notifier)
-              .togglePin(note.id),
+    return Builder(
+      builder: (buttonContext) => IconButton(
+        icon: Icon(
+          Icons.more_horiz_rounded,
+          size: 18,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
         ),
-        IconButton(
-          icon: Icon(
-            Icons.drive_file_move_outlined,
-            size: 15,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-          ),
-          tooltip: 'Sposta in un\'altra cartella',
-          visualDensity: VisualDensity.compact,
-          splashRadius: 12,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-          onPressed: () => NoteCard.showMoveNoteDialog(context, ref, note),
-        ),
-        IconButton(
-          icon: Icon(
-            Icons.file_download_outlined,
-            size: 15,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-          ),
-          tooltip: 'Esporta come Markdown (.md)',
-          visualDensity: VisualDensity.compact,
-          splashRadius: 12,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-          onPressed: () => ExportService.exportNoteAsMarkdown(context, note),
-        ),
-        const SizedBox(width: 8),
-        IconButton(
-          icon: Icon(
-            Icons.delete_outline_rounded,
-            size: 14,
-            color: Colors.red.withValues(alpha: 0.7),
-          ),
-          visualDensity: VisualDensity.compact,
-          splashRadius: 12,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-          onPressed: () => NoteCard.confirmDelete(context, ref, l10n, note),
-        ),
-      ],
+        tooltip: MaterialLocalizations.of(context).showMenuTooltip,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+        onPressed: () {
+          final box = buttonContext.findRenderObject() as RenderBox;
+          showContextMenu(
+            buttonContext,
+            box.localToGlobal(Offset(0, box.size.height)),
+            NoteCard.contextMenuEntries(buttonContext, ref, note),
+          );
+        },
+      ),
     );
   }
 }

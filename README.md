@@ -7,7 +7,7 @@
   **Minimal. Fast. Markdown-First.**  
   *The modern, distraction-free note-taking experience for all your devices.*
 
-  [![Flutter](https://img.shields.io/badge/Flutter-3.41-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
+  [![Flutter](https://img.shields.io/badge/Flutter-3.44-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
   [![Platforms](https://img.shields.io/badge/Platforms-Android%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20iOS-2E7D32)](#-supported-platforms)
   [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
   [![Local-First](https://img.shields.io/badge/Architecture-Local--First-orange)](#)
@@ -76,6 +76,8 @@ Scripta is engineered as a native multi-platform application with full support a
 Download the latest version for your platform directly from the [Releases](https://github.com/rizzonicola/Scripta/releases) page.
 
 For development instructions or building from source:
+
+> **Toolchain:** Flutter 3.44+ (Dart 3.12+). On NixOS, `nix develop` provides the pinned Flutter 3.44.4 environment.
 
 ```bash
 # Clone the repository

@@ -7,7 +7,8 @@ import '../../../core/utils/app_commands.dart';
 import '../../../core/utils/focus_requests.dart';
 import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/context_menu.dart';
-import '../../folders/presentation/folder_dialogs.dart' show showAddFolderDialog;
+import '../../folders/presentation/folder_dialogs.dart'
+    show showAddFolderDialog;
 import '../../../core/theme/color_schemes.dart';
 import '../../editor/providers/note_search_provider.dart';
 import '../../folders/providers/folder_provider.dart';
@@ -81,7 +82,8 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     widget.onNoteSelected?.call(note);
   }
 
-  Widget _buildSortMenu(BuildContext context, AppLocalizations l10n, ThemeData theme, NoteSortOrder activeSort) {
+  Widget _buildSortMenu(BuildContext context, AppLocalizations l10n,
+      ThemeData theme, NoteSortOrder activeSort) {
     return PopupMenuButton<NoteSortOrder>(
       tooltip: l10n.sortBy,
       icon: Icon(
@@ -98,11 +100,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           value: NoteSortOrder.updatedDesc,
           child: Row(
             children: [
-              Icon(Icons.history_rounded, size: 18, color: theme.colorScheme.primary),
+              Icon(Icons.history_rounded,
+                  size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 10),
-              Expanded(child: Text(l10n.sortUpdatedDesc, style: const TextStyle(fontSize: 13))),
+              Expanded(
+                  child: Text(l10n.sortUpdatedDesc,
+                      style: const TextStyle(fontSize: 13))),
               if (activeSort == NoteSortOrder.updatedDesc)
-                Icon(Icons.check_rounded, size: 16, color: theme.colorScheme.primary),
+                Icon(Icons.check_rounded,
+                    size: 16, color: theme.colorScheme.primary),
             ],
           ),
         ),
@@ -110,11 +116,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           value: NoteSortOrder.updatedAsc,
           child: Row(
             children: [
-              Icon(Icons.update_rounded, size: 18, color: theme.colorScheme.primary),
+              Icon(Icons.update_rounded,
+                  size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 10),
-              Expanded(child: Text(l10n.sortUpdatedAsc, style: const TextStyle(fontSize: 13))),
+              Expanded(
+                  child: Text(l10n.sortUpdatedAsc,
+                      style: const TextStyle(fontSize: 13))),
               if (activeSort == NoteSortOrder.updatedAsc)
-                Icon(Icons.check_rounded, size: 16, color: theme.colorScheme.primary),
+                Icon(Icons.check_rounded,
+                    size: 16, color: theme.colorScheme.primary),
             ],
           ),
         ),
@@ -122,11 +132,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           value: NoteSortOrder.createdDesc,
           child: Row(
             children: [
-              Icon(Icons.calendar_today_rounded, size: 18, color: theme.colorScheme.primary),
+              Icon(Icons.calendar_today_rounded,
+                  size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 10),
-              Expanded(child: Text(l10n.sortCreatedDesc, style: const TextStyle(fontSize: 13))),
+              Expanded(
+                  child: Text(l10n.sortCreatedDesc,
+                      style: const TextStyle(fontSize: 13))),
               if (activeSort == NoteSortOrder.createdDesc)
-                Icon(Icons.check_rounded, size: 16, color: theme.colorScheme.primary),
+                Icon(Icons.check_rounded,
+                    size: 16, color: theme.colorScheme.primary),
             ],
           ),
         ),
@@ -134,11 +148,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           value: NoteSortOrder.createdAsc,
           child: Row(
             children: [
-              Icon(Icons.event_note_rounded, size: 18, color: theme.colorScheme.primary),
+              Icon(Icons.event_note_rounded,
+                  size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 10),
-              Expanded(child: Text(l10n.sortCreatedAsc, style: const TextStyle(fontSize: 13))),
+              Expanded(
+                  child: Text(l10n.sortCreatedAsc,
+                      style: const TextStyle(fontSize: 13))),
               if (activeSort == NoteSortOrder.createdAsc)
-                Icon(Icons.check_rounded, size: 16, color: theme.colorScheme.primary),
+                Icon(Icons.check_rounded,
+                    size: 16, color: theme.colorScheme.primary),
             ],
           ),
         ),
@@ -146,11 +164,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           value: NoteSortOrder.titleAsc,
           child: Row(
             children: [
-              Icon(Icons.sort_by_alpha_rounded, size: 18, color: theme.colorScheme.primary),
+              Icon(Icons.sort_by_alpha_rounded,
+                  size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 10),
-              Expanded(child: Text(l10n.sortTitleAsc, style: const TextStyle(fontSize: 13))),
+              Expanded(
+                  child: Text(l10n.sortTitleAsc,
+                      style: const TextStyle(fontSize: 13))),
               if (activeSort == NoteSortOrder.titleAsc)
-                Icon(Icons.check_rounded, size: 16, color: theme.colorScheme.primary),
+                Icon(Icons.check_rounded,
+                    size: 16, color: theme.colorScheme.primary),
             ],
           ),
         ),
@@ -158,11 +180,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           value: NoteSortOrder.titleDesc,
           child: Row(
             children: [
-              Icon(Icons.sort_by_alpha_rounded, size: 18, color: theme.colorScheme.primary),
+              Icon(Icons.sort_by_alpha_rounded,
+                  size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 10),
-              Expanded(child: Text(l10n.sortTitleDesc, style: const TextStyle(fontSize: 13))),
+              Expanded(
+                  child: Text(l10n.sortTitleDesc,
+                      style: const TextStyle(fontSize: 13))),
               if (activeSort == NoteSortOrder.titleDesc)
-                Icon(Icons.check_rounded, size: 16, color: theme.colorScheme.primary),
+                Icon(Icons.check_rounded,
+                    size: 16, color: theme.colorScheme.primary),
             ],
           ),
         ),
@@ -171,7 +197,8 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           value: NoteSortOrder.custom,
           child: Row(
             children: [
-              Icon(Icons.drag_indicator_rounded, size: 18, color: theme.colorScheme.primary),
+              Icon(Icons.drag_indicator_rounded,
+                  size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -181,13 +208,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                     Text(l10n.sortCustom, style: const TextStyle(fontSize: 13)),
                     Text(
                       'Trascina le note per riordinarle',
-                      style: TextStyle(fontSize: 10, color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
+                      style:
+                          TextStyle(fontSize: 12, color: theme.mutedTextColor),
                     ),
                   ],
                 ),
               ),
               if (activeSort == NoteSortOrder.custom)
-                Icon(Icons.check_rounded, size: 16, color: theme.colorScheme.primary),
+                Icon(Icons.check_rounded,
+                    size: 16, color: theme.colorScheme.primary),
             ],
           ),
         ),
@@ -214,10 +243,13 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     final notes = ref.watch(filteredNotesProvider);
     final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
-    final selectedFolderId = ref.watch(folderProvider.select((s) => s.selectedFolderId));
-    final searchQueryEmpty = ref.watch(notesProvider.select((s) => s.searchQuery.trim().isEmpty));
+    final selectedFolderId =
+        ref.watch(folderProvider.select((s) => s.selectedFolderId));
+    final searchQueryEmpty =
+        ref.watch(notesProvider.select((s) => s.searchQuery.trim().isEmpty));
 
-    final isCustomReorderActive = sortOrder == NoteSortOrder.custom && searchQueryEmpty;
+    final isCustomReorderActive =
+        sortOrder == NoteSortOrder.custom && searchQueryEmpty;
 
     return Container(
       decoration: BoxDecoration(
@@ -242,12 +274,12 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
               decoration: InputDecoration(
                 hintText: l10n.searchNotes,
                 hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  color: theme.subtleTextColor,
                 ),
                 prefixIcon: Icon(
                   Icons.search_rounded,
                   size: 18,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  color: theme.subtleTextColor,
                 ),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
@@ -286,39 +318,39 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
               selectedFolderId,
             ),
             child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 12, 8),
-            child: Row(
-              children: [
-                Text(
-                  '${notes.length} ${notes.length == 1 ? "nota" : "note"}',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                _buildSortMenu(context, l10n, theme, sortOrder),
-                const Spacer(),
-                FilledButton.tonalIcon(
-                  style: FilledButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+              padding: const EdgeInsets.fromLTRB(16, 4, 12, 8),
+              child: Row(
+                children: [
+                  Text(
+                    '${notes.length} ${notes.length == 1 ? "nota" : "note"}',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: theme.mutedTextColor,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: Text(l10n.newNote),
-                  onPressed: () {
-                    final newNote = ref
-                        .read(notesProvider.notifier)
-                        .createNote(folderId: selectedFolderId);
-                    widget.onNoteSelected?.call(newNote);
-                  },
-                ),
-              ],
+                  const SizedBox(width: 4),
+                  _buildSortMenu(context, l10n, theme, sortOrder),
+                  const Spacer(),
+                  FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add_rounded, size: 18),
+                    label: Text(l10n.newNote),
+                    onPressed: () {
+                      final newNote = ref
+                          .read(notesProvider.notifier)
+                          .createNote(folderId: selectedFolderId);
+                      widget.onNoteSelected?.call(newNote);
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
           ),
 
           const Divider(height: 1),
@@ -338,65 +370,79 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                 selectedFolderId,
               ),
               child: notes.isEmpty
-                ? _buildEmptyState(context, l10n, theme)
-                : isCustomReorderActive
-                    ? ReorderableListView.builder(
-                        buildDefaultDragHandles: false,
-                        proxyDecorator: (child, index, animation) {
-                          return Material(
-                            color: Colors.transparent,
-                            elevation: 0,
-                            child: child,
-                          );
-                        },
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: notes.length,
-                        onReorderItem: (oldIndex, newIndex) {
-                          // onReorderItem fornisce newIndex già corretto per
-                          // la rimozione dell'elemento; reorderNotes usa la
-                          // semantica classica di onReorder (la correzione
-                          // avviene al suo interno), quindi la si ripristina.
-                          final legacyNewIndex =
-                              newIndex > oldIndex ? newIndex + 1 : newIndex;
-                          // Gli indici si riferiscono alla lista MOSTRATA
-                          // (filtrata per cartella): si passano anche gli id
-                          // visibili, così il provider sposta la nota giusta.
-                          ref.read(notesProvider.notifier).reorderNotes(
-                                oldIndex,
-                                legacyNewIndex,
-                                visibleIds: notes.map((n) => n.id).toList(),
-                              );
-                        },
-                        itemBuilder: (context, index) {
-                          final note = notes[index];
-                          final isSelected = activeNoteId == note.id;
+                  ? _buildEmptyState(context, l10n, theme)
+                  : isCustomReorderActive
+                      ? ReorderableListView.builder(
+                          buildDefaultDragHandles: false,
+                          proxyDecorator: (child, index, animation) {
+                            return AnimatedBuilder(
+                              animation: animation,
+                              builder: (context, child) {
+                                final lift = Curves.easeOutCubic
+                                    .transform(animation.value);
+                                return Transform.scale(
+                                  scale: 1 + (0.02 * lift),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    elevation: 10 * lift,
+                                    borderRadius: BorderRadius.circular(12),
+                                    shadowColor:
+                                        Colors.black.withValues(alpha: 0.3),
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: child,
+                            );
+                          },
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: notes.length,
+                          onReorderItem: (oldIndex, newIndex) {
+                            // onReorderItem fornisce newIndex già corretto per
+                            // la rimozione dell'elemento; reorderNotes usa la
+                            // semantica classica di onReorder (la correzione
+                            // avviene al suo interno), quindi la si ripristina.
+                            final legacyNewIndex =
+                                newIndex > oldIndex ? newIndex + 1 : newIndex;
+                            // Gli indici si riferiscono alla lista MOSTRATA
+                            // (filtrata per cartella): si passano anche gli id
+                            // visibili, così il provider sposta la nota giusta.
+                            ref.read(notesProvider.notifier).reorderNotes(
+                                  oldIndex,
+                                  legacyNewIndex,
+                                  visibleIds: notes.map((n) => n.id).toList(),
+                                );
+                          },
+                          itemBuilder: (context, index) {
+                            final note = notes[index];
+                            final isSelected = activeNoteId == note.id;
 
-                          return NoteCard(
-                            key: ValueKey(note.id),
-                            note: note,
-                            isSelected: isSelected,
-                            showDragHandle: true,
-                            dragIndex: index,
-                            onTap: () => _openNote(note),
-                          );
-                        },
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: notes.length,
-                        itemBuilder: (context, index) {
-                          final note = notes[index];
-                          final isSelected = activeNoteId == note.id;
+                            return NoteCard(
+                              key: ValueKey(note.id),
+                              note: note,
+                              isSelected: isSelected,
+                              showDragHandle: true,
+                              dragIndex: index,
+                              onTap: () => _openNote(note),
+                            );
+                          },
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: notes.length,
+                          itemBuilder: (context, index) {
+                            final note = notes[index];
+                            final isSelected = activeNoteId == note.id;
 
-                          return NoteCard(
-                            key: ValueKey(note.id),
-                            note: note,
-                            isSelected: isSelected,
-                            showDragHandle: false,
-                            onTap: () => _openNote(note),
-                          );
-                        },
-                      ),
+                            return NoteCard(
+                              key: ValueKey(note.id),
+                              note: note,
+                              isSelected: isSelected,
+                              showDragHandle: false,
+                              onTap: () => _openNote(note),
+                            );
+                          },
+                        ),
             ),
           ),
         ],
@@ -415,8 +461,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
       return ContextMenuEntry(
         label: label,
         isChecked: activeSort == order,
-        onSelected: () =>
-            ref.read(notesProvider.notifier).setSortOrder(order),
+        onSelected: () => ref.read(notesProvider.notifier).setSortOrder(order),
       );
     }
 
@@ -467,7 +512,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
             Icon(
               Icons.note_alt_outlined,
               size: 48,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.35),
             ),
             const SizedBox(height: 12),
             Text(
@@ -475,7 +520,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                   ? l10n.noNotesFound
                   : l10n.noNotes,
               style: theme.textTheme.titleSmall?.copyWith(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
                 fontWeight: FontWeight.w600,
               ),
               textAlign: TextAlign.center,
@@ -484,7 +529,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
             Text(
               l10n.createFirstNote,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                color: theme.mutedTextColor,
               ),
               textAlign: TextAlign.center,
             ),

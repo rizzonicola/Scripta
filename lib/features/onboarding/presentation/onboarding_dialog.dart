@@ -112,7 +112,8 @@ class _OnboardingDialogState extends ConsumerState<OnboardingDialog> {
                           slide.description,
                           textAlign: TextAlign.center,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.7),
                             height: 1.45,
                           ),
                         ),
@@ -127,16 +128,37 @@ class _OnboardingDialogState extends ConsumerState<OnboardingDialog> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
                   slides.length,
-                  (index) => AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: _currentPage == index ? 24 : 8,
+                  (index) => SizedBox(
+                    width: 24,
                     height: 8,
-                    decoration: BoxDecoration(
-                      color: _currentPage == index
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.outline.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(4),
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween<double>(
+                        begin: 0,
+                        end: _currentPage == index ? 1 : 0,
+                      ),
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, value, _) {
+                        final inactive =
+                            theme.colorScheme.outline.withValues(alpha: 0.4);
+                        return Center(
+                          child: Transform.scale(
+                            scaleX: 1 + (2 * value),
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: Color.lerp(
+                                  inactive,
+                                  theme.colorScheme.primary,
+                                  value,
+                                ),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),

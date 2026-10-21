@@ -130,7 +130,8 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       }
     });
 
-    final editorFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
+    final editorFocusMode =
+        ref.watch(editorProvider.select((s) => s.isFocusMode));
     final screenType = ResponsiveBreakpoints.getScreenType(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -140,7 +141,8 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
       statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
       systemNavigationBarColor: theme.colorScheme.surface,
-      systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      systemNavigationBarIconBrightness:
+          isDark ? Brightness.light : Brightness.dark,
     );
 
     // Il focus mode ha la precedenza su qualunque layout: scrittura o lettura
@@ -239,7 +241,24 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
           top: false,
           bottom: true,
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
+            duration: const Duration(milliseconds: 220),
+            reverseDuration: const Duration(milliseconds: 200),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) {
+              final isEditor =
+                  child.key == const ValueKey('mobile_editor_pane');
+              final begin =
+                  isEditor ? const Offset(0.08, 0) : const Offset(-0.08, 0);
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: Tween<Offset>(begin: begin, end: Offset.zero)
+                      .animate(animation),
+                  child: child,
+                ),
+              );
+            },
             child: isEditorVisible
                 ? const NoteEditorPane(key: ValueKey('mobile_editor_pane'))
                 : NotesListView(

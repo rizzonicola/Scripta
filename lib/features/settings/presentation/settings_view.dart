@@ -15,6 +15,21 @@ class SettingsView extends ConsumerWidget {
   const SettingsView({super.key});
 
   static Future<void> show(BuildContext context) {
+    if (isDesktopPlatform) {
+      final size = MediaQuery.sizeOf(context);
+      return showDialog<void>(
+        context: context,
+        builder: (ctx) => Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          clipBehavior: Clip.antiAlias,
+          child: SizedBox(
+            width: (size.width - 48).clamp(320.0, 760.0).toDouble(),
+            height: (size.height * 0.86).clamp(400.0, 900.0).toDouble(),
+            child: const SettingsView(),
+          ),
+        ),
+      );
+    }
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -104,18 +119,11 @@ class SettingsView extends ConsumerWidget {
               final palette = AppThemePalettes.all[index];
               final isSelected = settings.selectedThemeId == palette.id;
 
-              return InkWell(
-                onTap: () {
-                  ref.read(settingsProvider.notifier).setThemeId(palette.id);
-                  ref.read(settingsProvider.notifier).setThemeMode(
-                        palette.brightness == Brightness.dark
-                            ? ThemeMode.dark
-                            : ThemeMode.light,
-                      );
-                },
-                borderRadius: BorderRadius.circular(10),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              return Semantics(
+                button: true,
+                selected: isSelected,
+                label: palette.name,
+                child: Ink(
                   decoration: BoxDecoration(
                     color: palette.surface,
                     borderRadius: BorderRadius.circular(10),
@@ -126,70 +134,92 @@ class SettingsView extends ConsumerWidget {
                       width: isSelected ? 2 : 1,
                     ),
                   ),
-                  child: Row(
-                    children: [
-                      // Palette color swatches
-                      Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                  child: InkWell(
+                    onTap: () {
+                      ref
+                          .read(settingsProvider.notifier)
+                          .setThemeId(palette.id);
+                      ref.read(settingsProvider.notifier).setThemeMode(
+                            palette.brightness == Brightness.dark
+                                ? ThemeMode.dark
+                                : ThemeMode.light,
+                          );
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      child: Row(
                         children: [
-                          Container(
-                            width: 18,
-                            height: 18,
-                            decoration: BoxDecoration(
-                              color: palette.background,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: palette.border, width: 1),
+                          // Palette color swatches
+                          Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 18,
+                                height: 18,
+                                decoration: BoxDecoration(
+                                  color: palette.background,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: palette.border,
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Container(
+                                width: 18,
+                                height: 18,
+                                decoration: BoxDecoration(
+                                  color: palette.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  palette.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontWeight: isSelected
+                                        ? FontWeight.bold
+                                        : FontWeight.w500,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  palette.brightness == Brightness.dark
+                                      ? l10n.themeDark
+                                      : l10n.themeLight,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Container(
-                            width: 18,
-                            height: 18,
-                            decoration: BoxDecoration(
+                          if (isSelected)
+                            Icon(
+                              Icons.check_circle_rounded,
+                              size: 16,
                               color: palette.primary,
-                              shape: BoxShape.circle,
                             ),
-                          ),
                         ],
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              palette.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: palette.textPrimary,
-                                fontWeight: isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.w500,
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              palette.brightness == Brightness.dark
-                                  ? 'Scuro'
-                                  : 'Chiaro',
-                              style: TextStyle(
-                                color: palette.textSecondary,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (isSelected)
-                        Icon(
-                          Icons.check_circle_rounded,
-                          size: 16,
-                          color: palette.primary,
-                        ),
-                    ],
+                    ),
                   ),
                 ),
               );
@@ -214,7 +244,8 @@ class SettingsView extends ConsumerWidget {
                 children: [
                   RadioListTile<String?>(
                     title: Text(l10n.languageSystem),
-                    subtitle: const Text('Rileva automaticamente / Auto detect'),
+                    subtitle:
+                        const Text('Rileva automaticamente / Auto detect'),
                     value: null,
                   ),
                   RadioListTile<String?>(

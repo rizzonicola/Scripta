@@ -46,9 +46,10 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
     // solo nella vista editor su mobile (`showBackButton` è vero
     // esattamente in quel caso, vedi `AdaptiveAppShell`).
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
-    final isNoteSearchActive = ref.watch(noteSearchProvider.select((s) => s.isActive));
-    final showNoteSearchButton =
-        activeNoteId != null && (screenType != DeviceScreenType.mobile || showBackButton);
+    final isNoteSearchActive =
+        ref.watch(noteSearchProvider.select((s) => s.isActive));
+    final showNoteSearchButton = activeNoteId != null &&
+        (screenType != DeviceScreenType.mobile || showBackButton);
 
     return Container(
       decoration: BoxDecoration(
@@ -103,8 +104,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
                 // Dual Mode Toggle: Edit <-> Read-Only
                 Container(
-                  height: 34,
-                  padding: const EdgeInsets.all(2),
+                  height: 44,
                   decoration: BoxDecoration(
                     color: theme.surfaceElevated,
                     borderRadius: BorderRadius.circular(8),
@@ -143,12 +143,15 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                   const SizedBox(width: 2),
                   IconButton(
                     icon: Icon(
-                      isNoteSearchActive ? Icons.search_off_rounded : Icons.search_rounded,
+                      isNoteSearchActive
+                          ? Icons.search_off_rounded
+                          : Icons.search_rounded,
                       size: 20,
                     ),
                     tooltip: l10n.searchInNote,
                     visualDensity: VisualDensity.compact,
-                    color: isNoteSearchActive ? theme.colorScheme.primary : null,
+                    color:
+                        isNoteSearchActive ? theme.colorScheme.primary : null,
                     onPressed: () {
                       if (isNoteSearchActive) {
                         ref.read(noteSearchProvider.notifier).close();
@@ -179,8 +182,8 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     // ora presente su SyncConfig, `.select` qui evita anche
                     // il rebuild "silenzioso" che il poll di connettività
                     // periodico altrimenti causerebbe ad ogni ciclo.
-                    final isAuthenticated =
-                        ref.watch(syncProvider.select((s) => s.isAuthenticated));
+                    final isAuthenticated = ref
+                        .watch(syncProvider.select((s) => s.isAuthenticated));
                     final isSyncing =
                         ref.watch(syncProvider.select((s) => s.isSyncing));
                     final isOnline =
@@ -192,7 +195,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                           Icons.cloud_off_outlined,
                           size: 19,
                           color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.45),
+                              .withValues(alpha: 0.6),
                         ),
                         tooltip: 'Account non connesso',
                         visualDensity: VisualDensity.compact,
@@ -215,9 +218,8 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                             ? Icons.cloud_done_outlined
                             : Icons.cloud_off_outlined,
                         size: 19,
-                        color: isOnline
-                            ? const Color(0xFF10B981)
-                            : Colors.amber,
+                        color:
+                            isOnline ? theme.successColor : theme.warningColor,
                       ),
                       tooltip: isOnline
                           ? 'Sincronizzato: Online (Tocca per sincronizzare)'
@@ -257,53 +259,67 @@ class _ModeToggleSegment extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: EdgeInsets.symmetric(
-            horizontal: title != null ? 10 : 8,
-            vertical: 4,
-          ),
-          decoration: BoxDecoration(
-            color: isSelected ? theme.colorScheme.surface : Colors.transparent,
+    return SizedBox(
+      height: 44,
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
             borderRadius: BorderRadius.circular(6),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 3,
-                      offset: const Offset(0, 1),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 15,
-                color: isSelected
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-              if (title != null) ...[
-                const SizedBox(width: 6),
-                Text(
-                  title!,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                    color: isSelected
-                        ? theme.colorScheme.onSurface
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
+            focusColor: theme.colorScheme.primary.withValues(alpha: 0.12),
+            child: Center(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                padding: EdgeInsets.symmetric(
+                  horizontal: title != null ? 10 : 8,
+                  vertical: 8,
                 ),
-              ],
-            ],
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? theme.colorScheme.surface
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(6),
+                  boxShadow: isSelected
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 3,
+                            offset: const Offset(0, 1),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 15,
+                      color: isSelected
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                    if (title != null) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        title!,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontWeight:
+                              isSelected ? FontWeight.w600 : FontWeight.normal,
+                          color: isSelected
+                              ? theme.colorScheme.onSurface
+                              : theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),
