@@ -144,6 +144,31 @@ class SyncRejectedItem {
       );
 }
 
+/// Funzioni opzionali che il server annuncia nella risposta 200 di sync (campo
+/// `caps`, Y-14). Regole: una chiave assente vale «non supportato», una chiave
+/// sconosciuta si ignora, e senza `caps` (server 2.1.0 e precedenti) il client
+/// si comporta esattamente come prima.
+class ServerCaps {
+  /// Versione del contratto. 1 = il server non annuncia nulla.
+  final int proto;
+
+  /// Funzioni opzionali (solo i valori booleani del campo `caps`).
+  final Map<String, bool> flags;
+
+  const ServerCaps({this.proto = 1, this.flags = const {}});
+
+  factory ServerCaps.fromJson(Map<String, dynamic> json) {
+    final flags = <String, bool>{};
+    json.forEach((key, value) {
+      if (value is bool) flags[key] = value;
+    });
+    return ServerCaps(proto: (json['proto'] as num?)?.toInt() ?? 1, flags: flags);
+  }
+
+  /// true solo se il server dichiara esplicitamente la funzione.
+  bool has(String capability) => flags[capability] == true;
+}
+
 class SyncResponse {
   final int serverTime;
 
@@ -154,11 +179,15 @@ class SyncResponse {
   final List<FolderChangeDto> folders;
   final List<NoteChangeDto> notes;
 
+  /// Capability del server; null se la risposta non le contiene.
+  final ServerCaps? caps;
+
   const SyncResponse({
     required this.serverTime,
     this.fullResync = false,
     this.folders = const [],
     this.notes = const [],
+    this.caps,
   });
 
   factory SyncResponse.fromJson(Map<String, dynamic> json) {
@@ -173,6 +202,9 @@ class SyncResponse {
               ?.map((e) => NoteChangeDto.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
+      caps: json['caps'] is Map<String, dynamic>
+          ? ServerCaps.fromJson(json['caps'] as Map<String, dynamic>)
+          : null,
     );
   }
 }

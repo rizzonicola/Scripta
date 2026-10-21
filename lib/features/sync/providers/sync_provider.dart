@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:math' show Random;
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati in
 // questo import separato, non rimossi). SyncNotifier resta deliberatamente
@@ -53,12 +54,33 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   static const _prefInactivitySeconds = 'scripta_sync_inactivity_seconds';
   static const _prefLastSyncTime = 'scripta_last_sync_timestamp';
 
+  /// Scadenza del token (millisecondi Unix), calcolata dall'`expires_at` della
+  /// login (Y-13-A). Non è un segreto: sta fra le preferenze.
+  static const _prefTokenExpiresAt = 'scripta_token_expires_at_ms';
+
+  /// Margine con cui un token si considera «in scadenza» rispetto all'orologio
+  /// locale.
+  static const int _tokenExpirySkewMs = 60 * 1000;
+
+  /// Da questa quantità di testo da inviare (caratteri del contenuto delle
+  /// note) un upload è «grosso»: vale la pena verificare il token PRIMA di
+  /// spedire megabyte per ricevere un 401.
+  static const int _largeUploadChars = 256 * 1024;
+
   /// Number of sequential attempts made before a connection/network failure
   /// is considered final and the status indicator flips to Offline.
   static const int _maxRetryAttempts = 3;
 
-  /// Delay between retry attempts.
+  /// Base del backoff fra i tentativi (raddoppia a ogni tentativo, con jitter).
   static const Duration _retryDelay = Duration(milliseconds: 1500);
+
+  /// Tetto di una singola attesa fra due tentativi.
+  static const Duration _retryMaxDelay = Duration(seconds: 15);
+
+  /// Tetto della somma delle attese di una stessa operazione: oltre, si rinuncia
+  /// subito (il prossimo trigger o il watchdog riproveranno) invece di tenere
+  /// l'utente in attesa. Vale anche per un `Retry-After` troppo lungo.
+  static const Duration _retryBudget = Duration(seconds: 20);
 
   /// Interval for the background connectivity watchdog that keeps the
   /// online/offline indicator accurate even when no sync is otherwise
@@ -124,6 +146,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
   late final Future<void> initialized;
 
+  /// Attesa fra due tentativi e sorgente del jitter: sostituibili nei test.
+  final Future<void> Function(Duration) _retryWait;
+  final Random _random;
+
+  /// Capability annunciate dal server, per URL (Y-14). Si aggiornano a ogni
+  /// risposta 200 di sync; una risposta senza `caps` cancella la voce.
+  final Map<String, ServerCaps> _capsByUrl = {};
+
   SyncNotifier(
     this._ref,
     this._apiService,
@@ -131,11 +161,103 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     FoldersDao? foldersDao,
     NotesDao? notesDao,
     SyncMetaDao? syncMetaDao,
+    Future<void> Function(Duration)? retryWait,
+    Random? random,
   })  : _foldersDao = foldersDao ?? FoldersDao(),
         _notesDao = notesDao ?? NotesDao(),
         _syncMetaDao = syncMetaDao ?? SyncMetaDao(),
+        _retryWait = retryWait ?? Future<void>.delayed,
+        _random = random ?? Random(),
         super(const SyncConfig()) {
     initialized = _init();
+  }
+
+  /// Capability del server corrente, come annunciate nell'ULTIMA risposta 200
+  /// di sync. Null se non ancora note (nessuna sync riuscita con questo URL in
+  /// questa sessione) o se il server non le annuncia (2.1.0 e precedenti):
+  /// in entrambi i casi nessuna funzione opzionale va usata.
+  ServerCaps? get serverCaps => _capsByUrl[_capsKey(state.serverUrl)];
+
+  static String _capsKey(String url) => url.trim().replaceAll(RegExp(r'/+$'), '');
+
+  void _rememberServerCaps(String serverUrl, ServerCaps? caps) {
+    final key = _capsKey(serverUrl);
+    if (caps == null) {
+      _capsByUrl.remove(key);
+    } else {
+      _capsByUrl[key] = caps;
+    }
+  }
+
+  /// `expires_at` della login è in SECONDI Unix (come `exp` di un JWT), mentre
+  /// tutti i timestamp di sync sono in millisecondi. Restituisce la scadenza in
+  /// millisecondi, o null se il valore non è utilizzabile. Un numero già in
+  /// millisecondi (>= 1e11, che in secondi sarebbe oltre l'anno 5138) non viene
+  /// moltiplicato.
+  static int? tokenExpiryMillis(int rawExpiresAt) {
+    if (rawExpiresAt <= 0) return null;
+    return rawExpiresAt >= 100000000000 ? rawExpiresAt : rawExpiresAt * 1000;
+  }
+
+  Future<void> _saveTokenExpiry(int rawExpiresAt) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ms = tokenExpiryMillis(rawExpiresAt);
+      if (ms == null) {
+        await prefs.remove(_prefTokenExpiresAt);
+      } else {
+        await prefs.setInt(_prefTokenExpiresAt, ms);
+      }
+    } catch (_) {
+      // Best effort: senza scadenza nota si cade nel comportamento di prima.
+    }
+  }
+
+  Future<void> _clearTokenExpiry() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefTokenExpiresAt);
+    } catch (_) {}
+  }
+
+  /// Cancella le credenziali locali e la scadenza memorizzata.
+  Future<void> _clearAuthCredentials() async {
+    await _secureStorage.clearAuth();
+    await _clearTokenExpiry();
+  }
+
+  /// Vero se, secondo l'orologio LOCALE, il token è scaduto o sta per
+  /// scadere. Scadenza ignota => falso.
+  Future<bool> _tokenLooksExpired() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final expiry = prefs.getInt(_prefTokenExpiresAt);
+      if (expiry == null) return false;
+      return DateTime.now().millisecondsSinceEpoch >= expiry - _tokenExpirySkewMs;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Prima di un upload grosso con un token che sembra scaduto, verifica il
+  /// token con una richiesta leggera (GET impostazioni) invece di spedire
+  /// megabyte per ricevere un 401. Un 401 viene rilanciato (è la sessione
+  /// scaduta, gestita dal chiamante); se il server risponde bene l'orologio del
+  /// dispositivo è sfasato e si prosegue; ogni altro errore (rete) non decide
+  /// nulla: si procede con la sync normale, che ha già i suoi ritentativi.
+  Future<void> _verifyTokenBeforeLargeUpload(String token, List<NoteRow> dirtyNotes) async {
+    var chars = 0;
+    for (final n in dirtyNotes) {
+      chars += n.content.length;
+    }
+    if (chars < _largeUploadChars || !await _tokenLooksExpired()) return;
+    try {
+      await _apiService.getUserSettings(baseUrl: state.serverUrl, token: token);
+      // Il token è valido: l'orologio locale è sbagliato. Non si ripete il controllo.
+      await _clearTokenExpiry();
+    } on SyncApiException catch (e) {
+      if (e.statusCode == 401) rethrow;
+    } catch (_) {}
   }
 
   @override
@@ -258,12 +380,35 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     return true;
   }
 
-  /// Runs [action] with up to [_maxRetryAttempts] sequential attempts,
-  /// waiting [_retryDelay] between tries. Only retries transient
-  /// connection/timeout style failures; anything else (e.g. a 401) is
-  /// rethrown immediately without retry.
+  /// Attesa prima del tentativo successivo: [_retryDelay] raddoppiato a ogni
+  /// tentativo, con jitter ±25% (evita che molti client riprovino insieme),
+  /// limitato a [_retryMaxDelay]. Se il server ha indicato `Retry-After` non si
+  /// riprova prima.
+  @visibleForTesting
+  Duration retryDelayFor(int attempt, Object error) => _retryDelayFor(attempt, error);
+
+  Duration _retryDelayFor(int attempt, Object error) {
+    final exponential = _retryDelay.inMilliseconds * (1 << (attempt - 1));
+    final jitter = 0.75 + _random.nextDouble() * 0.5;
+    var delay = Duration(milliseconds: (exponential * jitter).round());
+    if (delay > _retryMaxDelay) delay = _retryMaxDelay;
+    if (error is SyncApiException) {
+      final hint = error.retryAfter;
+      if (hint != null && hint > delay) delay = hint;
+    }
+    return delay;
+  }
+
+  /// Runs [action] with up to [_maxRetryAttempts] sequential attempts. Only
+  /// retries transient connection/timeout style failures; anything else (e.g.
+  /// a 401) is rethrown immediately without retry.
+  ///
+  /// L'attesa fra i tentativi è un backoff esponenziale con jitter (vedi
+  /// [_retryDelayFor]) e rispetta `Retry-After` di un 503. La somma delle attese
+  /// non supera [_retryBudget]: se la prossima non ci sta, si rinuncia subito.
   Future<T> _withNetworkRetry<T>(Future<T> Function() action) async {
     Object lastError = const SyncApiException('Errore di connessione sconosciuto');
+    var waited = Duration.zero;
 
     for (int attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
       try {
@@ -274,7 +419,12 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         if (!_isTransientNetworkError(e) || isLastAttempt) {
           rethrow;
         }
-        await Future.delayed(_retryDelay);
+        final delay = _retryDelayFor(attempt, e);
+        if (waited + delay > _retryBudget) {
+          rethrow;
+        }
+        waited += delay;
+        await _retryWait(delay);
       }
     }
 
@@ -338,6 +488,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       await _secureStorage.saveServerUrl(serverUrl);
       await _secureStorage.saveUsername(response.username);
       await _secureStorage.saveUserId(response.userId);
+      await _saveTokenExpiry(response.expiresAt);
 
       state = state.copyWith(
         isAuthenticated: true,
@@ -379,7 +530,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       await _apiService.logout(baseUrl: url, token: token);
     }
 
-    await _secureStorage.clearAuth();
+    await _clearAuthCredentials();
     if (!mounted) return;
     state = state.copyWith(
       isAuthenticated: false,
@@ -661,6 +812,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         final dirtyFolders = await _foldersDao.listDirty();
         final dirtyNotes = await _notesDao.listDirty();
 
+        // Y-13-A: con un upload grosso e un token che sembra scaduto, prima si
+        // verifica il token (un 401 arriva dal catch esterno, come sempre).
+        await _verifyTokenBeforeLargeUpload(token, dirtyNotes);
+
         final SyncResponse response;
         try {
           response = await _withNetworkRetry(
@@ -683,6 +838,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           }
           rethrow;
         }
+
+        // Y-14: capability annunciate dal server in QUESTA risposta (assenti =
+        // server senza caps: nessuna funzione opzionale).
+        _rememberServerCaps(state.serverUrl, response.caps);
 
         // 1) Righe inviate -> pulite (solo se non ri-modificate durante il
         //    round-trip). 2) Applica la risposta (che include anche la
@@ -765,7 +924,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
                     : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       if (isAuthError) {
-        await _secureStorage.clearAuth();
+        await _clearAuthCredentials();
         _stopConnectivityWatchdog();
       }
       return false;
@@ -813,8 +972,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       unawaited(_ref.read(settingsProvider.notifier).applyRemoteSettings(remoteSettings));
     } catch (e) {
       if (e is SyncApiException && e.statusCode == 401) {
-        state = state.copyWith(isAuthenticated: false);
-        await _secureStorage.clearAuth();
+        final reason = e.message;
+        state = state.copyWith(
+          isAuthenticated: false,
+          lastError: () => reason,
+          lastSyncMessage: () => 'Sessione scaduta: effettua nuovamente l\'accesso',
+        );
+        await _clearAuthCredentials();
         _stopConnectivityWatchdog();
       } else if (!_reachedServerSince(mark)) {
         // Se nel frattempo un'altra richiesta è riuscita (all'avvio gira in
@@ -841,8 +1005,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       );
     } catch (e) {
       if (e is SyncApiException && e.statusCode == 401) {
-        state = state.copyWith(isAuthenticated: false);
-        await _secureStorage.clearAuth();
+        final reason = e.message;
+        state = state.copyWith(
+          isAuthenticated: false,
+          lastError: () => reason,
+          lastSyncMessage: () => 'Sessione scaduta: effettua nuovamente l\'accesso',
+        );
+        await _clearAuthCredentials();
         _stopConnectivityWatchdog();
       } else {
         state = state.copyWith(isOnline: false);

@@ -1,4 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show min;
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
 import '../../features/sync/models/sync_models.dart';
@@ -11,18 +15,119 @@ class SyncApiException implements Exception {
   /// stato annullato per intero e il cursore NON deve avanzare.
   final List<SyncRejectedItem> rejected;
 
-  const SyncApiException(this.message, [this.statusCode, this.rejected = const []]);
+  /// Valorizzato solo per HTTP 503 quando il server indica `Retry-After`
+  /// (secondi): il ritentativo non deve partire prima (Y-11).
+  final Duration? retryAfter;
+
+  const SyncApiException(this.message, [this.statusCode, this.rejected = const []]) : retryAfter = null;
+
+  const SyncApiException.withRetryAfter(this.message, this.statusCode, this.retryAfter) : rejected = const [];
 
   @override
   String toString() =>
       'SyncApiException: $message${statusCode != null ? ' (Status: $statusCode)' : ''}';
 }
 
+/// Limiti di tempo del round di sync (Y-05). Prima c'era un solo `timeout(30 s)`
+/// sull'intera richiesta: su una rete lenta ma VIVA (profilo «Edge»,
+/// 400 kbit/s) un upload di qualche megabyte superava i 30 s, veniva
+/// interrotto e ripartiva da zero, senza mai finire. Ora conta il PROGRESSO,
+/// non la durata: finché passano byte (in su o in giù) la sync continua.
+class SyncTimeouts {
+  /// Dal via alla ricezione del primo blocco: connessione (TCP/TLS) inclusa.
+  final Duration connect;
+
+  /// Massimo silenzio ammesso mentre si inviano o si ricevono dati.
+  final Duration idle;
+
+  /// Dopo l'invio completo, attesa della risposta del server (elabora il
+  /// batch in una transazione).
+  final Duration serverWait;
+
+  /// Tetto assoluto dell'intero round: oltre, anche una sync «viva» si ferma.
+  final Duration total;
+
+  const SyncTimeouts({
+    this.connect = const Duration(seconds: 30),
+    this.idle = const Duration(seconds: 20),
+    this.serverWait = const Duration(seconds: 30),
+    this.total = const Duration(minutes: 5),
+  });
+}
+
+/// Richiesta con corpo in memoria inviata a blocchi, che segnala i progressi.
+/// `onChunk` scatta quando il client HTTP ha consumato il blocco precedente
+/// (cioè è passato sul socket, con il suo backpressure): è il segnale che
+/// l'upload sta avanzando. `onUploaded` scatta a invio completato.
+class _ProgressRequest extends http.BaseRequest {
+  _ProgressRequest(
+    super.method,
+    super.url,
+    this._bytes, {
+    required this.onChunk,
+    required this.onUploaded,
+  }) {
+    contentLength = _bytes.length;
+  }
+
+  static const int chunkSize = 16 * 1024;
+
+  final Uint8List _bytes;
+  final void Function() onChunk;
+  final void Function() onUploaded;
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    return http.ByteStream(_chunks());
+  }
+
+  Stream<List<int>> _chunks() async* {
+    onChunk();
+    for (var offset = 0; offset < _bytes.length; offset += chunkSize) {
+      final end = min(offset + chunkSize, _bytes.length);
+      yield Uint8List.sublistView(_bytes, offset, end);
+      onChunk();
+    }
+    onUploaded();
+  }
+}
+
 /// HTTP Service communicating with notes-server Go REST API.
 class SyncApiService {
   final http.Client _client;
+  final SyncTimeouts _timeouts;
 
-  SyncApiService([http.Client? client]) : _client = client ?? http.Client();
+  SyncApiService([http.Client? client, SyncTimeouts timeouts = const SyncTimeouts()])
+      : _client = client ?? http.Client(),
+        _timeouts = timeouts;
+
+  /// Identificativo dell'app inviato nell'header `X-Scripta-Client`. Il server
+  /// lo usa SOLO nei log (non cambia nessun comportamento). Tenere allineato
+  /// alla versione in pubspec.yaml.
+  static const String clientHeaderValue = 'scripta/1.0.0';
+
+  /// Legge `Retry-After` espresso in secondi. Altri formati (data HTTP) o
+  /// valori non validi/negativi: nessuna indicazione (null).
+  static Duration? parseRetryAfter(String? raw) {
+    if (raw == null) return null;
+    final seconds = int.tryParse(raw.trim());
+    if (seconds == null || seconds < 0) return null;
+    return Duration(seconds: seconds);
+  }
+
+  /// Testo del corpo di una risposta, SEMPRE come UTF-8 (Y-02). Il pacchetto
+  /// http, senza `charset` nel Content-Type, decodifica `response.body` con la
+  /// codifica di default (Latin-1): per il JSON del server (UTF-8) accenti,
+  /// frecce ed emoji diventerebbero mojibake. Se il corpo non fosse UTF-8
+  /// valido si ripiega sul comportamento precedente, invece di fallire.
+  static String bodyText(http.Response response) {
+    try {
+      return utf8.decode(response.bodyBytes);
+    } on FormatException {
+      return response.body;
+    }
+  }
 
   /// Dimensione (in caratteri) da cui la (de)serializzazione JSON di un round
   /// di sync passa a un isolate. Sotto soglia il lavoro è trascurabile e
@@ -42,7 +147,7 @@ class SyncApiService {
   /// Decodifica la risposta di sync, in un isolate se è voluminosa. Gli
   /// errori (JSON non valido) arrivano al chiamante come prima.
   Future<SyncResponse> _decodeSyncResponse(http.Response response) {
-    final body = response.body;
+    final body = bodyText(response);
     if (body.length < isolateJsonThreshold) {
       return Future.sync(() => _parseSyncResponse(body));
     }
@@ -99,7 +204,7 @@ class SyncApiService {
     final response = await _client
         .post(
           uri,
-          headers: {'Content-Type': 'application/json'},
+          headers: {'Content-Type': 'application/json', 'X-Scripta-Client': clientHeaderValue},
           body: json.encode({
             'username': username,
             'password': password,
@@ -108,12 +213,12 @@ class SyncApiService {
         .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
-      final decoded = json.decode(response.body) as Map<String, dynamic>;
+      final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return LoginResponseDto.fromJson(decoded);
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Credenziali non valide', 401);
     } else {
-      throw SyncApiException(_extractError(response.body, 'Errore durante l\'autenticazione'), response.statusCode);
+      throw SyncApiException(_extractError(bodyText(response), 'Errore durante l\'autenticazione'), response.statusCode);
     }
   }
 
@@ -151,13 +256,13 @@ class SyncApiService {
     ).timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
-      final decoded = json.decode(response.body) as Map<String, dynamic>;
+      final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return UserSettingsDto.fromJson(decoded);
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else {
       throw SyncApiException(
-          _extractError(response.body, 'Impossibile scaricare le impostazioni remote'), response.statusCode);
+          _extractError(bodyText(response), 'Impossibile scaricare le impostazioni remote'), response.statusCode);
     }
   }
 
@@ -182,13 +287,13 @@ class SyncApiService {
         .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
-      final decoded = json.decode(response.body) as Map<String, dynamic>;
+      final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return UserSettingsDto.fromJson(decoded);
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else {
       throw SyncApiException(
-          _extractError(response.body, 'Impossibile aggiornare le impostazioni utente'), response.statusCode);
+          _extractError(bodyText(response), 'Impossibile aggiornare le impostazioni utente'), response.statusCode);
     }
   }
 
@@ -211,36 +316,119 @@ class SyncApiService {
     final payload = SyncRequest(lastSyncedAt: lastSyncedAt, folders: folders, notes: notes);
     final requestBody = await _encodeSyncBody(payload);
 
-    final response = await _client
-        .post(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-          body: requestBody,
-        )
-        .timeout(const Duration(seconds: 30));
+    final response = await _postWithProgressTimeout(
+      uri,
+      {
+        'Authorization': 'Bearer $token',
+        // charset esplicito: è ciò che `http.post(body: String)` inviava già.
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Scripta-Client': clientHeaderValue,
+      },
+      const Utf8Encoder().convert(requestBody),
+    );
 
     if (response.statusCode == 200) {
       return _decodeSyncResponse(response);
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else if (response.statusCode == 503) {
-      throw const SyncApiException('Server temporaneamente occupato, riprovare a breve', 503);
+      throw SyncApiException.withRetryAfter(
+        'Server temporaneamente occupato, riprovare a breve',
+        503,
+        parseRetryAfter(response.headers['retry-after']),
+      );
     } else if (response.statusCode == 422) {
       // Record rifiutati: il server ha annullato l'intero batch.
       var rejected = <SyncRejectedItem>[];
       try {
-        final decoded = json.decode(response.body) as Map<String, dynamic>;
+        final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
         rejected = (decoded['rejected'] as List<dynamic>? ?? const [])
             .map((e) => SyncRejectedItem.fromJson(e as Map<String, dynamic>))
             .toList();
       } catch (_) {}
       throw SyncApiException('Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)', 422, rejected);
     } else {
-      throw SyncApiException(_extractError(response.body, 'Errore durante la sincronizzazione'), response.statusCode);
+      throw SyncApiException(_extractError(bodyText(response), 'Errore durante la sincronizzazione'), response.statusCode);
     }
+  }
+
+  /// POST con timeout «a progressi» (Y-05). Il corpo parte a blocchi e la
+  /// risposta si legge a flusso; un watchdog scatta solo se NESSUN byte si muove
+  /// per il tempo consentito dalla fase in corso (connessione, invio,
+  /// attesa del server, ricezione) o se si supera il tetto assoluto.
+  ///
+  /// Allo scadere si lancia `TimeoutException` (come il vecchio `.timeout`, e
+  /// quindi trattata come errore di rete transitorio dal chiamante) e, se la
+  /// risposta era in ricezione, se ne annulla la lettura chiudendo la
+  /// connessione. L'invio fermo non è annullabile con `http.Client`: come
+  /// prima, resta in sospeso finché il sistema operativo non lo chiude.
+  Future<http.Response> _postWithProgressTimeout(Uri uri, Map<String, String> headers, Uint8List body) {
+    final t = _timeouts;
+    final failure = Completer<http.Response>();
+    Timer? watchdog;
+    StreamSubscription<List<int>>? subscription;
+    var finished = false;
+
+    void fail(Duration limit, String what) {
+      if (finished) return;
+      finished = true;
+      watchdog?.cancel();
+      final sub = subscription;
+      if (sub != null) unawaited(sub.cancel());
+      failure.completeError(TimeoutException('Sync senza progressi: $what', limit));
+    }
+
+    void arm(Duration limit, String what) {
+      if (finished) return;
+      watchdog?.cancel();
+      watchdog = Timer(limit, () => fail(limit, what));
+    }
+
+    final totalTimer = Timer(t.total, () => fail(t.total, 'tempo totale superato'));
+    final request = _ProgressRequest(
+      'POST',
+      uri,
+      body,
+      onChunk: () => arm(t.idle, 'invio fermo'),
+      onUploaded: () => arm(t.serverWait, 'nessuna risposta dal server'),
+    )..headers.addAll(headers);
+    arm(t.connect, 'connessione');
+
+    final work = () async {
+      final streamed = await _client.send(request);
+      arm(t.idle, 'risposta ferma');
+      final received = Completer<Uint8List>();
+      final builder = BytesBuilder(copy: false);
+      subscription = streamed.stream.listen(
+        (chunk) {
+          builder.add(chunk);
+          arm(t.idle, 'risposta ferma');
+        },
+        onError: (Object error, StackTrace stack) {
+          if (!received.isCompleted) received.completeError(error, stack);
+        },
+        onDone: () {
+          if (!received.isCompleted) received.complete(builder.takeBytes());
+        },
+        cancelOnError: true,
+      );
+      final bytes = await received.future;
+      return http.Response.bytes(
+        bytes,
+        streamed.statusCode,
+        request: streamed.request,
+        headers: streamed.headers,
+        isRedirect: streamed.isRedirect,
+        persistentConnection: streamed.persistentConnection,
+        reasonPhrase: streamed.reasonPhrase,
+      );
+    }();
+
+    return Future.any<http.Response>([work, failure.future]).whenComplete(() {
+      finished = true;
+      watchdog?.cancel();
+      totalTimer.cancel();
+    });
   }
 
   /// Scarica il contenuto Markdown grezzo di una singola nota dal server,
@@ -263,7 +451,7 @@ class SyncApiService {
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else {
-      throw SyncApiException(_extractError(response.body, 'Impossibile scaricare la nota dal server'), response.statusCode);
+      throw SyncApiException(_extractError(bodyText(response), 'Impossibile scaricare la nota dal server'), response.statusCode);
     }
   }
 

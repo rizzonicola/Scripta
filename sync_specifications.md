@@ -1,13 +1,17 @@
 # Specifiche Tecniche di Sincronizzazione: Architettura Local-First, Protocollo REST & LWW
 
 **Progetto**: Scripta  
-**Ruolo**: Lead Flutter Architect  
-**Versione Specifiche**: 1.2.0 (Fase 3: Audit & Consolidamento E2E)  
-**Backend di Riferimento**: `notes-server` (Go 1.22+, SQLite WAL & libSQL/Turso, Scritture Atomiche POSIX, Transazioni Batch Esplicite, Lock per-path)
+**Versione Specifiche**: 2.0.0 (riscritta dal codice: P6, fase 1)  
+**Backend di Riferimento**: `notes-server` (Go, SQLite WAL / libSQL, **una transazione per batch**, protocollo di sync «delta» basato su ID)
 
 > [!IMPORTANT]
-> **Organizzazione Repository & Backend Incluso per Sviluppo**:  
-> La cartella `notes-server/` è inclusa nella radice di questo repository per consentire l'avvio immediato dell'ambiente di test locale e del collaudo End-to-End durante lo sviluppo. Nella build di release finale dell'applicazione mobile/desktop, la cartella `notes-server/` viene completamente scollegata dal codice sorgente dell'app e distribuita come servizio autonomo (via Docker / cloud hosting).
+> **La fonte di verità è il codice, non questo documento.** Per il client: `lib/core/services/sync_api_service.dart`,
+> `lib/features/sync/` e `lib/core/database/`. Per il server: `internal/handlers/api_sync.go` e `internal/models/models.go`.
+> Se questo testo e il codice divergono, vale il codice: correggere il testo.
+>
+> Le versioni 1.x di questo documento descrivevano un protocollo **a percorsi** (`relative_path`, liste `accepted` e
+> `server_wins`, file `.md` su disco). Quel protocollo **non esiste più**: oggi ogni cartella e ogni nota ha un `id` (UUID), il contenuto
+> sta nel database e la sync è uno scambio unico `POST /api/v1/sync`.
 
 ---
 
@@ -23,87 +27,80 @@ L'applicazione **Scripta** adotta il paradigma **Local-First**, progettato per o
 
 ---
 
-## 2. Gestione del Database Locale (Architettura Drift / SQLite)
+## 2. Gestione del Database Locale (SQLite / sqflite)
 
 ### 2.1 Struttura e Modello Relazionale
-Nel client Flutter, la persistenza strutturata ad alte prestazioni è affidata a **SQLite** in modalità **WAL (Write-Ahead Logging)** attraverso il toolkit tipizzato **Drift**. 
-
-Il database locale comprende quattro entità fondamentali:
+Il client conserva i dati in un database **SQLite** locale (pacchetto `sqflite`, `lib/core/database/app_database.dart`, schema versione 3). Non c'è un ORM: l'accesso passa dai DAO (`FoldersDao`, `NotesDao`, `SyncMetaDao`).
 
 ```
-┌─────────────────┐       ┌─────────────────┐
-│     FOLDERS     │◄──────┤      NOTES      │
-├─────────────────┤1     *├─────────────────┤
-│ id (UUID PK)    │       │ id (UUID PK)    │
-│ name (TEXT)     │       │ folder_id (FK)  │
-│ parent_id (FK)  │       │ title (TEXT)    │
-│ is_expanded     │       │ content (TEXT)  │
-└─────────────────┘       │ relative_path   │
-                          │ created_at (ms) │
-                          │ updated_at (ms) │
-                          │ is_favorite     │
-                          │ is_pinned       │
-                          │ order_index     │
-                          └─────────────────┘
-
-┌─────────────────┐       ┌─────────────────┐
-│ SYNC_TOMBSTONES │       │  SYNC_METADATA  │
-├─────────────────┤       ├─────────────────┤
-│ relative_path PK│       │ key (TEXT PK)   │
-│ deleted_at (ms) │       │ value (TEXT)    │
-└─────────────────┘       └─────────────────┘
+┌─────────────────┐       ┌──────────────────┐
+│     FOLDERS     │◄──────┤      NOTES       │
+├─────────────────┤1     *├──────────────────┤
+│ id (UUID PK)    │       │ id (UUID PK)     │
+│ name            │       │ title, content   │
+│ parent_id       │       │ folder_id        │
+│ is_expanded *   │       │ is_favorite      │
+│ updated_at (ms) │       │ is_pinned        │
+│ deleted_at (ms) │       │ order_index      │
+│ dirty           │       │ created_at *     │
+└─────────────────┘       │ updated_at (ms)  │
+                          │ deleted_at (ms)  │
+                          │ dirty            │
+                          └──────────────────┘
+┌─────────────────┐
+│    SYNC_META    │      * campi SOLO locali: non vengono mai inviati
+├─────────────────┤
+│ key (TEXT PK)   │
+│ value (TEXT)    │      oggi: `last_synced_at` (il cursore)
+└─────────────────┘
 ```
 
-### 2.2 Schema DDL di Riferimento (Drift)
+`parent_id` e `folder_id` sono semplici colonne di testo, **senza chiave esterna** nel database locale: l'integrità dei riferimenti la verifica il server (vedi §4.2, rifiuti `422`).
+
+### 2.2 Schema DDL di Riferimento
 
 ```sql
--- Tabella Cartelle (Gerarchica con supporto nesting ricorsivo)
 CREATE TABLE folders (
-    id TEXT NOT NULL PRIMARY KEY,
-    name TEXT NOT NULL,
-    parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,
-    is_expanded INTEGER NOT NULL DEFAULT 1,
-    created_at INTEGER NOT NULL
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  parent_id   TEXT,
+  is_expanded INTEGER NOT NULL DEFAULT 1,
+  updated_at  INTEGER NOT NULL,
+  deleted_at  INTEGER,
+  dirty       INTEGER NOT NULL DEFAULT 1
 );
 
--- Tabella Note
 CREATE TABLE notes (
-    id TEXT NOT NULL PRIMARY KEY,
-    folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
-    relative_path TEXT NOT NULL UNIQUE,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    is_favorite INTEGER NOT NULL DEFAULT 0,
-    is_pinned INTEGER NOT NULL DEFAULT 0,
-    order_index INTEGER NOT NULL DEFAULT 0
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL DEFAULT '',
+  content     TEXT NOT NULL DEFAULT '',
+  folder_id   TEXT,
+  is_favorite INTEGER NOT NULL DEFAULT 0,
+  is_pinned   INTEGER NOT NULL DEFAULT 0,
+  order_index INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  deleted_at  INTEGER,
+  dirty       INTEGER NOT NULL DEFAULT 1
 );
 
--- Indici per prestazioni di ricerca e ordinamento
-CREATE INDEX idx_notes_folder_id ON notes(folder_id);
-CREATE INDEX idx_notes_updated_at ON notes(updated_at DESC);
-CREATE INDEX idx_notes_relative_path ON notes(relative_path);
-
--- Tabella Tombstones (Registrazione delle note eliminate per la propagazione remota)
-CREATE TABLE sync_tombstones (
-    relative_path TEXT NOT NULL PRIMARY KEY,
-    deleted_at INTEGER NOT NULL
-);
-
--- Tabella Metadati di Sincronizzazione (Timestamp, stato auth, cursori)
-CREATE TABLE sync_metadata (
-    key TEXT NOT NULL PRIMARY KEY,
-    value TEXT NOT NULL
-);
+CREATE TABLE sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- più gli indici su parent_id / folder_id / updated_at / dirty e gli indici
+-- PARZIALI sui tombstone (`WHERE deleted_at IS NOT NULL`).
 ```
 
-### 2.3 Ciclo di Vita delle Eliminazioni (Tombstoning)
-In un'architettura distribuita Local-First, eliminare fisicamente un record dal database locale impedirebbe al client di comunicare al server l'avvenuta cancellazione. Pertanto:
-1. Quando l'utente elimina una nota, il record viene rimosso dalla tabella `notes` (o marcato come `deleted = 1`).
-2. Viene inserito un record corrispondente nella tabella `sync_tombstones` con il `relative_path` e il timestamp di eliminazione.
-3. Durante il ciclo successivo di sincronizzazione, i tombstones vengono inclusi nel payload con `deleted: true`.
-4. Solo quando il server risponde includendo quel `relative_path` nella lista `accepted`, il tombstone viene definitivamente rimosso dalla tabella locale.
+Tutti i timestamp sono **millisecondi** Unix UTC.
+
+### 2.3 Selezione di ciò che si invia: `dirty`
+- Ogni scrittura **locale** (`upsert`) imposta `dirty = 1`. È il flag a decidere cosa va inviato, **non** il confronto fra `updated_at` e l'orologio: un orologio del dispositivo sbagliato non può far perdere modifiche.
+- Le righe applicate dalla pull sono scritte con `dirty = 0`.
+- Dopo un invio riuscito, `markSynced` azzera `dirty` **solo se la riga non è cambiata** durante il round-trip (confronto sull'`updated_at` letto prima dell'invio): una modifica fatta mentre la sync era in corso resta sporca e parte al giro successivo.
+
+### 2.4 Ciclo di Vita delle Eliminazioni (Tombstoning)
+1. Eliminare una cartella o una nota **non cancella la riga**: imposta `deleted_at` (e `dirty = 1`). La riga resta nel database locale come *tombstone*.
+2. Al giro successivo il tombstone viaggia come una normale entità con `deleted_at` valorizzato.
+3. Il server lo registra (e, per una cartella, propaga la cancellazione a sottocartelle e note ancora attive) e lo conserva **30 giorni**, così anche i dispositivi che erano offline lo apprendono.
+4. Dopo ogni sync riuscita il client elimina fisicamente i propri tombstone già confermati (`deleted_at IS NOT NULL AND dirty = 0`).
 
 ---
 
@@ -120,7 +117,7 @@ L'applicazione espone all'utente una sezione dedicata nelle Impostazioni per con
 | **Inactivity Debounce** | Sincronizza automaticamente dopo un intervallo prestabilito di inattività durante la scrittura. | Timer di debounce (`_inactivityTimer`) resettato ad ogni modifica in `onTitleChanged` e `onContentChanged`. |
 
 ### Configurazione del Debounce di Inattività:
-- **Range consentito**: da 10 a 120 secondi (minimo di sicurezza a 10s per evitare hammering del server).
+- **Range consentito**: da 10 a 300 secondi (minimo di sicurezza a 10s per evitare hammering del server).
 - **Default di fabbrica**: 30 secondi.
 - **Funzionamento**: finché l'utente continua a digitare, il timer scorre e si riavvia. Trascorsi N secondi dall'ultima pressione tasto, il sync parte in modalità silente in background.
 
@@ -131,15 +128,12 @@ L'applicazione espone all'utente una sezione dedicata nelle Impostazioni per con
 Tutti gli endpoint REST sono esposti dal server Go sulla radice `/api/v1`. I dati sono scambiati in formato JSON con encoding UTF-8.
 
 ### 4.1 Autenticazione: `POST /api/v1/auth/login`
-Autentica l'utente con credenziali e rilascia un JSON Web Token (JWT con firma HMAC-SHA256 e scadenza a 7 giorni).
+Autentica l'utente e rilascia un JSON Web Token (HMAC-SHA256). La durata è **24 ore di default** e si configura sul server con la variabile `JWT_TTL`.
 
-- **Headers**: `Content-Type: application/json`
+- **Headers**: `Content-Type: application/json`, `X-Scripta-Client: scripta/<versione>` (solo per i log del server)
 - **Request Body**:
 ```json
-{
-  "username": "mario.rossi",
-  "password": "password-in-chiaro"
-}
+{ "username": "mario.rossi", "password": "password-in-chiaro" }
 ```
 - **Response (200 OK)**:
 ```json
@@ -150,67 +144,73 @@ Autentica l'utente con credenziali e rilascia un JSON Web Token (JWT con firma H
   "username": "mario.rossi"
 }
 ```
-- **Gestione Token**: Il token JWT viene memorizzato in modo cifrato via `SecureStorageService` (`flutter_secure_storage`) e aggiunto come header `Authorization: Bearer <token>` in tutte le richieste successive.
+- **`expires_at` è in SECONDI Unix** (come il campo `exp` di un JWT), a differenza di tutti i timestamp di sync, che sono in millisecondi. Il client lo converte in millisecondi (`SyncNotifier.tokenExpiryMillis`) e lo salva nelle preferenze; serve solo a evitare un upload grosso con un token scaduto (§4.6).
+- **Gestione Token**: il JWT è memorizzato in modo cifrato via `SecureStorageService` (`flutter_secure_storage`) e inviato come `Authorization: Bearer <token>` nelle richieste successive. Il logout lo revoca anche lato server (best effort).
 
 ---
 
-### 4.2 Sincronizzazione Note: `POST /api/v1/sync`
-*(Richiede header `Authorization: Bearer <token>`)*
+### 4.2 Sincronizzazione: `POST /api/v1/sync`
+*(Richiede `Authorization: Bearer <token>`)*
 
-Invia un batch di note create, modificate o eliminate localmente e riceve l'esito della sincronizzazione unitamente a eventuali aggiornamenti presenti sul server.
+L'unico endpoint di sincronizzazione: **delta sync** basato su ID. Il client invia le cartelle e le note **sporche** (`dirty = 1`) e riceve tutto ciò che è cambiato sul server dal cursore indicato.
 
-- **Request Body**:
+**Request** (`Content-Type: application/json; charset=utf-8`; header opzionale `X-Scripta-Client: scripta/<versione>`):
 ```json
 {
+  "last_synced_at": 1756900000000,
+  "folders": [
+    { "id": "f-1", "name": "Lavoro", "parent_id": null, "updated_at": 1756900000000, "deleted_at": null }
+  ],
   "notes": [
     {
-      "relative_path": "lavoro/riunione-2026-09-01.md",
-      "content": "# Verbale Riunione\n\nPunti discussi...",
-      "updated_at": 1756900000000,
-      "deleted": false
-    },
-    {
-      "relative_path": "personale/vecchia-idea.md",
-      "content": "",
-      "updated_at": 1756910000000,
-      "deleted": true
+      "id": "n-1", "title": "Riunione", "content": "# Riunione\n\n...",
+      "folder_id": "f-1", "is_favorite": false, "is_pinned": false, "order_index": 0,
+      "updated_at": 1756900000000, "deleted_at": null
     }
   ]
 }
 ```
+- `last_synced_at`: il cursore locale (`sync_meta.last_synced_at`); `0` alla prima sync.
+- Le cartelle sono inviate **con i genitori prima dei figli** (`sortFoldersParentsFirst`). Il server accetta comunque anche l'ordine inverso, se il genitore è nello stesso batch.
 
-- **Response (200 OK)**:
+**Response 200**:
 ```json
 {
-  "accepted": [
-    {
-      "relative_path": "personale/vecchia-idea.md",
-      "updated_at": 1756910000000,
-      "deleted": true
-    }
-  ],
-  "server_wins": [
-    {
-      "relative_path": "lavoro/riunione-2026-09-01.md",
-      "content": "# Verbale Riunione\n\nModifica più recente effettuata sul server",
-      "updated_at": 1756950000000,
-      "deleted": false
-    }
-  ]
+  "server_time": 1756900001234,
+  "full_resync": false,
+  "folders": [ { "id": "f-1", "name": "Lavoro", "parent_id": null, "updated_at": 1756900000000, "deleted_at": null } ],
+  "notes": [ { "id": "n-1", "title": "Riunione", "content": "...", "folder_id": "f-1",
+               "is_favorite": false, "is_pinned": false, "order_index": 0,
+               "updated_at": 1756900000000, "deleted_at": null } ],
+  "caps": { "proto": 2 }
 }
 ```
+- `server_time`: il **nuovo cursore**. Il client lo salva **solo dopo** aver applicato la risposta; su qualunque errore il cursore resta invariato.
+- La risposta comprende l'**eco** di ciò che il client ha appena inviato e, se il push ha perso il confronto LWW, la versione vincente del server. Per questo si applica con la regola LWW locale (§5).
+- `full_resync`: il cursore era più vecchio della retention dei tombstone (30 giorni), negativo o nel futuro. La risposta è lo stato **completo** (solo righe attive): il client elimina le righe locali **pulite** che non compaiono.
+- `caps` (opzionale, additivo): capability del server. Chiave assente = «non supportato»; chiave sconosciuta = ignorata; risposta senza `caps` (server 2.1.0 e precedenti) = nessuna funzione opzionale, comportamento invariato. Il client ricorda le capability **per URL** dall'ultima risposta 200 (`SyncNotifier.serverCaps`) e non le usa prima della prima risposta.
+- **Non esistono** `accepted`, `server_wins`, `relative_path` né `deleted` (contratto precedente).
+
+**Errori**
+
+| Codice | Significato | Cosa fa il client |
+|---|---|---|
+| `401` | token scaduto, mancante o revocato | `isAuthenticated = false`, credenziali cancellate, messaggio «Sessione scaduta»; i dati locali restano |
+| `413` | corpo troppo grande | errore mostrato; nessuna modifica persa (restano sporche) |
+| `422` | uno o più elementi rifiutati (`rejected: [{kind, id, reason}]`); **il server ha annullato l'intero batch** e non restituisce un cursore | ripara le righe rifiutate (§5) e riprova una volta |
+| `503` | database occupato; header `Retry-After` | riprova con attesa (§4.6) |
+| altri | errore generico `{"error": "..."}` | mostrato, cursore invariato |
+
+Motivi di rifiuto (`reason`): `invalid_id`, `invalid_parent_id`, `invalid_folder_id`.
+
+La sync è **idempotente**: rinviare lo stesso batch (per esempio dopo una rete caduta) dà lo stesso stato finale.
 
 ---
 
-### 4.3 Download / Lettura Note Remote: `GET /api/v1/notes/download`
-*(Richiede header `Authorization: Bearer <token>`)*
+### 4.3 Download di una nota: `GET /api/v1/notes/download`
+*(Richiede `Authorization: Bearer <token>`)*
 
-Scarica il contenuto grezzo di un singolo file Markdown memorizzato sul filesystem del server.
-
-- **Parametri Query**: `path=lavoro/riunione-2026-09-01.md`
-- **Response (200 OK)**:
-  - Header: `Content-Type: text/markdown; charset=utf-8`
-  - Body: contenuto UTF-8 raw del file.
+Scarica il Markdown di **una nota**, per **ID**: `GET /api/v1/notes/download?id=<id della nota>`. Risposta 200: corpo = contenuto UTF-8, `Content-Type: text/markdown; charset=utf-8`, `Content-Disposition: attachment; filename="<titolo>.md"`. Errori: `400` (id mancante), `401`, `404` (inesistente, di un altro utente o cancellata). Non fa parte del protocollo di sync: l'app non lo usa per sincronizzare.
 
 ---
 
@@ -264,80 +264,50 @@ A tutela della privacy (zero-knowledge) e per garantire la massima efficienza se
 
 ---
 
-### 4.6 Gestione degli Errori HTTP & Ciclo di Vita delle Sessioni
+### 4.6 Gestione degli Errori HTTP, Tempi e Ritentativi
 
-Il client implementa una gestione degli errori HTTP a prova di guasto:
-- **`401 Unauthorized` (Token Scaduto o Non Valido)**:
-  - Quando `/api/v1/sync` o `/api/v1/user/settings` restituisce `401`, il client marca immediatamente `isAuthenticated = false`, rimuove il token scaduto dal Secure Storage e notifica l'utente nella barra di stato (`Sessione scaduta: effettua nuovamente l'accesso`).
-  - L'interfaccia non si blocca e l'app continua a operare normalmente in modalità offline locale.
-- **`400 Bad Request`**:
-  - Il payload JSON di errore restituito dal server (`{"error":"..."}`) viene estratto e mostrato nei log diagnostici di sincronizzazione senza provocare eccezioni non gestite.
-- **`500 Internal Server Error` o Mancanza di Connettività**:
-  - In caso di timeout (10s auth/settings, 20s sync), mancata risoluzione DNS o errore 500 del server, il client imposta `isOnline = false`, mantiene la sessione autenticata per i tentativi successivi e preserva tutte le modifiche locali e i tombstones nel database locale.
+- **Decodifica UTF-8**: il corpo delle risposte si legge **sempre come UTF-8** (`SyncApiService.bodyText`), anche se il `Content-Type` non dichiara un charset: il pacchetto `http`, senza charset, userebbe Latin-1 e trasformerebbe accenti ed emoji in caratteri sbagliati. Il server dichiara comunque `charset=utf-8`.
+- **Timeout della sync «a progressi»**: non c'è più un tetto fisso sull'intera richiesta (un upload lento ma vivo veniva interrotto e ripartiva da zero). Il corpo parte a blocchi e la risposta si legge a flusso; la sync si ferma solo se per troppo tempo non si muove nessun byte: 30 s per la connessione, 20 s di silenzio durante invio o ricezione, 30 s di attesa della risposta dopo l'invio completo, e un tetto assoluto di 5 minuti. Login e impostazioni: 10 s; controllo di salute: 4 s.
+- **Ritentativi con backoff**: per gli errori transitori (rete, timeout, `503`) fino a 3 tentativi, con attesa esponenziale (1,5 s, poi 3 s) e jitter ±25%. Se il server indica `Retry-After` non si riprova prima. La somma delle attese non supera 20 s: se la prossima non ci sta, si rinuncia subito (ripartiranno i trigger o il controllo periodico di connettività).
+- **`401`**: vedi §4.2. Anche sulle impostazioni (`/user/settings`) l'utente vede il messaggio «Sessione scaduta: effettua nuovamente l'accesso». **Prima di un upload grosso** (oltre 256 KiB di testo) con un token che l'orologio locale dà per scaduto, il client verifica il token con una richiesta leggera: se è davvero scaduto non spedisce megabyte per ricevere un 401; se il server risponde bene, l'orologio del dispositivo è sfasato e l'upload prosegue.
+- **Mancanza di connettività o errore del server**: `isOnline = false`, sessione mantenuta, modifiche e tombstone locali preservati.
 
 ---
 
 ## 5. Algoritmo di Risoluzione dei Conflitti Last-Write-Wins (LWW)
 
-La coerenza finale tra i nodi client e il server centrale è disciplinata da un algoritmo deterministico **Last-Write-Wins (LWW)** basato sui timestamp Unix in millisecondi (`updated_at`).
+La convergenza è disciplinata da un **Last-Write-Wins riga per riga** sui timestamp `updated_at` (millisecondi Unix). Ogni cartella e ogni nota è un'unità indipendente, identificata dal suo `id`.
 
 ```
-                    ┌─────────────────────────┐
-                    │ Client invia NoteChange │
-                    └────────────┬────────────┘
-                                 │
-                                 ▼
-                     Nota esiste sul Server?
-                      /                     \
-                    NO                      YES
-                    /                         \
-                   /                 updated_at_client >=
-                  /                  updated_at_server ?
-                 /                          /      \
-                /                         YES       NO
-               ▼                           ▼         ▼
-        ┌──────────────┐            ┌──────────┐  ┌─────────────────────┐
-        │ CLIENT WINS  │            │  CLIENT  │  │     SERVER WINS     │
-        │ Scrive file  │            │   WINS   │  │ Server restituisce  │
-        │  atomico &   │            │  Aggiorna│  │ la sua versione più │
-        │ entra in     │            │  file e  │  │ recente in          │
-        │ "accepted"   │            │ metadati │  │ "server_wins"       │
-        └──────────────┘            └──────────┘  └──────────┬──────────┘
-                                                             │
-                                                             ▼
-                                                  ┌─────────────────────┐
-                                                  │ Client aggiorna     │
-                                                  │ copia locale o      │
-                                                  │ crea cartella/nota  │
-                                                  └─────────────────────┘
+Client invia una riga (id, updated_at, ...)
+              │
+              ▼
+   Il server ha già questo id?
+        │NO                │SI
+        ▼                  ▼
+   scrive la riga   updated_at_client >= updated_at_server ?
+                        │SI                │NO
+                        ▼                  ▼
+                  il client vince    il server vince: non cambia nulla,
+                  (aggiorna riga)    la sua versione torna nella risposta
 ```
 
-### Regole Formali di Convergenza:
-1. **Client Wins (`updated_at_client >= updated_at_server`)**:
-   - Il server accetta il file inviato dal client.
-   - La scrittura su disco sul server avviene in modalità **atomica POSIX**: viene scritto prima un file temporaneo (`.tmp-*`), viene forzato il flush sul disco fisico con `fsync`, e infine viene eseguita la `os.Rename` sul percorso definitivo.
-   - Se `deleted == true`, il file viene cancellato fisicamente dal server e il metadato marcato come eliminato.
-   - La nota viene inclusa nella lista `accepted` della risposta.
-
-2. **Server Wins (`updated_at_client < updated_at_server`)**:
-   - La versione presente sul server è più recente di quella inviata dal client.
-   - Il server respinge la modifica del client e inserisce la versione del server nella lista `server_wins` con il suo contenuto Markdown aggiornato.
-   - Il client Flutter riceve l'array `server_wins` e aggiorna la copia nel database locale, allineando sia il contenuto sia il timestamp `updated_at`.
-   - Se la nota appartiene a una cartella non ancora presente in locale, il client genera automaticamente la struttura delle cartelle corrispondente.
-
-3. **Integrità dei Percorsi & Sicurezza anti-Path-Traversal**:
-   - Ogni `relative_path` viene normalizzato dal server con `filepath.Clean`.
-   - Viene verificato che il percorso non contenga sequenze ingannevoli come `../` o tentativi di jailbreak al di fuori della cartella protetta dell'utente (`/data/users/{user_id}/notes`).
-   - Eventuali percorsi non conformi vengono scartati senza interrompere la sincronizzazione delle restanti note.
+### Regole formali
+1. **Server, push**: l'upsert ha effetto solo se `updated_at` del client è **maggiore o uguale** a quello memorizzato. Un `updated_at` oltre «adesso + 5 minuti» (orologio del client avanti) viene riportato all'ora del server, così non può vincere per sempre.
+2. **Server, pull**: restituisce le righe con `synced_at` in `(last_synced_at, server_time]`, calcolate **dopo** il push. `synced_at` è uno stamp **del server**, monotono (e persistente: non scende dopo un riavvio del server con l'orologio indietro), distinto da `updated_at`. Il cursore `server_time` è quindi sicuro anche con orologi dei client sbagliati.
+3. **Cancellazioni**: un tombstone è una riga con `deleted_at`. Cancellare una cartella cancella a cascata sottocartelle e note attive. I tombstone si conservano 30 giorni.
+4. **Client, applicazione della risposta** (`applyRemoteLWWBatch`): la copia remota vince se la riga locale non esiste, è **pulita** (`dirty = 0`) o è meno recente; una modifica locale sporca e più recente **non** viene mai sovrascritta (partirà al giro successivo). `is_expanded` è solo locale e si preserva sempre.
+5. **Rifiuti (`422`)**: il server annulla l'intero batch. Il client ripara ciò che è stato rifiutato: una nota con `folder_id` sconosciuto va fuori da ogni cartella, una cartella con `parent_id` sconosciuto diventa radice; le righe riparate risultano modificate (`dirty`, `updated_at` nuovo) e vengono rinviate. Nessun contenuto va perso.
+6. **Ordine**: il server richiede che il genitore di una cartella esista quando la scrive. Il client invia i genitori prima dei figli; il server accetta anche l'ordine inverso se il genitore è nel batch; un genitore inesistente o un ciclo fra cartelle nuove è rifiutato.
 
 ### 5.1 Strategia di Debouncing & Concorrenza Client/Server
 
-Per evitare carichi inutili di I/O e prevenire race conditions durante l'uso intensivo dell'editor o della navigazione tra note:
-1. **Debouncing Scrittura Note (500 ms)**: Durante la digitazione nei campi titolo e contenuto, l'aggiornamento della persistenza locale e il ricalcolo dei metadati è ritardato di 500ms; ogni modifica prima di questo intervallo resetta il timer.
-2. **Debouncing Cambio Nota (600 ms)**: Se l'utente scorre rapidamente la lista delle note o naviga rapidamente nell'albero delle cartelle, le richieste di sync vengono ritardate di 600ms per consolidare lo stato finale ed eseguire un'unica chiamata batch.
-3. **Timer di Inattività Configurabile (10s - 300s)**: Durante la scrittura continua, il sync in background si attiva solo dopo un periodo di inattività dell'utente.
-4. **Flush Preventivo (`flushPendingSaves`)**: Prima di ciascuna chiamata a `triggerSync()`, il client forza il flush immediato delle modifiche in sospeso, garantendo che il payload contenga sempre l'esatto snapshot corrente.
-5. **Lock per-path & Batch Tx nel Backend Go**: Sul server, `SyncHandler` avvia un'unica transazione SQLite esplicita (`BeginTx`) per l'intero lotto di note, e acquisisce un lock univoco per ciascun percorso (`Store.LockPath`) evitando conflitti in caso di chiamate concorrenti da dispositivi multipli.
+1. **Debouncing scrittura note (500 ms)**: durante la digitazione la persistenza locale è ritardata di 500 ms.
+2. **Debouncing cambio nota (600 ms)**: cambi rapidi di nota o di cartella consolidano le richieste di sync in una sola chiamata.
+3. **Timer di inattività configurabile (10 s – 300 s)**: la sync in background parte dopo un periodo di inattività.
+4. **Flush preventivo (`flushPendingSaves`)**: prima di ogni `triggerSync()` il client scrive le modifiche ancora in debounce, così il batch contiene l'ultima battitura.
+5. **Un solo round alla volta**: il controllo di `isSyncing` è atomico; un trigger arrivato durante una sync non va perso (giro di recupero dopo un giro riuscito, in numero limitato).
+6. **Server**: l'intero batch è elaborato in **una transazione SQLite**, serializzata da un lock sullo stamp: due dispositivi che sincronizzano insieme non si intrecciano.
 
 ---
 

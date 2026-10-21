@@ -63,6 +63,57 @@ class FolderRow {
 
 const Object _unset = Object();
 
+/// Ordina le cartelle in modo che ogni genitore presente nell'elenco preceda i
+/// suoi figli. Stabile: un elenco già ordinato resta identico; si spostano
+/// solo i figli che compaiono PRIMA del proprio genitore (vengono emessi
+/// subito dopo di lui, insieme ai loro discendenti, nell'ordine originale).
+/// Tempo lineare e nessuna ricorsione, quindi nessun limite di profondità.
+///
+/// I residui non ordinabili (un ciclo A→B→A, o chi ne dipende) sono accodati
+/// nell'ordine originale: non si perde nulla, il server li rifiuterà con un
+/// 422 e il client li ripara come per ogni altro `parent_id` non valido.
+List<FolderRow> sortFoldersParentsFirst(List<FolderRow> rows) {
+  if (rows.length < 2) return rows;
+  final ids = <String>{for (final r in rows) r.id};
+  final emitted = <String>{};
+  final out = <FolderRow>[];
+  final waiting = <String, List<FolderRow>>{};
+  final stack = <FolderRow>[];
+
+  void emitWithDescendants(FolderRow first) {
+    stack.add(first);
+    while (stack.isNotEmpty) {
+      final row = stack.removeLast();
+      out.add(row);
+      emitted.add(row.id);
+      final children = waiting.remove(row.id);
+      if (children != null) {
+        // Pila LIFO: si inseriscono al contrario per riemetterli in ordine.
+        for (var i = children.length - 1; i >= 0; i--) {
+          stack.add(children[i]);
+        }
+      }
+    }
+  }
+
+  for (final row in rows) {
+    final parent = row.parentId;
+    if (parent != null && parent != row.id && ids.contains(parent) && !emitted.contains(parent)) {
+      (waiting[parent] ??= <FolderRow>[]).add(row);
+    } else {
+      emitWithDescendants(row);
+    }
+  }
+
+  if (waiting.isNotEmpty) {
+    final pending = <FolderRow>{for (final list in waiting.values) ...list};
+    for (final row in rows) {
+      if (pending.contains(row)) out.add(row);
+    }
+  }
+  return out;
+}
+
 /// Metadati minimi di una riga locale per la risoluzione LWW in
 /// [FoldersDao.applyRemoteLWWBatch] (`isExpanded` è solo locale e va sempre
 /// preservato).
@@ -160,11 +211,16 @@ class FoldersDao {
     });
   }
 
-  /// Righe con modifiche locali non ancora confermate dal server.
+  /// Righe con modifiche locali non ancora confermate dal server, con i
+  /// genitori PRIMA dei figli (vedi [sortFoldersParentsFirst]): la query non ha
+  /// un ORDER BY e l'ordine delle righe dipende da come sono state scritte
+  /// (un `upsert` con REPLACE cambia il rowid). Un figlio davanti a un
+  /// genitore nuovo faceva rifiutare il batch dai server precedenti a P6 con
+  /// 422 `invalid_parent_id`, e la riparazione appiattiva la gerarchia.
   Future<List<FolderRow>> listDirty() async {
     final db = await _db;
     final rows = await db.query('folders', where: 'dirty = 1');
-    return rows.map(FolderRow.fromMap).toList();
+    return sortFoldersParentsFirst(rows.map(FolderRow.fromMap).toList());
   }
 
   /// Vedi `NotesDao.markSynced`.
