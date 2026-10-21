@@ -122,7 +122,6 @@ class SettingsView extends ConsumerWidget {
               return Semantics(
                 button: true,
                 selected: isSelected,
-                label: palette.name,
                 child: Ink(
                   decoration: BoxDecoration(
                     color: palette.surface,

@@ -315,7 +315,7 @@ class _NoteCardMenuButton extends ConsumerWidget {
         icon: Icon(
           Icons.more_horiz_rounded,
           size: 18,
-          color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+          color: theme.mutedTextColor,
         ),
         tooltip: MaterialLocalizations.of(context).showMenuTooltip,
         padding: EdgeInsets.zero,
