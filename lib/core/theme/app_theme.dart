@@ -70,6 +70,38 @@ class AppTheme {
     }
   }
 
+  static PopupMenuThemeData popupMenuTheme(AppThemePalette palette) {
+    return PopupMenuThemeData(
+      color: palette.brightness == Brightness.dark
+          ? palette.surfaceElevated
+          : palette.surface,
+      elevation: 4,
+      shadowColor:
+          Colors.black.withValues(alpha: palette.brightness == Brightness.dark
+              ? 0.24
+              : 0.08),
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: palette.border.withValues(alpha: 0.85)),
+      ),
+      menuPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      textStyle: TextStyle(fontSize: 13, color: palette.textPrimary),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        final disabled = states.contains(WidgetState.disabled);
+        return TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          color: disabled ? palette.textMuted : palette.textPrimary,
+        );
+      }),
+      iconColor: palette.textSecondary,
+      iconSize: 18,
+      position: PopupMenuPosition.under,
+      enableFeedback: true,
+    );
+  }
+
   static ThemeData fromPalette(
     AppThemePalette palette, {
     String fontFamily = 'Inter',
@@ -131,6 +163,7 @@ class AppTheme {
           side: BorderSide(color: palette.border, width: 1),
         ),
       ),
+      popupMenuTheme: popupMenuTheme(palette),
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
           color: palette.surfaceElevated,

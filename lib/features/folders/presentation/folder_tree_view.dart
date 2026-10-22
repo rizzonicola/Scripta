@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
-import '../../../core/l10n/desktop_strings.dart';
-import '../../../core/services/export_service.dart';
-import '../../../core/services/import_service.dart';
 import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/context_menu.dart';
-import '../../../core/widgets/shortcuts_help_dialog.dart';
 import '../../settings/presentation/settings_view.dart';
 import '../models/folder_node.dart';
 import '../providers/folder_provider.dart';
@@ -72,51 +68,20 @@ class FolderTreeView extends ConsumerWidget {
                   tooltip: l10n.newFolder,
                   onPressed: () => showAddFolderDialog(context, ref),
                 ),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, size: 20),
-                  tooltip: 'Altro',
-                  onSelected: (val) {
-                    if (val == 'export_all') {
-                      ExportService.exportAllAsZip(context, ref);
-                    } else if (val == 'import') {
-                      ImportService.showImportOptions(context, ref);
-                    } else if (val == 'shortcuts') {
-                      ShortcutsHelpDialog.show(context);
-                    }
-                  },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(
-                      value: 'export_all',
-                      child: Row(
-                        children: [
-                          Icon(Icons.archive_outlined, size: 18),
-                          SizedBox(width: 8),
-                          Text('Esporta tutte le note (ZIP)'),
-                        ],
-                      ),
-                    ),
-                    const PopupMenuItem(
-                      value: 'import',
-                      child: Row(
-                        children: [
-                          Icon(Icons.file_upload_outlined, size: 18),
-                          SizedBox(width: 8),
-                          Text('Importa'),
-                        ],
-                      ),
-                    ),
-                    if (isDesktopPlatform)
-                      PopupMenuItem(
-                        value: 'shortcuts',
-                        child: Row(
-                          children: [
-                            const Icon(Icons.keyboard_alt_outlined, size: 18),
-                            const SizedBox(width: 8),
-                            Text(DesktopStrings.of(ctx).keyboardShortcuts),
-                          ],
-                        ),
-                      ),
-                  ],
+                Builder(
+                  builder: (buttonContext) => IconButton(
+                    icon: const Icon(Icons.more_vert_rounded, size: 20),
+                    tooltip: 'Altro',
+                    onPressed: () {
+                      final box =
+                          buttonContext.findRenderObject() as RenderBox;
+                      showContextMenu(
+                        buttonContext,
+                        box.localToGlobal(Offset(0, box.size.height + 4)),
+                        workspaceOverflowEntries(buttonContext, ref),
+                      );
+                    },
+                  ),
                 ),
               ],
             ),

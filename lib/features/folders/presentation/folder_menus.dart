@@ -6,6 +6,7 @@ import '../../../core/l10n/desktop_strings.dart';
 import '../../../core/services/export_service.dart';
 import '../../../core/services/import_service.dart';
 import '../../../core/utils/app_commands.dart';
+import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/context_menu.dart';
 import '../../../core/widgets/shortcuts_help_dialog.dart';
 import '../../notes/providers/notes_provider.dart';
@@ -51,6 +52,33 @@ List<ContextMenuEntry> workspaceMenuEntries(BuildContext context, WidgetRef ref)
       shortcut: commandShortcutLabel(AppCommand.help),
       onSelected: () => ShortcutsHelpDialog.show(context),
     ),
+  ];
+}
+
+/// Azioni rapide del workspace usate dal pulsante "..." della sidebar.
+List<ContextMenuEntry> workspaceOverflowEntries(
+  BuildContext context,
+  WidgetRef ref,
+) {
+  final ds = DesktopStrings.of(context);
+  return [
+    ContextMenuEntry(
+      label: ds.exportAllZip,
+      icon: Icons.archive_outlined,
+      onSelected: () => ExportService.exportAllAsZip(context, ref),
+    ),
+    ContextMenuEntry(
+      label: ds.importNotes,
+      icon: Icons.file_upload_outlined,
+      onSelected: () => ImportService.showImportOptions(context, ref),
+    ),
+    if (isDesktopPlatform)
+      ContextMenuEntry(
+        label: ds.keyboardShortcuts,
+        icon: Icons.keyboard_alt_outlined,
+        shortcut: commandShortcutLabel(AppCommand.help),
+        onSelected: () => ShortcutsHelpDialog.show(context),
+      ),
   ];
 }
 

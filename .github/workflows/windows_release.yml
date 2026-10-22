@@ -55,7 +55,9 @@ jobs:
         if: matrix.name == 'x64'
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          # Allineato a pubspec.lock: le versioni transitive pinnate da Flutter
+          # cambiano tra SDK, quindi il lockfile vale solo con questa versione.
+          flutter-version: '3.44.4'
           cache: true
 
       # arm64: subosito/flutter-action scarica lo zip x64 dell'SDK (Dart x64,
@@ -70,7 +72,7 @@ jobs:
         run: |
           Write-Host "Architettura processo PowerShell: $env:PROCESSOR_ARCHITECTURE"
           $flutterDir = Join-Path $env:RUNNER_TEMP "flutter"
-          git clone --filter=blob:none --branch stable https://github.com/flutter/flutter.git $flutterDir
+          git clone --filter=blob:none --branch 3.44.4 https://github.com/flutter/flutter.git $flutterDir
           if ($LASTEXITCODE -ne 0) { throw "git clone di Flutter fallito." }
           Join-Path $flutterDir "bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 

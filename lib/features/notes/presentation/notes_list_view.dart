@@ -82,145 +82,62 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     widget.onNoteSelected?.call(note);
   }
 
-  Widget _buildSortMenu(BuildContext context, AppLocalizations l10n,
-      ThemeData theme, NoteSortOrder activeSort) {
-    return PopupMenuButton<NoteSortOrder>(
-      tooltip: l10n.sortBy,
-      icon: Icon(
-        Icons.sort_rounded,
-        size: 20,
-        color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-      ),
-      initialValue: activeSort,
-      onSelected: (order) {
-        ref.read(notesProvider.notifier).setSortOrder(order);
-      },
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: NoteSortOrder.updatedDesc,
-          child: Row(
-            children: [
-              Icon(Icons.history_rounded,
-                  size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(l10n.sortUpdatedDesc,
-                      style: const TextStyle(fontSize: 13))),
-              if (activeSort == NoteSortOrder.updatedDesc)
-                Icon(Icons.check_rounded,
-                    size: 16, color: theme.colorScheme.primary),
-            ],
-          ),
+  Widget _buildSortMenu(
+      AppLocalizations l10n, ThemeData theme, NoteSortOrder activeSort) {
+    ContextMenuEntry sortEntry(
+      String label,
+      IconData icon,
+      NoteSortOrder order,
+    ) {
+      return ContextMenuEntry(
+        label: label,
+        icon: icon,
+        isChecked: activeSort == order,
+        onSelected: () => ref.read(notesProvider.notifier).setSortOrder(order),
+      );
+    }
+
+    return Builder(
+      builder: (buttonContext) => IconButton(
+        tooltip: l10n.sortBy,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(
+          Icons.sort_rounded,
+          size: 20,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
         ),
-        PopupMenuItem(
-          value: NoteSortOrder.updatedAsc,
-          child: Row(
-            children: [
-              Icon(Icons.update_rounded,
-                  size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(l10n.sortUpdatedAsc,
-                      style: const TextStyle(fontSize: 13))),
-              if (activeSort == NoteSortOrder.updatedAsc)
-                Icon(Icons.check_rounded,
-                    size: 16, color: theme.colorScheme.primary),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: NoteSortOrder.createdDesc,
-          child: Row(
-            children: [
-              Icon(Icons.calendar_today_rounded,
-                  size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(l10n.sortCreatedDesc,
-                      style: const TextStyle(fontSize: 13))),
-              if (activeSort == NoteSortOrder.createdDesc)
-                Icon(Icons.check_rounded,
-                    size: 16, color: theme.colorScheme.primary),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: NoteSortOrder.createdAsc,
-          child: Row(
-            children: [
-              Icon(Icons.event_note_rounded,
-                  size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(l10n.sortCreatedAsc,
-                      style: const TextStyle(fontSize: 13))),
-              if (activeSort == NoteSortOrder.createdAsc)
-                Icon(Icons.check_rounded,
-                    size: 16, color: theme.colorScheme.primary),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: NoteSortOrder.titleAsc,
-          child: Row(
-            children: [
-              Icon(Icons.sort_by_alpha_rounded,
-                  size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(l10n.sortTitleAsc,
-                      style: const TextStyle(fontSize: 13))),
-              if (activeSort == NoteSortOrder.titleAsc)
-                Icon(Icons.check_rounded,
-                    size: 16, color: theme.colorScheme.primary),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: NoteSortOrder.titleDesc,
-          child: Row(
-            children: [
-              Icon(Icons.sort_by_alpha_rounded,
-                  size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(l10n.sortTitleDesc,
-                      style: const TextStyle(fontSize: 13))),
-              if (activeSort == NoteSortOrder.titleDesc)
-                Icon(Icons.check_rounded,
-                    size: 16, color: theme.colorScheme.primary),
-            ],
-          ),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: NoteSortOrder.custom,
-          child: Row(
-            children: [
-              Icon(Icons.drag_indicator_rounded,
-                  size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(l10n.sortCustom, style: const TextStyle(fontSize: 13)),
-                    Text(
-                      'Trascina le note per riordinarle',
-                      style:
-                          TextStyle(fontSize: 12, color: theme.mutedTextColor),
-                    ),
-                  ],
-                ),
+        onPressed: () {
+          final box = buttonContext.findRenderObject() as RenderBox;
+          showContextMenu(
+            buttonContext,
+            box.localToGlobal(Offset(0, box.size.height + 4)),
+            [
+              sortEntry(l10n.sortUpdatedDesc, Icons.history_rounded,
+                  NoteSortOrder.updatedDesc),
+              sortEntry(l10n.sortUpdatedAsc, Icons.update_rounded,
+                  NoteSortOrder.updatedAsc),
+              sortEntry(l10n.sortCreatedDesc, Icons.calendar_today_rounded,
+                  NoteSortOrder.createdDesc),
+              sortEntry(l10n.sortCreatedAsc, Icons.event_note_rounded,
+                  NoteSortOrder.createdAsc),
+              sortEntry(l10n.sortTitleAsc, Icons.sort_by_alpha_rounded,
+                  NoteSortOrder.titleAsc),
+              sortEntry(l10n.sortTitleDesc, Icons.sort_by_alpha_rounded,
+                  NoteSortOrder.titleDesc),
+              const ContextMenuEntry.divider(),
+              ContextMenuEntry(
+                label: l10n.sortCustom,
+                icon: Icons.drag_indicator_rounded,
+                description: 'Trascina le note per riordinarle',
+                isChecked: activeSort == NoteSortOrder.custom,
+                onSelected: () => ref
+                    .read(notesProvider.notifier)
+                    .setSortOrder(NoteSortOrder.custom),
               ),
-              if (activeSort == NoteSortOrder.custom)
-                Icon(Icons.check_rounded,
-                    size: 16, color: theme.colorScheme.primary),
             ],
-          ),
-        ),
-      ],
+          );
+        },
+      ),
     );
   }
 
@@ -329,7 +246,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  _buildSortMenu(context, l10n, theme, sortOrder),
+                  _buildSortMenu(l10n, theme, sortOrder),
                   const Spacer(),
                   FilledButton.tonalIcon(
                     style: FilledButton.styleFrom(
