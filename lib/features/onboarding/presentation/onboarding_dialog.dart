@@ -123,14 +123,15 @@ class _OnboardingDialogState extends ConsumerState<OnboardingDialog> {
                 ),
               ),
 
-              // Page Indicator Dots
+              // Page Indicator Dots: il puntino attivo cresce restando
+              // circolare (niente pillola allungata).
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
                   slides.length,
                   (index) => SizedBox(
-                    width: 24,
-                    height: 8,
+                    width: 20,
+                    height: 12,
                     child: TweenAnimationBuilder<double>(
                       tween: Tween<double>(
                         begin: 0,
@@ -143,7 +144,7 @@ class _OnboardingDialogState extends ConsumerState<OnboardingDialog> {
                             theme.colorScheme.outline.withValues(alpha: 0.4);
                         return Center(
                           child: Transform.scale(
-                            scaleX: 1 + (2 * value),
+                            scale: 1 + (0.2 * value),
                             child: Container(
                               width: 8,
                               height: 8,
@@ -153,7 +154,7 @@ class _OnboardingDialogState extends ConsumerState<OnboardingDialog> {
                                   theme.colorScheme.primary,
                                   value,
                                 ),
-                                borderRadius: BorderRadius.circular(4),
+                                shape: BoxShape.circle,
                               ),
                             ),
                           ),

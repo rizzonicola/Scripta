@@ -23,9 +23,15 @@ class _FakeDao implements NotesDao {
   dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
 }
 
-NoteRow _row(String id, {required int created, required int updated}) => NoteRow(
+NoteRow _row(
+  String id, {
+  required int created,
+  required int updated,
+  String? title,
+}) =>
+    NoteRow(
       id: id,
-      title: id,
+      title: title ?? id,
       content: 'c',
       folderId: null,
       isFavorite: false,
@@ -167,6 +173,30 @@ void main() {
       await n.setSortOrder(NoteSortOrder.custom);
       final created = n.createNote(folderId: 'f1');
       expect(n.state.notes.first.id, created.id);
+      n.dispose();
+    });
+
+    test('titoli con numeri seguono l\'ordine naturale in entrambi i versi', () async {
+      SharedPreferences.setMockInitialValues({});
+      final dao = _FakeDao()
+        ..rows['a'] = _row('a', title: 'Nota 10', created: 1, updated: 100)
+        ..rows['b'] = _row('b', title: 'nota 2', created: 2, updated: 90)
+        ..rows['c'] = _row('c', title: 'Nota 1', created: 3, updated: 80)
+        ..rows['d'] = _row('d', title: 'Nota 03', created: 4, updated: 70);
+      final n = NotesNotifier(dao: dao);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      await n.setSortOrder(NoteSortOrder.titleAsc);
+      expect(
+        n.state.notes.map((e) => e.title).toList(),
+        ['Nota 1', 'nota 2', 'Nota 03', 'Nota 10'],
+      );
+
+      await n.setSortOrder(NoteSortOrder.titleDesc);
+      expect(
+        n.state.notes.map((e) => e.title).toList(),
+        ['Nota 10', 'Nota 03', 'nota 2', 'Nota 1'],
+      );
       n.dispose();
     });
   });

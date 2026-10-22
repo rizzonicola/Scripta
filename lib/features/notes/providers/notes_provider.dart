@@ -276,7 +276,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
           decoded.forEach((k, v) {
             final parsed = _parseSort(v is String ? v : null);
             // Non sovrascrive scelte fatte mentre il caricamento era in corso.
-            if (parsed != null) _sortModes.putIfAbsent(k as String, () => parsed);
+            if (parsed != null) {
+              _sortModes.putIfAbsent(k as String, () => parsed);
+            }
           });
         }
       } catch (e) {
@@ -442,6 +444,55 @@ class NotesNotifier extends StateNotifier<NotesState> {
     return pa == null ? -1 : 1;
   }
 
+  /// Confronto alfabetico "naturale": le sequenze di cifre sono confrontate
+  /// come numeri, quindi "Nota 2" precede "Nota 10". Le stringhe arrivano già
+  /// minuscole da [_sort].
+  static int _compareNaturalTitles(String a, String b) {
+    var i = 0;
+    var j = 0;
+    while (i < a.length && j < b.length) {
+      final aCode = a.codeUnitAt(i);
+      final bCode = b.codeUnitAt(j);
+      final aIsDigit = _isAsciiDigit(aCode);
+      final bIsDigit = _isAsciiDigit(bCode);
+
+      if (aIsDigit && bIsDigit) {
+        final aStart = i;
+        final bStart = j;
+        while (i < a.length && _isAsciiDigit(a.codeUnitAt(i))) {
+          i++;
+        }
+        while (j < b.length && _isAsciiDigit(b.codeUnitAt(j))) {
+          j++;
+        }
+        // Gli zeri iniziali non cambiano il valore ("01" == "1").
+        var aSignificant = aStart;
+        while (aSignificant < i - 1 && a.codeUnitAt(aSignificant) == 0x30) {
+          aSignificant++;
+        }
+        var bSignificant = bStart;
+        while (bSignificant < j - 1 && b.codeUnitAt(bSignificant) == 0x30) {
+          bSignificant++;
+        }
+        final aLength = i - aSignificant;
+        final bLength = j - bSignificant;
+        if (aLength != bLength) return aLength < bLength ? -1 : 1;
+        final numeric =
+            a.substring(aSignificant, i).compareTo(b.substring(bSignificant, j));
+        if (numeric != 0) return numeric;
+        continue;
+      }
+
+      if (aCode != bCode) return aCode < bCode ? -1 : 1;
+      i++;
+      j++;
+    }
+    return (a.length - i).compareTo(b.length - j);
+  }
+
+  static bool _isAsciiDigit(int codeUnit) =>
+      codeUnit >= 0x30 && codeUnit <= 0x39;
+
   List<NoteModel> _sort(List<NoteModel> list, NoteSortOrder order) {
     final sorted = List<NoteModel>.from(list);
     // Posizioni dell'ordine manuale della cartella corrente (null per "Tutte
@@ -468,8 +519,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
         NoteSortOrder.updatedAsc => a.updatedAt.compareTo(b.updatedAt),
         NoteSortOrder.createdDesc => b.createdAt.compareTo(a.createdAt),
         NoteSortOrder.createdAsc => a.createdAt.compareTo(b.createdAt),
-        NoteSortOrder.titleAsc => titleKeys[a.id]!.compareTo(titleKeys[b.id]!),
-        NoteSortOrder.titleDesc => titleKeys[b.id]!.compareTo(titleKeys[a.id]!),
+        NoteSortOrder.titleAsc =>
+          _compareNaturalTitles(titleKeys[a.id]!, titleKeys[b.id]!),
+        NoteSortOrder.titleDesc =>
+          _compareNaturalTitles(titleKeys[b.id]!, titleKeys[a.id]!),
         NoteSortOrder.custom => folderPos == null
             ? a.orderIndex.compareTo(b.orderIndex)
             : _compareByFolderPosition(a, b, folderPos),

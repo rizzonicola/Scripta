@@ -104,10 +104,14 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
                 // Dual Mode Toggle: Edit <-> Read-Only
                 Container(
-                  height: 44,
+                  height: 38,
+                  padding: const EdgeInsets.all(3),
                   decoration: BoxDecoration(
                     color: theme.surfaceElevated,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(
+                      color: theme.colorScheme.outline.withValues(alpha: 0.35),
+                    ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -259,64 +263,79 @@ class _ModeToggleSegment extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    final selectedColor = theme.colorScheme.primary;
+
     return SizedBox(
-      height: 44,
+      height: 32,
       child: Tooltip(
         message: tooltip,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(6),
-            focusColor: theme.colorScheme.primary.withValues(alpha: 0.12),
-            child: Center(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                curve: Curves.easeOutCubic,
-                padding: EdgeInsets.symmetric(
-                  horizontal: title != null ? 10 : 8,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? theme.colorScheme.surface
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: isSelected
-                      ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
-                            blurRadius: 3,
-                            offset: const Offset(0, 1),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      icon,
-                      size: 15,
+        excludeFromSemantics: true,
+        child: Semantics(
+          button: true,
+          selected: isSelected,
+          label: tooltip,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(8),
+              focusColor: selectedColor.withValues(alpha: 0.12),
+              child: Center(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: title != null ? 11 : 9,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? theme.colorScheme.surface
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
                       color: isSelected
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                          ? selectedColor.withValues(alpha: 0.18)
+                          : Colors.transparent,
                     ),
-                    if (title != null) ...[
-                      const SizedBox(width: 6),
-                      Text(
-                        title!,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          fontWeight:
-                              isSelected ? FontWeight.w600 : FontWeight.normal,
-                          color: isSelected
-                              ? theme.colorScheme.onSurface
-                              : theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.7),
-                        ),
+                    boxShadow: isSelected
+                        ? [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.1),
+                              blurRadius: 5,
+                              offset: const Offset(0, 2),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        icon,
+                        size: 15,
+                        color: isSelected
+                            ? selectedColor
+                            : theme.colorScheme.onSurface
+                                .withValues(alpha: 0.7),
                       ),
+                      if (title != null) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          title!,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontWeight: isSelected
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                            color: isSelected
+                                ? theme.colorScheme.onSurface
+                                : theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
