@@ -30,7 +30,7 @@ jobs:
           cache: true
 
       - name: Install Dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       # Nessuna firma: l'IPA sarà ri-firmato dal sideloader (AltStore,
       # Sideloadly, ...) con l'Apple ID dell'utente.

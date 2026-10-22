@@ -39,7 +39,7 @@ jobs:
 
       - name: Build Flutter Linux
         run: |
-          flutter pub get
+          flutter pub get --enforce-lockfile
           flutter build linux --release
 
       - name: Prepare Bundle Directory

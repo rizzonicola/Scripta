@@ -19,7 +19,8 @@ void main() {
       final isOnline = await service.checkHealth('http://localhost:8080');
       expect(isOnline, isTrue);
 
-      final isOffline = await service.checkHealth('http://localhost:8080/nonexistent');
+      final isOffline =
+          await service.checkHealth('http://localhost:8080/nonexistent');
       expect(isOffline, isFalse);
     });
 
@@ -27,7 +28,8 @@ void main() {
       final client = MockClient((request) async {
         if (request.url.path == '/api/v1/auth/login') {
           final body = json.decode(request.body) as Map<String, dynamic>;
-          if (body['username'] == 'mario.rossi' && body['password'] == 'segreta') {
+          if (body['username'] == 'mario.rossi' &&
+              body['password'] == 'segreta') {
             return http.Response(
               json.encode({
                 'token': 'mock.jwt.token',
@@ -39,7 +41,8 @@ void main() {
               headers: {'content-type': 'application/json'},
             );
           }
-          return http.Response(json.encode({'error': 'credenziali non valide'}), 401);
+          return http.Response(
+              json.encode({'error': 'credenziali non valide'}), 401);
         }
         return http.Response('error', 500);
       });
@@ -124,7 +127,9 @@ void main() {
       expect(updated.fontSize, 18);
     });
 
-    test('sync sends last_synced_at + folders/notes and parses the pull response', () async {
+    test(
+        'sync sends last_synced_at + folders/notes and parses the pull response',
+        () async {
       final client = MockClient((request) async {
         if (request.url.path == '/api/v1/sync') {
           final body = json.decode(request.body) as Map<String, dynamic>;
@@ -231,7 +236,8 @@ void main() {
       final service = SyncApiService(client);
 
       expect(
-        () => service.getUserSettings(baseUrl: 'http://localhost:8080', token: 'expired'),
+        () => service.getUserSettings(
+            baseUrl: 'http://localhost:8080', token: 'expired'),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
       );
 
@@ -245,27 +251,55 @@ void main() {
       );
 
       expect(
-        () => service.sync(baseUrl: 'http://localhost:8080', token: 'expired', lastSyncedAt: 0, folders: const [], notes: const []),
+        () => service.sync(
+            baseUrl: 'http://localhost:8080',
+            token: 'expired',
+            lastSyncedAt: 0,
+            folders: const [],
+            notes: const []),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
       );
 
       expect(
-        () => service.downloadNoteMarkdown(baseUrl: 'http://localhost:8080', token: 'expired', noteId: 'x'),
+        () => service.downloadNoteMarkdown(
+            baseUrl: 'http://localhost:8080', token: 'expired', noteId: 'x'),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
       );
     });
 
-    test('handles 503 (server busy) as a SyncApiException with statusCode 503', () async {
+    test('handles 503 (server busy) as a SyncApiException with statusCode 503',
+        () async {
       final client = MockClient((request) async {
-        return http.Response(json.encode({'error': 'database temporaneamente occupato, riprovare'}), 503);
+        return http.Response(
+            json.encode(
+                {'error': 'database temporaneamente occupato, riprovare'}),
+            503);
       });
 
       final service = SyncApiService(client);
 
       expect(
-        () => service.sync(baseUrl: 'http://localhost:8080', token: 't', lastSyncedAt: 0, folders: const [], notes: const []),
+        () => service.sync(
+            baseUrl: 'http://localhost:8080',
+            token: 't',
+            lastSyncedAt: 0,
+            folders: const [],
+            notes: const []),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 503)),
       );
+    });
+
+    test('rifiuta http in chiaro verso host non loopback', () async {
+      final service = SyncApiService(MockClient((request) async {
+        fail('nessuna richiesta deve partire verso http non loopback');
+      }));
+
+      expect(
+        () => service.login(
+            baseUrl: 'http://example.com', username: 'u', password: 'p'),
+        throwsA(isA<SyncApiException>()),
+      );
+      expect(await service.checkHealth('http://example.com'), isFalse);
     });
   });
 }

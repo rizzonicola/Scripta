@@ -43,7 +43,7 @@ jobs:
           cache: true
 
       - name: Install Dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Static analysis
         run: flutter analyze
@@ -60,12 +60,15 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            # Nessun keystore (account sviluppatore non ancora creato).
-            # Si genera una chiave USA-E-GETTA solo per questa build: l'APK
-            # resta una vera build RELEASE (ottimizzata AOT, dimensioni e
-            # prestazioni normali), non di debug. Limite: la firma cambia a
-            # ogni esecuzione, quindi per installare una versione nuova sopra
-            # una precedente bisogna prima disinstallare la vecchia.
+            # Un tag è una release pubblica: una chiave usa-e-getta renderebbe
+            # impossibile verificare/aggiornare l'app e firmerebbe artefatti
+            # con un'identità diversa a ogni build. Meglio fallire che
+            # pubblicare una release non riproducibile.
+            if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              echo "::error::Release tag senza ANDROID_KEYSTORE_BASE64: firma di release obbligatoria." >&2
+              exit 1
+            fi
+            # Build da branch (non release): chiave temporanea solo per test.
             echo "::warning::Nessun keystore configurato: firma con chiave temporanea (build release ottimizzata, ma non aggiornabile in-place tra versioni)."
             EPHEMERAL_PASS="$(openssl rand -hex 16)"
             keytool -genkeypair -v \
@@ -82,6 +85,10 @@ jobs:
             echo "signed=true" >> "$GITHUB_OUTPUT"
             echo "ephemeral=true" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 presente ma manca una delle credenziali del keystore." >&2
+            exit 1
           fi
           echo "signed=true" >> "$GITHUB_OUTPUT"
           echo "ephemeral=false" >> "$GITHUB_OUTPUT"

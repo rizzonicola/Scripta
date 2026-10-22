@@ -94,7 +94,7 @@ jobs:
 
 
       - name: Install Dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Versione di sqlite3 risolta da pub
         shell: bash

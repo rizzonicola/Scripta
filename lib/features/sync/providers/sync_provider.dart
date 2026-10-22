@@ -154,6 +154,31 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// risposta 200 di sync; una risposta senza `caps` cancella la voce.
   final Map<String, ServerCaps> _capsByUrl = {};
 
+  /// Cambia a ogni login/logout/401: una risposta partita nella sessione
+  /// precedente non deve essere applicata alla sessione corrente (né far
+  /// scattare un logout della nuova sessione con un 401 ormai vecchio).
+  int _sessionGeneration = 0;
+
+  bool _isCurrentSession(int generation) =>
+      mounted && generation == _sessionGeneration;
+
+  /// Serializza le scritture delle credenziali: due login/logout che si
+  /// incrociano non devono mescolare token, URL e username nella secure
+  /// storage (es. token della sessione A con server della sessione B).
+  Future<void> _sessionWriteQueue = Future<void>.value();
+
+  Future<T> _withSessionWriteLock<T>(Future<T> Function() action) async {
+    final previous = _sessionWriteQueue;
+    final gate = Completer<void>();
+    _sessionWriteQueue = gate.future;
+    await previous;
+    try {
+      return await action();
+    } finally {
+      gate.complete();
+    }
+  }
+
   SyncNotifier(
     this._ref,
     this._apiService,
@@ -178,7 +203,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// in entrambi i casi nessuna funzione opzionale va usata.
   ServerCaps? get serverCaps => _capsByUrl[_capsKey(state.serverUrl)];
 
-  static String _capsKey(String url) => url.trim().replaceAll(RegExp(r'/+$'), '');
+  static String _capsKey(String url) =>
+      url.trim().replaceAll(RegExp(r'/+$'), '');
 
   void _rememberServerCaps(String serverUrl, ServerCaps? caps) {
     final key = _capsKey(serverUrl);
@@ -226,6 +252,20 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     await _clearTokenExpiry();
   }
 
+  /// Chiude la sessione [generation] per un 401. Incrementa la generazione
+  /// PRIMA di cancellare, così ogni altra risposta in volo della stessa
+  /// sessione viene scartata; se nel frattempo è partito un login nuovo, non
+  /// ne cancella le credenziali.
+  Future<void> _endSession(int generation) async {
+    if (generation != _sessionGeneration) return;
+    final endedGeneration = ++_sessionGeneration;
+    await _withSessionWriteLock(() async {
+      if (_sessionGeneration != endedGeneration) return;
+      await _clearAuthCredentials();
+    });
+    if (_sessionGeneration == endedGeneration) _stopConnectivityWatchdog();
+  }
+
   /// Vero se, secondo l'orologio LOCALE, il token è scaduto o sta per
   /// scadere. Scadenza ignota => falso.
   Future<bool> _tokenLooksExpired() async {
@@ -233,7 +273,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       final prefs = await SharedPreferences.getInstance();
       final expiry = prefs.getInt(_prefTokenExpiresAt);
       if (expiry == null) return false;
-      return DateTime.now().millisecondsSinceEpoch >= expiry - _tokenExpirySkewMs;
+      return DateTime.now().millisecondsSinceEpoch >=
+          expiry - _tokenExpirySkewMs;
     } catch (_) {
       return false;
     }
@@ -245,7 +286,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// scaduta, gestita dal chiamante); se il server risponde bene l'orologio del
   /// dispositivo è sfasato e si prosegue; ogni altro errore (rete) non decide
   /// nulla: si procede con la sync normale, che ha già i suoi ritentativi.
-  Future<void> _verifyTokenBeforeLargeUpload(String token, List<NoteRow> dirtyNotes) async {
+  Future<void> _verifyTokenBeforeLargeUpload(
+      String token, List<NoteRow> dirtyNotes) async {
     var chars = 0;
     for (final n in dirtyNotes) {
       chars += n.content.length;
@@ -279,8 +321,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     final inactivitySeconds = prefs.getInt(_prefInactivitySeconds) ?? 30;
 
     final lastSyncMillis = prefs.getInt(_prefLastSyncTime);
-    final lastSyncTime =
-        lastSyncMillis != null ? DateTime.fromMillisecondsSinceEpoch(lastSyncMillis) : null;
+    final lastSyncTime = lastSyncMillis != null
+        ? DateTime.fromMillisecondsSinceEpoch(lastSyncMillis)
+        : null;
 
     final savedServerUrl = await _secureStorage.getServerUrl() ?? '';
     final savedUsername = await _secureStorage.getUsername();
@@ -333,7 +376,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         // `launchRequests` segna il momento in cui partono insieme; per il
         // momento esatto del POST vale il protocollo M8 (`tshark`).
         PerfMarks.mark('sync.launchRequests');
-        unawaited(PerfMarks.timeAsync('sync.settings', fetchRemoteUserSettings));
+        unawaited(
+            PerfMarks.timeAsync('sync.settings', fetchRemoteUserSettings));
         // `sync.initial` copre l'intera `triggerSync`, compresi gli eventuali
         // giri di recupero (fino a 3 giri): non è il tempo sul filo.
         unawaited(PerfMarks.timeAsync('sync.initial', triggerSync));
@@ -385,7 +429,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// limitato a [_retryMaxDelay]. Se il server ha indicato `Retry-After` non si
   /// riprova prima.
   @visibleForTesting
-  Duration retryDelayFor(int attempt, Object error) => _retryDelayFor(attempt, error);
+  Duration retryDelayFor(int attempt, Object error) =>
+      _retryDelayFor(attempt, error);
 
   Duration _retryDelayFor(int attempt, Object error) {
     final exponential = _retryDelay.inMilliseconds * (1 << (attempt - 1));
@@ -407,7 +452,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// [_retryDelayFor]) e rispetta `Retry-After` di un 503. La somma delle attese
   /// non supera [_retryBudget]: se la prossima non ci sta, si rinuncia subito.
   Future<T> _withNetworkRetry<T>(Future<T> Function() action) async {
-    Object lastError = const SyncApiException('Errore di connessione sconosciuto');
+    Object lastError =
+        const SyncApiException('Errore di connessione sconosciuto');
     var waited = Duration.zero;
 
     for (int attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
@@ -469,6 +515,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     required String username,
     required String password,
   }) async {
+    final generation = ++_sessionGeneration;
     state = state.copyWith(
       isSyncing: true,
       lastError: () => null,
@@ -483,20 +530,29 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           password: password,
         ),
       );
+      // Un secondo login (o un logout) è partito mentre questa richiesta era
+      // in volo: non sovrascrivere credenziali e stato della sessione nuova.
+      if (!_isCurrentSession(generation)) return false;
 
-      await _secureStorage.saveAuthToken(response.token);
-      await _secureStorage.saveServerUrl(serverUrl);
-      await _secureStorage.saveUsername(response.username);
-      await _secureStorage.saveUserId(response.userId);
-      await _saveTokenExpiry(response.expiresAt);
+      final applied = await _withSessionWriteLock(() async {
+        if (!_isCurrentSession(generation)) return false;
+        await _secureStorage.saveAuthToken(response.token);
+        await _secureStorage.saveServerUrl(serverUrl);
+        await _secureStorage.saveUsername(response.username);
+        await _secureStorage.saveUserId(response.userId);
+        await _saveTokenExpiry(response.expiresAt);
+        if (!_isCurrentSession(generation)) return false;
 
-      state = state.copyWith(
-        isAuthenticated: true,
-        isOnline: true,
-        username: () => response.username,
-        isSyncing: false,
-        lastError: () => null,
-      );
+        state = state.copyWith(
+          isAuthenticated: true,
+          isOnline: true,
+          username: () => response.username,
+          isSyncing: false,
+          lastError: () => null,
+        );
+        return true;
+      });
+      if (!applied) return false;
 
       _startConnectivityWatchdog();
 
@@ -504,19 +560,22 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       await fetchRemoteUserSettings();
       await triggerSync();
 
-      return true;
+      return _isCurrentSession(generation);
     } catch (e) {
-      state = state.copyWith(
-        isAuthenticated: false,
-        isOnline: false,
-        isSyncing: false,
-        lastError: () => e is SyncApiException ? e.message : e.toString(),
-      );
+      if (_isCurrentSession(generation)) {
+        state = state.copyWith(
+          isAuthenticated: false,
+          isOnline: false,
+          isSyncing: false,
+          lastError: () => e is SyncApiException ? e.message : e.toString(),
+        );
+      }
       return false;
     }
   }
 
   Future<void> logout() async {
+    final generation = ++_sessionGeneration;
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
@@ -530,8 +589,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       await _apiService.logout(baseUrl: url, token: token);
     }
 
-    await _clearAuthCredentials();
-    if (!mounted) return;
+    // Se nel frattempo è partito un nuovo login, non cancellare le sue
+    // credenziali appena scritte: la sessione nuova vince.
+    await _withSessionWriteLock(() async {
+      if (_sessionGeneration != generation) return;
+      await _clearAuthCredentials();
+    });
+    if (!_isCurrentSession(generation)) return;
     state = state.copyWith(
       isAuthenticated: false,
       username: () => null,
@@ -619,7 +683,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!state.isAuthenticated) return;
 
     _folderStructureDebounceTimer?.cancel();
-    _folderStructureDebounceTimer = Timer(const Duration(milliseconds: 600), () {
+    _folderStructureDebounceTimer =
+        Timer(const Duration(milliseconds: 600), () {
       if (mounted) {
         unawaited(triggerSync());
       }
@@ -638,7 +703,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // SettingsNotifier.flushRemotePush), prima che l'app possa essere chiusa.
     _ref.read(settingsProvider.notifier).flushRemotePush();
     if (state.syncOnAppLifecycle) {
-      unawaited(triggerSync()); // no-op se non autenticati; accoda se già in corso
+      unawaited(
+          triggerSync()); // no-op se non autenticati; accoda se già in corso
     }
   }
 
@@ -679,7 +745,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         id: d.id,
         name: d.name,
         parentId: d.parentId,
-        isExpanded: true, // valore di default: applyRemoteLWW preserva quello locale se già presente
+        isExpanded:
+            true, // valore di default: applyRemoteLWW preserva quello locale se già presente
         updatedAt: d.updatedAt,
         deletedAt: d.deletedAt,
       );
@@ -692,7 +759,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         isFavorite: d.isFavorite,
         isPinned: d.isPinned,
         orderIndex: d.orderIndex,
-        createdAt: d.updatedAt, // valore di fallback: applyRemoteLWW preserva quello locale se già presente
+        createdAt: d
+            .updatedAt, // valore di fallback: applyRemoteLWW preserva quello locale se già presente
         updatedAt: d.updatedAt,
         deletedAt: d.deletedAt,
       );
@@ -741,7 +809,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // ci pensano i trigger e il watchdog di connettività) e al massimo
       // [_maxFollowUpRounds] volte di fila.
       for (var round = 0; round < _maxFollowUpRounds; round++) {
-        if (!ok || !_resyncRequested || !mounted || !state.isAuthenticated) break;
+        if (!ok || !_resyncRequested || !mounted || !state.isAuthenticated) {
+          break;
+        }
         _resyncRequested = false;
         _markSyncStarted();
         ok = await _runSyncGuarded();
@@ -774,15 +844,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// finisce solo ciò che sfugge (es. keystore di sistema illeggibile durante
   /// la lettura del token).
   Future<bool> _runSyncGuarded() async {
+    final generation = _sessionGeneration;
     try {
       return await _runSync();
     } catch (e, st) {
       debugPrint('SyncNotifier: errore imprevisto durante la sync: $e\n$st');
-      if (mounted) {
+      if (_isCurrentSession(generation)) {
         state = state.copyWith(
           isSyncing: false,
           lastError: () => e.toString(),
-          lastSyncMessage: () => 'Sincronizzazione non riuscita: errore interno',
+          lastSyncMessage: () =>
+              'Sincronizzazione non riuscita: errore interno',
         );
       }
       return false;
@@ -790,13 +862,27 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   }
 
   Future<bool> _runSync() async {
+    // Sessione e URL vanno catturati PRIMA di ogni await: se nel frattempo
+    // l'utente cambia account, questa sync non deve applicare la risposta
+    // della vecchia sessione al DB/alla UI della nuova.
+    final generation = _sessionGeneration;
+    final serverUrl = state.serverUrl;
+
     // Scrive il testo ancora in debounce (500 ms) prima di leggere le righe
     // dirty, così anche l'ultima battitura rientra in questo giro.
     await _ref.read(notesProvider.notifier).flushPendingSaves();
+    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+      return false;
+    }
 
     final token = await _secureStorage.getAuthToken();
+    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+      return false;
+    }
     if (token == null || token.isEmpty) {
-      if (mounted) state = state.copyWith(isAuthenticated: false, isSyncing: false);
+      if (mounted) {
+        state = state.copyWith(isAuthenticated: false, isSyncing: false);
+      }
       return false;
     }
 
@@ -808,19 +894,29 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // Massimo 2 tentativi: il secondo solo dopo aver riparato i record
       // rifiutati dal server con 422.
       for (var attempt = 0; attempt < 2; attempt++) {
+        if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+          return false;
+        }
+
         final cursor = await _syncMetaDao.getSyncCursor();
         final dirtyFolders = await _foldersDao.listDirty();
         final dirtyNotes = await _notesDao.listDirty();
+        if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+          return false;
+        }
 
         // Y-13-A: con un upload grosso e un token che sembra scaduto, prima si
         // verifica il token (un 401 arriva dal catch esterno, come sempre).
         await _verifyTokenBeforeLargeUpload(token, dirtyNotes);
+        if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+          return false;
+        }
 
         final SyncResponse response;
         try {
           response = await _withNetworkRetry(
             () => _apiService.sync(
-              baseUrl: state.serverUrl,
+              baseUrl: serverUrl,
               token: token,
               lastSyncedAt: cursor,
               folders: dirtyFolders.map(_toFolderDto).toList(),
@@ -829,6 +925,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           );
         } on SyncApiException catch (e) {
           if (e.statusCode == 422 && e.rejected.isNotEmpty && attempt == 0) {
+            if (!_isCurrentSession(generation) ||
+                serverUrl != state.serverUrl) {
+              return false;
+            }
             // Il server ha annullato l'intero batch e NON ha restituito un
             // cursore: il nostro resta invariato. Si ripara il riferimento
             // non valido (cartella inesistente sul server) e si riprova.
@@ -839,26 +939,39 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           rethrow;
         }
 
+        // La sessione può essere cambiata mentre la richiesta era in volo:
+        // scartare la risposta è l'unico modo per non applicare i dati di un
+        // account al DB dell'altro.
+        if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+          return false;
+        }
+
         // Y-14: capability annunciate dal server in QUESTA risposta (assenti =
         // server senza caps: nessuna funzione opzionale).
-        _rememberServerCaps(state.serverUrl, response.caps);
+        _rememberServerCaps(serverUrl, response.caps);
 
         // 1) Righe inviate -> pulite (solo se non ri-modificate durante il
         //    round-trip). 2) Applica la risposta (che include anche la
         //    versione del server per i conflitti persi). Ordine importante:
         //    markSynced prima, così l'eco del server sostituisce le righe.
-        await _foldersDao.markSynced({for (final f in dirtyFolders) f.id: f.updatedAt});
-        await _notesDao.markSynced({for (final n in dirtyNotes) n.id: n.updatedAt});
+        await _foldersDao
+            .markSynced({for (final f in dirtyFolders) f.id: f.updatedAt});
+        await _notesDao
+            .markSynced({for (final n in dirtyNotes) n.id: n.updatedAt});
 
-        await _foldersDao.applyRemoteLWWBatch(response.folders.map(_fromFolderDto).toList());
-        await _notesDao.applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
+        await _foldersDao
+            .applyRemoteLWWBatch(response.folders.map(_fromFolderDto).toList());
+        await _notesDao
+            .applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
 
         if (response.fullResync) {
           // Cursore più vecchio della retention dei tombstone del server:
           // la risposta è lo stato completo. Le righe pulite che il server non
           // elenca sono state eliminate mentre eravamo offline.
-          await _foldersDao.deleteCleanNotIn({for (final f in response.folders) f.id});
-          await _notesDao.deleteCleanNotIn({for (final n in response.notes) n.id});
+          await _foldersDao
+              .deleteCleanNotIn({for (final f in response.folders) f.id});
+          await _notesDao
+              .deleteCleanNotIn({for (final n in response.notes) n.id});
         }
 
         // Tombstone locali ormai inutili (confermati dal server o ricevuti da
@@ -902,17 +1015,23 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       }
       return false; // irraggiungibile: il ciclo ritorna o lancia
     } catch (e) {
-      if (!mounted) return false;
+      // Un errore (anche 401) della sessione precedente non deve toccare la
+      // sessione nuova.
+      if (!_isCurrentSession(generation)) return false;
       final isAuthError = e is SyncApiException && e.statusCode == 401;
       final isRejected = e is SyncApiException && e.statusCode == 422;
       // Un errore di SQLite locale non dice nulla sulla raggiungibilità del
       // server: prima veniva mostrato come "server non raggiungibile".
       final isLocalDbError = e is DatabaseException;
-      if (isLocalDbError) debugPrint('SyncNotifier: errore del database locale: $e');
+      if (isLocalDbError) {
+        debugPrint('SyncNotifier: errore del database locale: $e');
+      }
       state = state.copyWith(
         isAuthenticated: isAuthError ? false : state.isAuthenticated,
         // Un 422 è una risposta del server (quindi è online): non va mostrato Offline.
-        isOnline: (isAuthError || isRejected || isLocalDbError) ? state.isOnline : false,
+        isOnline: (isAuthError || isRejected || isLocalDbError)
+            ? state.isOnline
+            : false,
         isSyncing: false,
         lastError: () => e is SyncApiException ? e.message : e.toString(),
         lastSyncMessage: () => isAuthError
@@ -924,8 +1043,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
                     : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       if (isAuthError) {
-        await _clearAuthCredentials();
-        _stopConnectivityWatchdog();
+        await _endSession(generation);
       }
       return false;
     }
@@ -948,7 +1066,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       } else if (r.kind == 'folder') {
         final row = await _foldersDao.getById(r.id);
         if (row != null && row.parentId != null) {
-          await _foldersDao.upsert(row.copyWith(parentId: null, updatedAt: now));
+          await _foldersDao
+              .upsert(row.copyWith(parentId: null, updatedAt: now));
         }
       }
     }
@@ -957,29 +1076,40 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// Downloads remote user preferences and applies them locally
   Future<void> fetchRemoteUserSettings() async {
     if (!state.isAuthenticated) return;
+    final generation = _sessionGeneration;
+    final serverUrl = state.serverUrl;
     final token = await _secureStorage.getAuthToken();
+    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) return;
     if (token == null) return;
 
     final mark = _reachabilityMark();
     try {
       final remoteSettings = await _withNetworkRetry(
         () => _apiService.getUserSettings(
-          baseUrl: state.serverUrl,
+          baseUrl: serverUrl,
           token: token,
         ),
       );
+      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+        return;
+      }
       _networkSuccessCount++;
-      unawaited(_ref.read(settingsProvider.notifier).applyRemoteSettings(remoteSettings));
+      unawaited(_ref
+          .read(settingsProvider.notifier)
+          .applyRemoteSettings(remoteSettings));
     } catch (e) {
+      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+        return;
+      }
       if (e is SyncApiException && e.statusCode == 401) {
         final reason = e.message;
         state = state.copyWith(
           isAuthenticated: false,
           lastError: () => reason,
-          lastSyncMessage: () => 'Sessione scaduta: effettua nuovamente l\'accesso',
+          lastSyncMessage: () =>
+              'Sessione scaduta: effettua nuovamente l\'accesso',
         );
-        await _clearAuthCredentials();
-        _stopConnectivityWatchdog();
+        await _endSession(generation);
       } else if (!_reachedServerSince(mark)) {
         // Se nel frattempo un'altra richiesta è riuscita (all'avvio gira in
         // parallelo alla sync), questo fallimento è vecchio: vedi
@@ -992,27 +1122,33 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// Sends updated preferences to PUT /api/v1/user/settings
   Future<void> pushUserSettings(UserSettingsDto settings) async {
     if (!state.isAuthenticated) return;
+    final generation = _sessionGeneration;
+    final serverUrl = state.serverUrl;
     final token = await _secureStorage.getAuthToken();
+    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) return;
     if (token == null) return;
 
     try {
       await _withNetworkRetry(
         () => _apiService.updateUserSettings(
-          baseUrl: state.serverUrl,
+          baseUrl: serverUrl,
           token: token,
           settings: settings,
         ),
       );
     } catch (e) {
+      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+        return;
+      }
       if (e is SyncApiException && e.statusCode == 401) {
         final reason = e.message;
         state = state.copyWith(
           isAuthenticated: false,
           lastError: () => reason,
-          lastSyncMessage: () => 'Sessione scaduta: effettua nuovamente l\'accesso',
+          lastSyncMessage: () =>
+              'Sessione scaduta: effettua nuovamente l\'accesso',
         );
-        await _clearAuthCredentials();
-        _stopConnectivityWatchdog();
+        await _endSession(generation);
       } else {
         state = state.copyWith(isOnline: false);
       }

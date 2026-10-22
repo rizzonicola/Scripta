@@ -19,9 +19,13 @@ class SyncApiException implements Exception {
   /// (secondi): il ritentativo non deve partire prima (Y-11).
   final Duration? retryAfter;
 
-  const SyncApiException(this.message, [this.statusCode, this.rejected = const []]) : retryAfter = null;
+  const SyncApiException(this.message,
+      [this.statusCode, this.rejected = const []])
+      : retryAfter = null;
 
-  const SyncApiException.withRetryAfter(this.message, this.statusCode, this.retryAfter) : rejected = const [];
+  const SyncApiException.withRetryAfter(
+      this.message, this.statusCode, this.retryAfter)
+      : rejected = const [];
 
   @override
   String toString() =>
@@ -98,7 +102,8 @@ class SyncApiService {
   final http.Client _client;
   final SyncTimeouts _timeouts;
 
-  SyncApiService([http.Client? client, SyncTimeouts timeouts = const SyncTimeouts()])
+  SyncApiService(
+      [http.Client? client, SyncTimeouts timeouts = const SyncTimeouts()])
       : _client = client ?? http.Client(),
         _timeouts = timeouts;
 
@@ -174,10 +179,27 @@ class SyncApiService {
     }
     // Solo http/https: nessun altro schema (file:, ftp:, ...) è un server valido.
     final uri = Uri.tryParse(url);
-    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https') || uri.host.isEmpty) {
-      throw const SyncApiException('URL del server non valido: usa http:// o https://', 400);
+    if (uri == null ||
+        !(uri.scheme == 'http' || uri.scheme == 'https') ||
+        uri.host.isEmpty) {
+      throw const SyncApiException(
+          'URL del server non valido: usa https://', 400);
+    }
+    // Il token viaggia nell'header Authorization: su http in chiaro può essere
+    // letto da chiunque sulla rete. Consentiamo http solo verso il loopback
+    // (server di sviluppo in locale/emulatore).
+    if (uri.scheme == 'http' && !_isLoopbackHost(uri.host)) {
+      throw const SyncApiException(
+        'URL non sicuro: usa https:// (http è ammesso solo per localhost)',
+        400,
+      );
     }
     return url;
+  }
+
+  static bool _isLoopbackHost(String host) {
+    final h = host.toLowerCase();
+    return h == 'localhost' || h == '127.0.0.1' || h == '::1';
   }
 
   /// Pings the server health endpoint
@@ -185,7 +207,8 @@ class SyncApiService {
     try {
       final clean = _cleanUrl(baseUrl); // URL non valido -> catch -> false
       final uri = Uri.parse('$clean/healthz');
-      final response = await _client.get(uri).timeout(const Duration(seconds: 4));
+      final response =
+          await _client.get(uri).timeout(const Duration(seconds: 4));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -204,7 +227,10 @@ class SyncApiService {
     final response = await _client
         .post(
           uri,
-          headers: {'Content-Type': 'application/json', 'X-Scripta-Client': clientHeaderValue},
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Scripta-Client': clientHeaderValue
+          },
           body: json.encode({
             'username': username,
             'password': password,
@@ -218,7 +244,9 @@ class SyncApiService {
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Credenziali non valide', 401);
     } else {
-      throw SyncApiException(_extractError(bodyText(response), 'Errore durante l\'autenticazione'), response.statusCode);
+      throw SyncApiException(
+          _extractError(bodyText(response), 'Errore durante l\'autenticazione'),
+          response.statusCode);
     }
   }
 
@@ -228,12 +256,10 @@ class SyncApiService {
   Future<void> logout({required String baseUrl, required String token}) async {
     try {
       final clean = _cleanUrl(baseUrl);
-      await _client
-          .post(
-            Uri.parse('$clean/api/v1/auth/logout'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 5));
+      await _client.post(
+        Uri.parse('$clean/api/v1/auth/logout'),
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 5));
     } catch (_) {
       // Ignorato: il token verrà comunque scartato localmente.
     }
@@ -262,7 +288,9 @@ class SyncApiService {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else {
       throw SyncApiException(
-          _extractError(bodyText(response), 'Impossibile scaricare le impostazioni remote'), response.statusCode);
+          _extractError(bodyText(response),
+              'Impossibile scaricare le impostazioni remote'),
+          response.statusCode);
     }
   }
 
@@ -293,7 +321,9 @@ class SyncApiService {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else {
       throw SyncApiException(
-          _extractError(bodyText(response), 'Impossibile aggiornare le impostazioni utente'), response.statusCode);
+          _extractError(bodyText(response),
+              'Impossibile aggiornare le impostazioni utente'),
+          response.statusCode);
     }
   }
 
@@ -313,7 +343,8 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/sync');
 
-    final payload = SyncRequest(lastSyncedAt: lastSyncedAt, folders: folders, notes: notes);
+    final payload =
+        SyncRequest(lastSyncedAt: lastSyncedAt, folders: folders, notes: notes);
     final requestBody = await _encodeSyncBody(payload);
 
     final response = await _postWithProgressTimeout(
@@ -346,9 +377,15 @@ class SyncApiService {
             .map((e) => SyncRejectedItem.fromJson(e as Map<String, dynamic>))
             .toList();
       } catch (_) {}
-      throw SyncApiException('Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)', 422, rejected);
+      throw SyncApiException(
+          'Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)',
+          422,
+          rejected);
     } else {
-      throw SyncApiException(_extractError(bodyText(response), 'Errore durante la sincronizzazione'), response.statusCode);
+      throw SyncApiException(
+          _extractError(
+              bodyText(response), 'Errore durante la sincronizzazione'),
+          response.statusCode);
     }
   }
 
@@ -362,7 +399,8 @@ class SyncApiService {
   /// risposta era in ricezione, se ne annulla la lettura chiudendo la
   /// connessione. L'invio fermo non è annullabile con `http.Client`: come
   /// prima, resta in sospeso finché il sistema operativo non lo chiude.
-  Future<http.Response> _postWithProgressTimeout(Uri uri, Map<String, String> headers, Uint8List body) {
+  Future<http.Response> _postWithProgressTimeout(
+      Uri uri, Map<String, String> headers, Uint8List body) {
     final t = _timeouts;
     final failure = Completer<http.Response>();
     Timer? watchdog;
@@ -375,7 +413,8 @@ class SyncApiService {
       watchdog?.cancel();
       final sub = subscription;
       if (sub != null) unawaited(sub.cancel());
-      failure.completeError(TimeoutException('Sync senza progressi: $what', limit));
+      failure.completeError(
+          TimeoutException('Sync senza progressi: $what', limit));
     }
 
     void arm(Duration limit, String what) {
@@ -384,7 +423,8 @@ class SyncApiService {
       watchdog = Timer(limit, () => fail(limit, what));
     }
 
-    final totalTimer = Timer(t.total, () => fail(t.total, 'tempo totale superato'));
+    final totalTimer =
+        Timer(t.total, () => fail(t.total, 'tempo totale superato'));
     final request = _ProgressRequest(
       'POST',
       uri,
@@ -439,7 +479,8 @@ class SyncApiService {
     required String noteId,
   }) async {
     final clean = _cleanUrl(baseUrl);
-    final uri = Uri.parse('$clean/api/v1/notes/download?id=${Uri.encodeComponent(noteId)}');
+    final uri = Uri.parse(
+        '$clean/api/v1/notes/download?id=${Uri.encodeComponent(noteId)}');
 
     final response = await _client.get(
       uri,
@@ -451,7 +492,10 @@ class SyncApiService {
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
     } else {
-      throw SyncApiException(_extractError(bodyText(response), 'Impossibile scaricare la nota dal server'), response.statusCode);
+      throw SyncApiException(
+          _extractError(
+              bodyText(response), 'Impossibile scaricare la nota dal server'),
+          response.statusCode);
     }
   }
 
