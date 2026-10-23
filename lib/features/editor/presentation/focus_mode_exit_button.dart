@@ -21,38 +21,61 @@ class _FocusModeExitButtonState extends ConsumerState<FocusModeExitButton> {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final isHighlighted = _isHovered || _hasFocus;
 
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 160),
       curve: Curves.easeOutCubic,
-      opacity: !isDesktopPlatform || _isHovered || _hasFocus ? 1.0 : 0.35,
+      opacity: isHighlighted
+          ? 1.0
+          : isDesktopPlatform
+              ? 0.58
+              : 0.82,
       child: Tooltip(
         message: l10n.exitFocusMode,
-        child: Material(
-          elevation: 4,
-          shape: const CircleBorder(),
-          color: isDark ? const Color(0xFF222533) : Colors.white,
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            focusColor: theme.colorScheme.primary.withValues(alpha: 0.16),
-            onHover: (value) => setState(() => _isHovered = value),
-            onFocusChange: (value) => setState(() => _hasFocus = value),
-            onTap: () {
-              ref.read(editorProvider.notifier).exitFocusMode();
-            },
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.4),
-                  width: 1,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color:
+                (isDark ? const Color(0xFF222533) : theme.colorScheme.surface)
+                    .withValues(alpha: isDark ? 0.68 : 0.78),
+            border: Border.all(
+              color: theme.colorScheme.outline
+                  .withValues(alpha: isHighlighted ? 0.5 : 0.3),
+              width: 1,
+            ),
+            boxShadow: isHighlighted
+                ? [
+                    BoxShadow(
+                      color:
+                          Colors.black.withValues(alpha: isDark ? 0.28 : 0.12),
+                      blurRadius: 14,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              focusColor: theme.colorScheme.primary.withValues(alpha: 0.16),
+              onHover: (value) => setState(() => _isHovered = value),
+              onFocusChange: (value) => setState(() => _hasFocus = value),
+              onTap: () {
+                ref.read(editorProvider.notifier).exitFocusMode();
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Icon(
+                  Icons.fullscreen_exit_rounded,
+                  size: 22,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.92),
                 ),
-              ),
-              child: Icon(
-                Icons.fullscreen_exit_rounded,
-                size: 22,
-                color: theme.colorScheme.onSurface,
               ),
             ),
           ),

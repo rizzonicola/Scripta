@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.scripta"
+    namespace = "cc.poppi.scripta"
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.scripta"
+        applicationId = "cc.poppi.scripta"
         minSdk = flutter.minSdkVersion
         targetSdk = 37
         versionCode = flutter.versionCode
