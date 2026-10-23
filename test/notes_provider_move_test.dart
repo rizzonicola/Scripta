@@ -64,10 +64,39 @@ class FakeNotesDao implements NotesDao {
   }
 
   @override
-  Future<void> hardDeleteIds(List<String> ids) async {
-    for (final id in ids) {
-      _rows.remove(id);
-    }
+  Future<void> replaceId(String oldId, String newId) async {
+    final row = _rows.remove(oldId);
+    if (row == null) return;
+    _rows[newId] = NoteRow(
+      id: newId,
+      title: row.title,
+      content: row.content,
+      folderId: row.folderId,
+      isFavorite: row.isFavorite,
+      isPinned: row.isPinned,
+      orderIndex: row.orderIndex,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+    );
+  }
+
+  @override
+  Future<void> updateCreatedAt(String id, DateTime createdAt) async {
+    final row = _rows[id];
+    if (row == null) return;
+    _rows[id] = NoteRow(
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      folderId: row.folderId,
+      isFavorite: row.isFavorite,
+      isPinned: row.isPinned,
+      orderIndex: row.orderIndex,
+      createdAt: createdAt.toUtc().millisecondsSinceEpoch,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+    );
   }
 
   @override
@@ -89,14 +118,18 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       final note = notifier.createNote(folderId: 'personal-folder-id');
-      final beforeMove = notifier.state.notes.firstWhere((n) => n.id == note.id);
+      final beforeMove =
+          notifier.state.notes.firstWhere((n) => n.id == note.id);
       expect(beforeMove.folderId, 'personal-folder-id');
 
-      notifier.moveNote(note.id, 'work-folder-id');
+      await notifier.moveNote(note.id, 'work-folder-id');
 
       final afterMove = notifier.state.notes.firstWhere((n) => n.id == note.id);
       expect(afterMove.folderId, 'work-folder-id');
-      expect(afterMove.updatedAt.isAfter(beforeMove.updatedAt) || afterMove.updatedAt.isAtSameMomentAs(beforeMove.updatedAt), isTrue);
+      expect(
+          afterMove.updatedAt.isAfter(beforeMove.updatedAt) ||
+              afterMove.updatedAt.isAtSameMomentAs(beforeMove.updatedAt),
+          isTrue);
     });
 
     test('moving to null (root) clears the folder', () async {
@@ -104,7 +137,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       final note = notifier.createNote(folderId: 'folder-a');
-      notifier.moveNote(note.id, null);
+      await notifier.moveNote(note.id, null);
 
       final updated = notifier.state.notes.firstWhere((n) => n.id == note.id);
       expect(updated.folderId, isNull);
@@ -117,20 +150,21 @@ void main() {
       final note = notifier.createNote(folderId: 'folder-a');
       final before = notifier.state.notes.firstWhere((n) => n.id == note.id);
 
-      notifier.moveNote(note.id, 'folder-a');
+      await notifier.moveNote(note.id, 'folder-a');
 
       final after = notifier.state.notes.firstWhere((n) => n.id == note.id);
       expect(after.updatedAt, before.updatedAt);
       expect(after.folderId, 'folder-a');
     });
 
-    test('deleteNote removes it from the active list and persists a tombstone', () async {
+    test('deleteNote removes it from the active list and persists a tombstone',
+        () async {
       final dao = FakeNotesDao();
       final notifier = NotesNotifier(dao: dao);
       await Future<void>.delayed(Duration.zero);
 
       final note = notifier.createNote();
-      notifier.deleteNote(note.id);
+      await notifier.deleteNote(note.id);
 
       expect(notifier.state.notes.any((n) => n.id == note.id), isFalse);
 

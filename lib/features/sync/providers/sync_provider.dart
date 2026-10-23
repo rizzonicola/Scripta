@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' show DatabaseException;
+import 'package:uuid/uuid.dart';
 import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
@@ -153,6 +154,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// Capability annunciate dal server, per URL (Y-14). Si aggiornano a ogni
   /// risposta 200 di sync; una risposta senza `caps` cancella la voce.
   final Map<String, ServerCaps> _capsByUrl = {};
+  final _uuid = const Uuid();
 
   /// Cambia a ogni login/logout/401: una risposta partita nella sessione
   /// precedente non deve essere applicata alla sessione corrente (né far
@@ -510,11 +512,56 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     return isOnline;
   }
 
+  static String _normalizedServerUrl(String url) =>
+      url.trim().replaceAll(RegExp(r'/+$'), '');
+
+  static String _accountIdentity(String serverUrl, String userId) =>
+      '${_normalizedServerUrl(serverUrl)}|$userId';
+
+  /// Cambio account: i dati locali dell'utenza precedente non devono essere
+  /// mostrati né spinti sul server della nuova. Si cancellano note, cartelle
+  /// e stato di sync (cursore compreso) e si azzerano i notifier; restano
+  /// invece le preferenze di aspetto, che non appartengono a un account.
+  Future<void> _resetForAccountSwitch(String newIdentity) async {
+    _resyncRequested = false;
+    _inactivityTimer?.cancel();
+    _noteSwitchDebounceTimer?.cancel();
+    _folderStructureDebounceTimer?.cancel();
+    _capsByUrl.clear();
+
+    // Annulla/attende l'autosave prima della cancellazione: un upsert tardivo
+    // riscriverebbe una nota appena eliminata.
+    await _ref.read(notesProvider.notifier).prepareForAccountReset();
+    await _notesDao.hardDeleteAll();
+    await _foldersDao.hardDeleteAll();
+    await _syncMetaDao.clearSyncState(accountIdentity: newIdentity);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefLastSyncTime);
+
+    await _ref.read(folderProvider.notifier).refreshFromDb();
+    await _ref.read(notesProvider.notifier).refreshFromDb();
+
+    if (mounted) {
+      state = state.copyWith(
+        lastSyncTime: () => null,
+        lastSyncMessage: () => null,
+        lastError: () => null,
+      );
+    }
+  }
+
   Future<bool> login({
     required String serverUrl,
     required String username,
     required String password,
   }) async {
+    // Se il login parte mentre `_init` sta ancora leggendo le credenziali
+    // salvate, senza questa attesa `_init` potrebbe applicare per ultimo lo
+    // stato del vecchio account (o `isAuthenticated: false`) sopra quello
+    // appena impostato dal login.
+    await initialized;
+    if (!mounted) return false;
     final generation = ++_sessionGeneration;
     state = state.copyWith(
       isSyncing: true,
@@ -536,6 +583,33 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
       final applied = await _withSessionWriteLock(() async {
         if (!_isCurrentSession(generation)) return false;
+
+        final newIdentity = _accountIdentity(serverUrl, response.userId);
+        final previousIdentity = await _syncMetaDao.getAccountIdentity();
+        String? previousUserId;
+        try {
+          previousUserId = await _secureStorage.getUserId();
+        } catch (_) {}
+        final previousUrl = await _secureStorage.getServerUrl();
+
+        // `previousIdentity` è la fonte nuova; il confronto con userId/URL
+        // salvati copre chi arriva da una versione precedente (dove
+        // l'identità in `sync_meta` non esisteva ancora).
+        final switchedByIdentity =
+            previousIdentity != null && previousIdentity != newIdentity;
+        final switchedByLegacy = previousIdentity == null &&
+            previousUserId != null &&
+            previousUserId.isNotEmpty &&
+            (previousUserId != response.userId ||
+                _normalizedServerUrl(previousUrl ?? '') !=
+                    _normalizedServerUrl(serverUrl));
+        if (switchedByIdentity || switchedByLegacy) {
+          await _resetForAccountSwitch(newIdentity);
+        } else {
+          await _syncMetaDao.setAccountIdentity(newIdentity);
+        }
+        if (!_isCurrentSession(generation)) return false;
+
         await _secureStorage.saveAuthToken(response.token);
         await _secureStorage.saveServerUrl(serverUrl);
         await _secureStorage.saveUsername(response.username);
@@ -1020,6 +1094,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       if (!_isCurrentSession(generation)) return false;
       final isAuthError = e is SyncApiException && e.statusCode == 401;
       final isRejected = e is SyncApiException && e.statusCode == 422;
+      // 502 = risposta 200 non decodificabile: il server ha risposto, quindi
+      // non è offline; il messaggio deve dire che il problema è la risposta.
+      final isBadResponse = e is SyncApiException && e.statusCode == 502;
       // Un errore di SQLite locale non dice nulla sulla raggiungibilità del
       // server: prima veniva mostrato come "server non raggiungibile".
       final isLocalDbError = e is DatabaseException;
@@ -1029,7 +1106,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       state = state.copyWith(
         isAuthenticated: isAuthError ? false : state.isAuthenticated,
         // Un 422 è una risposta del server (quindi è online): non va mostrato Offline.
-        isOnline: (isAuthError || isRejected || isLocalDbError)
+        isOnline: (isAuthError || isRejected || isBadResponse || isLocalDbError)
             ? state.isOnline
             : false,
         isSyncing: false,
@@ -1038,9 +1115,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             ? 'Sessione scaduta: effettua nuovamente l\'accesso'
             : isRejected
                 ? 'Sincronizzazione non riuscita: alcuni elementi non sono validi per il server'
-                : isLocalDbError
-                    ? 'Sincronizzazione non riuscita: errore del database locale'
-                    : 'Sincronizzazione non riuscita: server non raggiungibile',
+                : isBadResponse
+                    ? 'Sincronizzazione non riuscita: risposta del server non valida'
+                    : isLocalDbError
+                        ? 'Sincronizzazione non riuscita: errore del database locale'
+                        : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       if (isAuthError) {
         await _endSession(generation);
@@ -1055,17 +1134,42 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// radice. Le righe riparate risultano modificate (`dirty`, `updated_at`
   /// nuovo) e verranno inviate al tentativo successivo. Nessun dato di
   /// contenuto va perso.
+  ///
+  /// Gli id non validi si riparano PRIMA dei riferimenti: se il server ha
+  /// rifiutato sia una cartella sia una nota che la referenzia, rimappare
+  /// l'id per primo evita di spostare inutilmente la nota alla radice.
   Future<void> _repairRejected(List<SyncRejectedItem> rejected) async {
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    for (final r in rejected) {
+
+    for (final r in rejected.where((r) => r.reason == 'invalid_id')) {
+      // L'id non è valido per il server (es. riga importata/corrotta da una
+      // vecchia versione): il contenuto resta, cambia solo la chiave. Il
+      // replaceId rimappa già figli e note di una cartella.
+      if (r.kind == 'note') {
+        await _notesDao.replaceId(r.id, _uuid.v4());
+      } else if (r.kind == 'folder') {
+        await _foldersDao.replaceId(r.id, _uuid.v4(), now);
+      }
+    }
+
+    for (final r in rejected.where((r) => r.reason != 'invalid_id')) {
       if (r.kind == 'note') {
         final row = await _notesDao.getById(r.id);
-        if (row != null && row.folderId != null) {
+        final folderId = row?.folderId;
+        if (row == null || folderId == null) continue;
+        // Se la cartella esiste ancora (magari appena riparata in questa
+        // stessa passata), il riferimento è valido: spostare la nota alla
+        // radice perderebbe un'associazione che il retry può salvare.
+        final folder = await _foldersDao.getById(folderId);
+        if (folder == null || folder.deletedAt != null) {
           await _notesDao.upsert(row.copyWith(folderId: null, updatedAt: now));
         }
       } else if (r.kind == 'folder') {
         final row = await _foldersDao.getById(r.id);
-        if (row != null && row.parentId != null) {
+        final parentId = row?.parentId;
+        if (row == null || parentId == null) continue;
+        final parent = await _foldersDao.getById(parentId);
+        if (parent == null || parent.deletedAt != null) {
           await _foldersDao
               .upsert(row.copyWith(parentId: null, updatedAt: now));
         }

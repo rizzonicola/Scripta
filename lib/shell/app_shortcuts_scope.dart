@@ -36,10 +36,15 @@ class AppShortcutsScope extends ConsumerStatefulWidget {
   /// diventare visibile (layout mobile a pannello singolo).
   final VoidCallback? onEditorRequested;
 
+  /// Chiamato quando un comando deve mostrare la lista note (layout mobile a
+  /// pannello singolo), prima di chiedere il focus alla ricerca globale.
+  final VoidCallback? onNotesListRequested;
+
   const AppShortcutsScope({
     super.key,
     required this.child,
     this.onEditorRequested,
+    this.onNotesListRequested,
   });
 
   @override
@@ -157,7 +162,19 @@ class _AppShortcutsScopeState extends ConsumerState<AppShortcutsScope> {
         return true;
 
       case AppCommand.searchNotes:
-        ref.read(globalSearchFocusRequestProvider.notifier).request();
+        // Su mobile l'editor sostituisce la lista: prima bisogna tornare
+        // alla lista, poi chiedere il focus al campo che viene costruito.
+        final switchToList = widget.onNotesListRequested;
+        if (switchToList == null) {
+          ref.read(globalSearchFocusRequestProvider.notifier).request();
+        } else {
+          switchToList();
+          unawaited(() async {
+            await WidgetsBinding.instance.endOfFrame;
+            if (!mounted) return;
+            ref.read(globalSearchFocusRequestProvider.notifier).request();
+          }());
+        }
         return true;
 
       case AppCommand.toggleMode:

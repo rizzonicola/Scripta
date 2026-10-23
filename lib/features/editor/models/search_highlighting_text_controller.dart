@@ -34,8 +34,6 @@ class SearchHighlightingTextEditingController extends TextEditingController {
     notifyListeners();
   }
 
-  void clearMatches() => setMatches(const [], -1);
-
   @override
   TextSpan buildTextSpan({
     required BuildContext context,
@@ -73,7 +71,8 @@ class SearchHighlightingTextEditingController extends TextEditingController {
       if (start >= end) continue;
 
       if (start > cursor) {
-        children.add(TextSpan(text: text.substring(cursor, start), style: style));
+        children
+            .add(TextSpan(text: text.substring(cursor, start), style: style));
       }
 
       final isActive = i == _activeMatchIndex;

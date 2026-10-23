@@ -196,35 +196,25 @@ void main() {
       expect(syncResp.notes.first.content, '# Vince il server');
     });
 
-    test('downloadNoteMarkdown fetches raw markdown by id', () async {
-      final client = MockClient((request) async {
-        if (request.url.path == '/api/v1/notes/download') {
-          final id = request.url.queryParameters['id'];
-          if (id == 'note-123') {
-            return http.Response('# Contenuto remoto', 200, headers: {
-              'content-type': 'text/markdown; charset=utf-8',
-            });
-          }
-          return http.Response('file non trovato', 404);
-        }
-        return http.Response('error', 500);
-      });
-
-      final service = SyncApiService(client);
-      final content = await service.downloadNoteMarkdown(
-        baseUrl: 'http://localhost:8080',
-        token: 'valid_token',
-        noteId: 'note-123',
+    test('un 200 con JSON malformato è un 502 non transitorio, non offline',
+        () async {
+      final client = MockClient(
+        (_) async => http.Response('<html>non json</html>', 200),
       );
-      expect(content, '# Contenuto remoto');
+      final service = SyncApiService(client);
 
       expect(
-        () => service.downloadNoteMarkdown(
+        () => service.sync(
           baseUrl: 'http://localhost:8080',
-          token: 'valid_token',
-          noteId: 'non-esiste',
+          token: 't',
+          lastSyncedAt: 0,
+          folders: const [],
+          notes: const [],
         ),
-        throwsA(isA<SyncApiException>()),
+        throwsA(predicate((e) =>
+            e is SyncApiException &&
+            e.statusCode == 502 &&
+            e.message.contains('non valida'))),
       );
     });
 
@@ -257,12 +247,6 @@ void main() {
             lastSyncedAt: 0,
             folders: const [],
             notes: const []),
-        throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
-      );
-
-      expect(
-        () => service.downloadNoteMarkdown(
-            baseUrl: 'http://localhost:8080', token: 'expired', noteId: 'x'),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
       );
     });

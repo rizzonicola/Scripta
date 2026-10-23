@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 
+import 'backup_manifest.dart';
 import 'export_archive.dart' show sanitizeFileName, uncatalogedFolderName;
 
 // Traduzione PURA (nessuna UI, nessun I/O, nessun provider) di ciò che
@@ -38,10 +39,32 @@ class ImportEntry {
   final String fileName;
   final String rawContent;
 
+  /// Metadati del manifest, se il backup ne contiene uno. Il contenuto del
+  /// Markdown resta la fonte di verità per il corpo della nota; il manifest
+  /// serve per i campi che il Markdown non può rappresentare (date esatte,
+  /// preferito, pin, ordine) e per il titolo originale.
+  final BackupNote? manifestNote;
+
   const ImportEntry({
     required this.folderPathSegments,
     required this.fileName,
     required this.rawContent,
+    this.manifestNote,
+  });
+}
+
+/// Esito dell'estrazione di un backup: note, cartelle vuote da ricreare e
+/// impostazioni (solo backup completo). Per una cartella su filesystem il
+/// manifest non esiste e gli ultimi due campi sono vuoti.
+class ImportBundle {
+  final List<ImportEntry> entries;
+  final List<String> emptyFolderPaths;
+  final Map<String, Object?>? settings;
+
+  const ImportBundle({
+    required this.entries,
+    this.emptyFolderPaths = const [],
+    this.settings,
   });
 }
 
@@ -131,7 +154,8 @@ ImportLocation? _mapSegments(List<String> rawSegments) {
   final fileName = segments.removeLast();
   if (!hasImportableExtension(fileName)) return null;
 
-  if (segments.isNotEmpty && segments.first.toLowerCase() == _macosResourceDir) {
+  if (segments.isNotEmpty &&
+      segments.first.toLowerCase() == _macosResourceDir) {
     return null;
   }
   // AppleDouble: `._Nota.md` accompagna `Nota.md` e ne contiene i metadati.

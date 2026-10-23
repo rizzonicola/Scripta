@@ -151,12 +151,20 @@ class SyncApiService {
 
   /// Decodifica la risposta di sync, in un isolate se è voluminosa. Gli
   /// errori (JSON non valido) arrivano al chiamante come prima.
-  Future<SyncResponse> _decodeSyncResponse(http.Response response) {
+  Future<SyncResponse> _decodeSyncResponse(http.Response response) async {
     final body = bodyText(response);
-    if (body.length < isolateJsonThreshold) {
-      return Future.sync(() => _parseSyncResponse(body));
+    try {
+      if (body.length < isolateJsonThreshold) {
+        return _parseSyncResponse(body);
+      }
+      return await compute(_parseSyncResponse, body);
+    } catch (_) {
+      // Un 200 con JSON malformato non è un problema di rete: ritentare la
+      // stessa richiesta non può migliorare nulla. 502 = risposta del server
+      // non valida (e NON transitoria, vedi SyncNotifier).
+      throw const SyncApiException(
+          'Risposta del server non valida (JSON malformato)', 502);
     }
-    return compute(_parseSyncResponse, body);
   }
 
   /// Serializza la richiesta di sync, in un isolate se il contenuto delle note
@@ -469,34 +477,6 @@ class SyncApiService {
       watchdog?.cancel();
       totalTimer.cancel();
     });
-  }
-
-  /// Scarica il contenuto Markdown grezzo di una singola nota dal server,
-  /// per ID (nessun percorso testuale coinvolto).
-  Future<String> downloadNoteMarkdown({
-    required String baseUrl,
-    required String token,
-    required String noteId,
-  }) async {
-    final clean = _cleanUrl(baseUrl);
-    final uri = Uri.parse(
-        '$clean/api/v1/notes/download?id=${Uri.encodeComponent(noteId)}');
-
-    final response = await _client.get(
-      uri,
-      headers: {'Authorization': 'Bearer $token'},
-    ).timeout(const Duration(seconds: 15));
-
-    if (response.statusCode == 200) {
-      return utf8.decode(response.bodyBytes);
-    } else if (response.statusCode == 401) {
-      throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
-    } else {
-      throw SyncApiException(
-          _extractError(
-              bodyText(response), 'Impossibile scaricare la nota dal server'),
-          response.statusCode);
-    }
   }
 
   String _extractError(String body, String fallback) {

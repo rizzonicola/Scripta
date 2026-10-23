@@ -13,6 +13,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
+import 'package:scripta/core/database/folders_dao.dart';
+import 'package:scripta/core/database/notes_dao.dart';
+import 'package:scripta/core/database/sync_meta_dao.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/core/services/sync_api_service.dart';
 import 'package:scripta/features/settings/providers/settings_provider.dart';
@@ -256,5 +259,52 @@ void main() {
     final state = h.container.read(syncProvider);
     expect(state.isAuthenticated, isTrue, reason: 'il 401 di A è vecchio');
     expect(state.username, 'B');
+  });
+
+  test(
+      'cambiare account cancella note, cartelle e cursore della sessione precedente',
+      () async {
+    final server = _RaceServer();
+    final h = _Harness(server);
+    addTearDown(h.container.dispose);
+
+    expect(await h.login('A'), isTrue);
+
+    final notesDao = NotesDao();
+    final foldersDao = FoldersDao();
+    final metaDao = SyncMetaDao();
+    await notesDao.upsert(const NoteRow(
+      id: 'nota-di-A',
+      title: 'Riservata',
+      content: 'contenuto A',
+      folderId: null,
+      isFavorite: false,
+      isPinned: false,
+      orderIndex: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    ));
+    await foldersDao.upsert(const FolderRow(
+      id: 'cartella-di-A',
+      name: 'Lavoro A',
+      parentId: null,
+      isExpanded: true,
+      updatedAt: 1,
+      deletedAt: null,
+    ));
+    await metaDao.setSyncCursor(123);
+    await metaDao.setAccountIdentity('http://localhost:8080|uid-A');
+
+    await h.notifier.logout();
+    expect(await h.login('B'), isTrue);
+
+    expect(await notesDao.getById('nota-di-A'), isNull);
+    expect(await foldersDao.getById('cartella-di-A'), isNull);
+    // Il cursore viene azzerato dal reset e poi riallineato dalla sync
+    // iniziale di B: qui conta che non sia rimasto quello di A.
+    expect(await metaDao.getSyncCursor(), isNot(123));
+    expect(await metaDao.getAccountIdentity(), 'http://localhost:8080|uid-B');
+    expect(h.container.read(syncProvider).username, 'B');
   });
 }

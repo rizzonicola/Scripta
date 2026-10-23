@@ -74,13 +74,15 @@ class NoteRow {
       id: id,
       title: title ?? this.title,
       content: content ?? this.content,
-      folderId: identical(folderId, _unset) ? this.folderId : folderId as String?,
+      folderId:
+          identical(folderId, _unset) ? this.folderId : folderId as String?,
       isFavorite: isFavorite ?? this.isFavorite,
       isPinned: isPinned ?? this.isPinned,
       orderIndex: orderIndex ?? this.orderIndex,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      deletedAt: identical(deletedAt, _unset) ? this.deletedAt : deletedAt as int?,
+      deletedAt:
+          identical(deletedAt, _unset) ? this.deletedAt : deletedAt as int?,
     );
   }
 }
@@ -104,13 +106,15 @@ class NotesDao {
   /// nessuna delle due interroga mai il DB con criteri diversi da questo.
   Future<List<NoteRow>> getActive() async {
     final db = await _db;
-    final rows = await db.query('notes', where: 'deleted_at IS NULL', orderBy: 'updated_at DESC');
+    final rows = await db.query('notes',
+        where: 'deleted_at IS NULL', orderBy: 'updated_at DESC');
     return rows.map(NoteRow.fromMap).toList();
   }
 
   Future<NoteRow?> getById(String id) async {
     final db = await _db;
-    final rows = await db.query('notes', where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows =
+        await db.query('notes', where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return null;
     return NoteRow.fromMap(rows.first);
   }
@@ -123,7 +127,8 @@ class NotesDao {
   /// inutilmente.
   Future<void> upsert(NoteRow row) async {
     final db = await _db;
-    await db.insert('notes', {...row.toMap(), 'dirty': 1}, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('notes', {...row.toMap(), 'dirty': 1},
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Applica una riga ricevuta dal server (vedi [applyRemoteLWWBatch]).
@@ -185,14 +190,17 @@ class NotesDao {
           // creazione locale (clock skew, o data di ripiego), si usa la
           // stima migliore invece di mostrare una nota "creata dopo
           // l'ultima modifica".
-          createdAt = existing.createdAt <= remote.updatedAt ? existing.createdAt : remote.updatedAt;
+          createdAt = existing.createdAt <= remote.updatedAt
+              ? existing.createdAt
+              : remote.updatedAt;
         }
         batch.insert(
           'notes',
           {...remote.toMap(), 'created_at': createdAt, 'dirty': 0},
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
-        local[remote.id] = (createdAt: createdAt, updatedAt: remote.updatedAt, dirty: false);
+        local[remote.id] =
+            (createdAt: createdAt, updatedAt: remote.updatedAt, dirty: false);
       }
       await batch.commit(noResult: true);
     });
@@ -206,7 +214,8 @@ class NotesDao {
     final db = await _db;
     final batch = db.batch();
     for (final row in rows) {
-      batch.insert('notes', {...row.toMap(), 'dirty': 1}, conflictAlgorithm: ConflictAlgorithm.replace);
+      batch.insert('notes', {...row.toMap(), 'dirty': 1},
+          conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }
@@ -227,7 +236,8 @@ class NotesDao {
     final db = await _db;
     final batch = db.batch();
     for (final e in idToPushedUpdatedAt.entries) {
-      batch.update('notes', {'dirty': 0}, where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
+      batch.update('notes', {'dirty': 0},
+          where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
     }
     await batch.commit(noResult: true);
   }
@@ -259,7 +269,8 @@ class NotesDao {
   Future<void> deleteCleanNotIn(Set<String> serverIds) async {
     final db = await _db;
     final rows = await db.query('notes', columns: ['id'], where: 'dirty = 0');
-    final stale = [for (final r in rows) r['id'] as String]..removeWhere(serverIds.contains);
+    final stale = [for (final r in rows) r['id'] as String]
+      ..removeWhere(serverIds.contains);
     await deleteByIds(db, 'notes', stale, onlyClean: true);
   }
 
@@ -275,9 +286,35 @@ class NotesDao {
     );
   }
 
-  Future<void> hardDeleteIds(List<String> ids) async {
-    if (ids.isEmpty) return;
-    await deleteByIds(await _db, 'notes', ids);
+  /// Sostituisce l'id di una nota rifiutata dal server con `invalid_id`.
+  /// La riga nuova resta `dirty = 1`, così il prossimo giro la invia.
+  Future<void> replaceId(String oldId, String newId) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'notes',
+        where: 'id = ?',
+        whereArgs: [oldId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      final map = {...rows.first, 'id': newId, 'dirty': 1};
+      await txn.insert('notes', map,
+          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.delete('notes', where: 'id = ?', whereArgs: [oldId]);
+    });
+  }
+
+  /// Aggiorna SOLO `created_at` (metadato locale): non tocca `dirty` né
+  /// `updated_at`, quindi non genera un push inutile al server.
+  Future<void> updateCreatedAt(String id, DateTime createdAt) async {
+    final db = await _db;
+    await db.update(
+      'notes',
+      {'created_at': createdAt.toUtc().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   Future<void> hardDeleteAll() async {

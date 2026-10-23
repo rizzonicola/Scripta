@@ -25,6 +25,31 @@ import '../../folders/models/folder_node.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../models/note_model.dart';
 
+/// Nota da inserire in blocco durante un'importazione. I campi opzionali
+/// arrivano dal manifest dei backup: senza manifest valgono i default
+/// (data/ordine di importazione, nessun metadato).
+class ImportedNote {
+  final String title;
+  final String content;
+  final String? folderId;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final bool isFavorite;
+  final bool isPinned;
+  final int? orderIndex;
+
+  const ImportedNote({
+    required this.title,
+    required this.content,
+    required this.folderId,
+    this.createdAt,
+    this.updatedAt,
+    this.isFavorite = false,
+    this.isPinned = false,
+    this.orderIndex,
+  });
+}
+
 class NotesState {
   final List<NoteModel> notes;
   final String searchQuery;
@@ -126,7 +151,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
   String _scope = _allScope;
   NoteSortOrder _defaultSort = NoteSortOrder.updatedDesc;
   final Map<String, NoteSortOrder> _sortModes = <String, NoteSortOrder>{};
-  final Map<String, List<String>> _folderCustomOrders = <String, List<String>>{};
+  final Map<String, List<String>> _folderCustomOrders =
+      <String, List<String>>{};
 
   NoteSortOrder _sortFor(String scope) => _sortModes[scope] ?? _defaultSort;
 
@@ -167,7 +193,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
         e.key: e.value.where(alive.contains).toList(),
     };
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(AppConstants.prefCustomOrderByScope, jsonEncode(cleaned));
+    await prefs.setString(
+        AppConstants.prefCustomOrderByScope, jsonEncode(cleaned));
   }
 
   /// La nota con modifiche testuali non ancora scritte su SQLite, catturata
@@ -266,7 +293,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     // Valore globale delle versioni precedenti: resta solo come ripiego per le
     // viste che non hanno ancora un ordinamento proprio.
-    _defaultSort = _parseSort(prefs.getString(AppConstants.prefSortMode)) ?? NoteSortOrder.updatedDesc;
+    _defaultSort = _parseSort(prefs.getString(AppConstants.prefSortMode)) ??
+        NoteSortOrder.updatedDesc;
 
     final rawModes = prefs.getString(AppConstants.prefSortModeByScope);
     if (rawModes != null) {
@@ -292,12 +320,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
         if (decoded is Map) {
           decoded.forEach((k, v) {
             if (v is List) {
-              _folderCustomOrders.putIfAbsent(k as String, () => v.whereType<String>().toList());
+              _folderCustomOrders.putIfAbsent(
+                  k as String, () => v.whereType<String>().toList());
             }
           });
         }
       } catch (e) {
-        debugPrint('NotesNotifier: ordini manuali per cartella non leggibili: $e');
+        debugPrint(
+            'NotesNotifier: ordini manuali per cartella non leggibili: $e');
       }
     }
 
@@ -403,7 +433,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     final pending = _pendingNote;
     _pendingNote = null;
-    if (pending != null) {
+    // Se nel frattempo la nota è stata cancellata (direttamente o dalla
+    // cascade di una cartella), il timer non deve riscriverla: sarebbe un
+    // upsert con `deleted_at = NULL` che fa "risorgere" un tombstone.
+    if (pending != null && state.notes.any((n) => n.id == pending.id)) {
       _pendingWrite = _persist(() => _dao.upsert(pending.toRow()));
     }
 
@@ -420,6 +453,26 @@ class NotesNotifier extends StateNotifier<NotesState> {
     }
   }
 
+  /// Prepara il notifier al cambio account: annulla l'autosave in sospeso e
+  /// attende le scritture già in volo, così la cancellazione del database
+  /// dell'account precedente non può essere annullata da un upsert tardivo.
+  Future<void> prepareForAccountReset() async {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = null;
+    _pendingNote = null;
+    final pendingWrite = _pendingWrite;
+    if (pendingWrite != null) await pendingWrite;
+    await Future.wait(List<Future<void>>.of(_inflightWrites));
+    _pendingWrite = null;
+    _restoreActiveNoteId = null;
+    _folderCustomOrders.clear();
+    state = state.copyWith(
+      notes: const [],
+      activeNoteId: () => null,
+      searchQuery: '',
+    );
+  }
+
   void _debouncedPersist(NoteModel note) {
     _pendingNote = note;
     _saveDebounceTimer?.cancel();
@@ -427,7 +480,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       _saveDebounceTimer = null;
       final toWrite = _pendingNote;
       _pendingNote = null;
-      if (toWrite != null) {
+      if (toWrite != null && state.notes.any((n) => n.id == toWrite.id)) {
         _pendingWrite = _persist(() => _dao.upsert(toWrite.toRow()));
       }
     });
@@ -436,7 +489,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// Confronto per l'ordine manuale di una cartella: le note presenti
   /// nell'elenco seguono la posizione salvata; quelle assenti (nuove, spostate
   /// o importate) vanno in cima, tra loro per `order_index`.
-  static int _compareByFolderPosition(NoteModel a, NoteModel b, Map<String, int> pos) {
+  static int _compareByFolderPosition(
+      NoteModel a, NoteModel b, Map<String, int> pos) {
     final pa = pos[a.id];
     final pb = pos[b.id];
     if (pa != null && pb != null) return pa.compareTo(pb);
@@ -477,8 +531,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
         final aLength = i - aSignificant;
         final bLength = j - bSignificant;
         if (aLength != bLength) return aLength < bLength ? -1 : 1;
-        final numeric =
-            a.substring(aSignificant, i).compareTo(b.substring(bSignificant, j));
+        final numeric = a
+            .substring(aSignificant, i)
+            .compareTo(b.substring(bSignificant, j));
         if (numeric != 0) return numeric;
         continue;
       }
@@ -507,7 +562,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // `toLowerCase()` allocava una nuova stringa O(n log n) volte.
     final Map<String, String> titleKeys =
         order == NoteSortOrder.titleAsc || order == NoteSortOrder.titleDesc
-            ? <String, String>{for (final n in sorted) n.id: n.title.toLowerCase()}
+            ? <String, String>{for (final n in sorted) n.id: n.titleLower}
             : const <String, String>{};
     sorted.sort((a, b) {
       if (order != NoteSortOrder.custom) {
@@ -587,7 +642,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
     unawaited(flushPendingSaves());
     var notes = state.notes;
 
-    if (order == NoteSortOrder.custom && state.sortOrder != NoteSortOrder.custom) {
+    if (order == NoteSortOrder.custom &&
+        state.sortOrder != NoteSortOrder.custom) {
       // Passando all'ordine manuale si parte dall'ordine che l'utente sta
       // VEDENDO ora, e lo si rende esplicito e senza duplicati.
       final current = _sort(state.notes, state.sortOrder);
@@ -608,7 +664,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
           }
         }
         if (changed.isNotEmpty) {
-          unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+          unawaited(_persist(
+              () => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
         }
       } else if ((_folderCustomOrders[_scope] ?? const <String>[]).isEmpty) {
         // Cartella senza ordine manuale salvato: lo si inizializza dall'ordine
@@ -707,7 +764,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
       unawaited(_persistSortModes());
     }
     if (changed.isNotEmpty) {
-      unawaited(_persist(() => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+      unawaited(_persist(
+          () => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
     }
   }
 
@@ -736,7 +794,21 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// additivo rispetto ai dati già presenti.
   Future<int> importNotesBulk(
     List<({String title, String content, String? folderId})> items,
-  ) async {
+  ) {
+    return importNotesBulkDetailed([
+      for (final item in items)
+        ImportedNote(
+          title: item.title,
+          content: item.content,
+          folderId: item.folderId,
+        ),
+    ]);
+  }
+
+  /// Come [importNotesBulk], ma conserva i metadati del manifest di backup
+  /// (date, preferito, pin e ordine manuale). Le note senza metadati ricevono
+  /// gli stessi default dell'importazione legacy.
+  Future<int> importNotesBulkDetailed(List<ImportedNote> items) async {
     if (items.isEmpty) return 0;
 
     final now = DateTime.now();
@@ -744,7 +816,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // buchi o valori negativi (vedi createNote).
     final baseIndex = state.notes.isEmpty
         ? 0
-        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a > b ? a : b) + 1;
+        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a > b ? a : b) +
+            1;
     final newNotes = <NoteModel>[
       for (var i = 0; i < items.length; i++)
         NoteModel(
@@ -752,14 +825,18 @@ class NotesNotifier extends StateNotifier<NotesState> {
           title: items[i].title,
           content: items[i].content,
           folderId: items[i].folderId,
-          // Istanti DISTINTI (1 ms l'uno dall'altro, l'ultimo = now): con
-          // un unico `now` tutte le note importate avevano la stessa data
-          // di creazione/modifica e il loro ordine reciproco era deciso
-          // dall'UUID casuale, cioè diverso a ogni avvio. Così l'ordine di
-          // importazione resta stabile e le note non finiscono nel futuro.
-          createdAt: now.subtract(Duration(milliseconds: items.length - 1 - i)),
-          updatedAt: now.subtract(Duration(milliseconds: items.length - 1 - i)),
-          orderIndex: baseIndex + i,
+          // Senza manifest, istanti DISTINTI (1 ms l'uno dall'altro,
+          // l'ultimo = now): con un unico `now` tutte le note importate
+          // avevano la stessa data di creazione/modifica e il loro ordine
+          // reciproco era deciso dall'UUID casuale, diverso a ogni avvio.
+          createdAt: items[i].createdAt ??
+              now.subtract(Duration(milliseconds: items.length - 1 - i)),
+          updatedAt: items[i].updatedAt ??
+              items[i].createdAt ??
+              now.subtract(Duration(milliseconds: items.length - 1 - i)),
+          isFavorite: items[i].isFavorite,
+          isPinned: items[i].isPinned,
+          orderIndex: items[i].orderIndex ?? baseIndex + i,
         ),
     ];
 
@@ -767,7 +844,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
       notes: _sort([...state.notes, ...newNotes], state.sortOrder),
     );
 
-    unawaited(_persist(() => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList())));
+    unawaited(_persist(
+        () => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList())));
 
     return newNotes.length;
   }
@@ -782,7 +860,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // l'ordine manuale risultava scombinato.
     final newOrderIndex = state.notes.isEmpty
         ? 0
-        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a < b ? a : b) - 1;
+        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a < b ? a : b) -
+            1;
     final newNote = NoteModel(
       id: _uuid.v4(),
       title: '',
@@ -832,12 +911,12 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// `targetFolderId` è null). Semplice aggiornamento di `folder_id`: nessun
   /// "vecchio percorso / nuovo percorso" da tenere in giro per la sync, a
   /// differenza della generazione precedente basata su file.
-  void moveNote(String id, String? targetFolderId) {
+  Future<void> moveNote(String id, String? targetFolderId) async {
     // Scrive PRIMA l'eventuale testo ancora in debounce: altrimenti il timer
     // (che tiene una copia VECCHIA della nota, con il vecchio `folder_id`)
     // scatterebbe dopo lo spostamento e, con `ConflictAlgorithm.replace`,
     // riporterebbe la nota nella cartella di origine.
-    unawaited(flushPendingSaves());
+    await flushPendingSaves();
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;
 
@@ -856,10 +935,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
     unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
   }
 
-  void deleteNote(String id) {
+  Future<void> deleteNote(String id) async {
     // Stessa causa di moveNote: una scrittura in debounce non ancora
     // eseguita sovrascriverebbe il tombstone e la nota "risorgerebbe".
-    unawaited(flushPendingSaves());
+    await flushPendingSaves();
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;
 
@@ -876,7 +955,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
       nextActiveId = state.activeNoteId;
     }
 
-    state = state.copyWith(notes: updatedList, activeNoteId: () => nextActiveId);
+    state =
+        state.copyWith(notes: updatedList, activeNoteId: () => nextActiveId);
     unawaited(_persist(() => _dao.upsert(tombstoneRow)));
   }
 
@@ -889,19 +969,21 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final source = state.notes[index];
 
     final copy = createNote(folderId: source.folderId);
-    final newTitle =
-        source.title.trim().isEmpty ? source.title : '${source.title}$copySuffix';
+    final newTitle = source.title.trim().isEmpty
+        ? source.title
+        : '${source.title}$copySuffix';
     updateNote(copy.id, title: newTitle, content: source.content);
     return state.notes.firstWhere((n) => n.id == copy.id, orElse: () => copy);
   }
 
-  void togglePin(String id) {
-    unawaited(flushPendingSaves()); // vedi moveNote
+  Future<void> togglePin(String id) async {
+    await flushPendingSaves(); // vedi moveNote
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;
 
     final existing = state.notes[index];
-    final updatedNote = existing.copyWith(isPinned: !existing.isPinned, updatedAt: DateTime.now());
+    final updatedNote = existing.copyWith(
+        isPinned: !existing.isPinned, updatedAt: DateTime.now());
 
     final updatedList = List<NoteModel>.from(state.notes);
     updatedList[index] = updatedNote;
@@ -910,6 +992,71 @@ class NotesNotifier extends StateNotifier<NotesState> {
     unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
   }
 
+  Future<void> toggleFavorite(String id) async {
+    await flushPendingSaves();
+    final index = state.notes.indexWhere((n) => n.id == id);
+    if (index == -1) return;
+
+    final existing = state.notes[index];
+    final updatedNote = existing.copyWith(
+      isFavorite: !existing.isFavorite,
+      updatedAt: DateTime.now(),
+    );
+
+    final updatedList = List<NoteModel>.from(state.notes);
+    updatedList[index] = updatedNote;
+
+    state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
+    unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
+  }
+
+  /// Aggiorna i metadati modificabili dal dialog della nota. `createdAt` è
+  /// solo locale (il server non lo conosce e non deve ricevere un push per
+  /// una modifica che non cambia contenuto); preferito/pin/ordine viaggiano
+  /// nella sync e quindi passano dal normale upsert dirty.
+  Future<void> updateMetadata(
+    String id, {
+    bool? isFavorite,
+    bool? isPinned,
+    DateTime? createdAt,
+    int? orderIndex,
+  }) async {
+    await flushPendingSaves();
+    final index = state.notes.indexWhere((n) => n.id == id);
+    if (index == -1) return;
+
+    final existing = state.notes[index];
+    final nextFavorite = isFavorite ?? existing.isFavorite;
+    final nextPinned = isPinned ?? existing.isPinned;
+    final nextOrder = orderIndex ?? existing.orderIndex;
+    final nextCreatedAt = createdAt ?? existing.createdAt;
+
+    final syncChanged = nextFavorite != existing.isFavorite ||
+        nextPinned != existing.isPinned ||
+        nextOrder != existing.orderIndex;
+    final localChanged = nextCreatedAt != existing.createdAt;
+    if (!syncChanged && !localChanged) return;
+
+    final updatedNote = existing.copyWith(
+      isFavorite: nextFavorite,
+      isPinned: nextPinned,
+      orderIndex: nextOrder,
+      createdAt: nextCreatedAt,
+      updatedAt: syncChanged ? DateTime.now() : existing.updatedAt,
+    );
+
+    final updatedList = List<NoteModel>.from(state.notes);
+    updatedList[index] = updatedNote;
+    state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
+
+    if (syncChanged) {
+      unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
+    } else if (localChanged) {
+      unawaited(_persist(
+        () => _dao.updateCreatedAt(id, updatedNote.createdAt),
+      ));
+    }
+  }
 }
 
 final notesProvider = StateNotifierProvider<NotesNotifier, NotesState>((ref) {
@@ -949,8 +1096,8 @@ final activeNoteProvider = Provider<NoteModel?>((ref) {
 /// sono immutabili e ogni modifica crea una nuova istanza: tenere l'esito
 /// per istanza significa rivalutare solo la nota appena modificata. Quando la
 /// query cambia la cache si svuota; essendo `Expando`, non trattiene in
-/// memoria le note scartate. Nessuna copia minuscola del testo viene
-/// conservata: costa solo un booleano per nota.
+/// memoria le note scartate. Le copie minuscole vivono su `NoteModel`
+/// (`titleLower`/`contentLower`) e sono calcolate pigramente una volta sola.
 class _SearchMatchCache {
   String _query = '';
   Expando<bool> _matches = Expando<bool>('note-search-match');
@@ -962,14 +1109,15 @@ class _SearchMatchCache {
     }
     final cached = _matches[note];
     if (cached != null) return cached;
-    final result = note.title.toLowerCase().contains(lowerQuery) ||
-        note.content.toLowerCase().contains(lowerQuery);
+    final result = note.titleLower.contains(lowerQuery) ||
+        note.contentLower.contains(lowerQuery);
     _matches[note] = result;
     return result;
   }
 }
 
-final _searchMatchCacheProvider = Provider<_SearchMatchCache>((ref) => _SearchMatchCache());
+final _searchMatchCacheProvider =
+    Provider<_SearchMatchCache>((ref) => _SearchMatchCache());
 
 /// Provider for filtered notes based on folder and search query.
 ///
@@ -979,7 +1127,8 @@ final _searchMatchCacheProvider = Provider<_SearchMatchCache>((ref) => _SearchMa
 /// non possano mai disallinearsi tra loro.
 final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
   final notes = ref.watch(notesProvider.select((s) => s.notes));
-  final selectedFolderId = ref.watch(folderProvider.select((s) => s.selectedFolderId));
+  final selectedFolderId =
+      ref.watch(folderProvider.select((s) => s.selectedFolderId));
   final searchQuery = ref.watch(notesProvider.select((s) => s.searchQuery));
 
   var filtered = notes;
@@ -992,8 +1141,11 @@ final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
     // già le sottocartelle annidate visivamente sotto il genitore, non come
     // sezioni indipendenti.
     final rootFolders = ref.watch(folderProvider.select((s) => s.rootFolders));
-    final scopeIds = FolderNode.collectSubtreeIds(rootFolders, selectedFolderId);
-    filtered = filtered.where((n) => n.folderId != null && scopeIds.contains(n.folderId)).toList();
+    final scopeIds =
+        FolderNode.collectSubtreeIds(rootFolders, selectedFolderId);
+    filtered = filtered
+        .where((n) => n.folderId != null && scopeIds.contains(n.folderId))
+        .toList();
   }
 
   if (searchQuery.trim().isNotEmpty) {

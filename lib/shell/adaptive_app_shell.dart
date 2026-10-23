@@ -163,6 +163,8 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
         // Layout mobile a pannello singolo: mostra l'editor quando un
         // comando crea o duplica una nota.
         onEditorRequested: _showMobileEditor,
+        onNotesListRequested:
+            screenType == DeviceScreenType.mobile ? _showMobileNotesList : null,
         child: shellContent,
       ),
     );

@@ -35,6 +35,17 @@ class DesktopStrings {
   String get groupNavigation => _t('groupNavigation');
   String get groupEditor => _t('groupEditor');
   String get groupApp => _t('groupApp');
+  String get favorite => _t('favorite');
+  String get unfavorite => _t('unfavorite');
+  String get editMetadata => _t('editMetadata');
+  String get metadataTitle => _t('metadataTitle');
+  String get metadataFavorite => _t('metadataFavorite');
+  String get metadataPinned => _t('metadataPinned');
+  String get metadataCreatedAt => _t('metadataCreatedAt');
+  String get metadataOrder => _t('metadataOrder');
+  String get metadataOrderHint => _t('metadataOrderHint');
+  String get metadataInvalidOrder => _t('metadataInvalidOrder');
+  String get metadataSaved => _t('metadataSaved');
 
   String command(String id) => _t('cmd.$id');
 
@@ -59,6 +70,17 @@ class DesktopStrings {
       'groupNavigation': 'Navigazione e ricerca',
       'groupEditor': 'Editor',
       'groupApp': 'Applicazione',
+      'favorite': 'Aggiungi ai preferiti',
+      'unfavorite': 'Rimuovi dai preferiti',
+      'editMetadata': 'Modifica metadati...',
+      'metadataTitle': 'Metadati della nota',
+      'metadataFavorite': 'Preferita',
+      'metadataPinned': 'Fissata in alto',
+      'metadataCreatedAt': 'Data di creazione',
+      'metadataOrder': 'Ordine manuale',
+      'metadataOrderHint': 'Numero intero: valori più bassi compaiono prima',
+      'metadataInvalidOrder': 'Inserisci un numero intero valido',
+      'metadataSaved': 'Metadati aggiornati',
       'cmd.newNote': 'Nuova nota',
       'cmd.newFolder': 'Nuova cartella',
       'cmd.save': 'Salva e sincronizza',
@@ -103,6 +125,17 @@ class DesktopStrings {
       'groupNavigation': 'Navigation & search',
       'groupEditor': 'Editor',
       'groupApp': 'Application',
+      'favorite': 'Add to favorites',
+      'unfavorite': 'Remove from favorites',
+      'editMetadata': 'Edit metadata...',
+      'metadataTitle': 'Note metadata',
+      'metadataFavorite': 'Favorite',
+      'metadataPinned': 'Pinned to top',
+      'metadataCreatedAt': 'Creation date',
+      'metadataOrder': 'Manual order',
+      'metadataOrderHint': 'Integer: lower values appear first',
+      'metadataInvalidOrder': 'Enter a valid integer',
+      'metadataSaved': 'Metadata updated',
       'cmd.newNote': 'New note',
       'cmd.newFolder': 'New folder',
       'cmd.save': 'Save & sync',
@@ -147,6 +180,18 @@ class DesktopStrings {
       'groupNavigation': 'Navigation et recherche',
       'groupEditor': 'Éditeur',
       'groupApp': 'Application',
+      'favorite': 'Ajouter aux favoris',
+      'unfavorite': 'Retirer des favoris',
+      'editMetadata': 'Modifier les métadonnées...',
+      'metadataTitle': 'Métadonnées de la note',
+      'metadataFavorite': 'Favorite',
+      'metadataPinned': 'Épinglée en haut',
+      'metadataCreatedAt': 'Date de création',
+      'metadataOrder': 'Ordre manuel',
+      'metadataOrderHint':
+          'Entier : les valeurs basses apparaissent en premier',
+      'metadataInvalidOrder': 'Saisissez un entier valide',
+      'metadataSaved': 'Métadonnées mises à jour',
       'cmd.newNote': 'Nouvelle note',
       'cmd.newFolder': 'Nouveau dossier',
       'cmd.save': 'Enregistrer et synchroniser',

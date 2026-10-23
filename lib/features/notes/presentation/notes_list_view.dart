@@ -41,6 +41,15 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
   Timer? _searchDebounceTimer;
 
   @override
+  void initState() {
+    super.initState();
+    // La query vive nel provider e sopravvive alla distruzione di questa
+    // vista (mobile: lista ↔ editor). Il controller no: senza questo seeding
+    // il campo tornava vuoto mentre il filtro restava attivo.
+    _searchController.text = ref.read(notesProvider).searchQuery;
+  }
+
+  @override
   void dispose() {
     _searchDebounceTimer?.cancel();
     _searchController.dispose();
@@ -145,6 +154,20 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
+
+    // Il provider è la fonte di verità: se la query viene cambiata altrove
+    // (es. "cancella ricerca" da un'altra vista), il campo visibile resta
+    // allineato invece di mostrare testo vuoto con la lista ancora filtrata.
+    ref.listen<String>(
+      notesProvider.select((s) => s.searchQuery),
+      (_, next) {
+        if (_searchController.text == next) return;
+        _searchController.value = TextEditingValue(
+          text: next,
+          selection: TextSelection.collapsed(offset: next.length),
+        );
+      },
+    );
 
     // Ctrl+Shift+F: porta il focus sul campo di ricerca e seleziona il testo
     // già presente, così si può riscrivere subito.

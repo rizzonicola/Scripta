@@ -77,6 +77,13 @@ class NoteModel {
   /// ogni rebuild di `NoteCard`, anche via [readingTimeMinutes]) con
   /// `trim()` + `split(RegExp(...))`: una copia del testo e una stringa per
   /// ogni parola, a ogni battitura sulla nota aperta.
+  /// Copie minuscole calcolate pigramente UNA volta per istanza. Servono
+  /// all'ordinamento alfabetico e alla ricerca: prima ogni battitura
+  /// rifaceva `toLowerCase()` sull'intero contenuto di tutte le note. La nota
+  /// è immutabile, quindi il valore non può diventare stale.
+  late final String titleLower = title.toLowerCase();
+  late final String contentLower = content.toLowerCase();
+
   late final int wordCount = _countWords();
 
   /// Una parola è una sequenza massimale di caratteri non-spazio: stesso
@@ -155,7 +162,8 @@ class NoteModel {
 
   String _buildPreviewSnippet() {
     final isLong = content.length > _snippetSourceChars;
-    var cleaned = _stripMarkdown(isLong ? content.substring(0, _snippetSourceChars) : content);
+    var cleaned = _stripMarkdown(
+        isLong ? content.substring(0, _snippetSourceChars) : content);
     if (isLong && cleaned.length < _snippetMinCleanChars) {
       cleaned = _stripMarkdown(content);
     }
@@ -170,8 +178,10 @@ class NoteModel {
       title: row.title,
       content: row.content,
       folderId: row.folderId,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAt, isUtc: true).toLocal(),
-      updatedAt: DateTime.fromMillisecondsSinceEpoch(row.updatedAt, isUtc: true).toLocal(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAt, isUtc: true)
+          .toLocal(),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(row.updatedAt, isUtc: true)
+          .toLocal(),
       isFavorite: row.isFavorite,
       isPinned: row.isPinned,
       orderIndex: row.orderIndex,

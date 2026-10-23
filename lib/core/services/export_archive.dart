@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 
 import '../../features/folders/models/folder_node.dart';
+import 'backup_manifest.dart';
 
 // Costruzione pura (nessuna UI, nessun I/O) degli archivi ZIP di esportazione.
 //
@@ -13,15 +14,32 @@ import '../../features/folders/models/folder_node.dart';
 // veniva copiata nell'isolate l'INTERA collezione di note anche per
 // esportare una sola cartella.
 
-/// Dati minimi di una nota per l'archivio.
-typedef ExportNote = ({String id, String title, String content, String? folderId});
+/// Dati minimi di una nota per l'archivio. Le date sono millisecondi UTC:
+/// i record che attraversano `compute` devono contenere solo primitivi.
+typedef ExportNote = ({
+  String id,
+  String title,
+  String content,
+  String? folderId,
+  bool isFavorite,
+  bool isPinned,
+  int orderIndex,
+  int createdAtMs,
+  int updatedAtMs,
+});
 
 /// Cartella "appiattita". `parentId` è `null` per la radice dell'esportazione
 /// (un backup completo ne ha più d'una, l'export di una cartella una sola).
 typedef ExportFolder = ({String id, String name, String? parentId});
 
-/// Cartelle da includere e note da scrivere.
-typedef ZipRequest = ({List<ExportFolder> folders, List<ExportNote> notes});
+/// Cartelle da includere e note da scrivere. `settings` è presente solo nel
+/// backup completo: un export di una singola cartella non deve sovrascrivere
+/// le preferenze di chi lo importa.
+typedef ZipRequest = ({
+  List<ExportFolder> folders,
+  List<ExportNote> notes,
+  Map<String, Object?>? settings,
+});
 
 typedef ZipResult = ({Uint8List bytes, int noteCount});
 
@@ -135,7 +153,23 @@ ZipResult buildNotesZip(ZipRequest request) {
 
   final archive = Archive();
   final usedPaths = <String>{};
+  final manifestFolders = <BackupFolder>[];
+  final manifestNotes = <BackupNote>[];
   var noteCount = 0;
+
+  // Il percorso è calcolato una volta anche per il manifest: se il Markdown
+  // viene rinominato per una collisione (`Nota (2).md`), il manifest deve
+  // puntare allo stesso file, non al nome "ideale".
+  for (final folder in request.folders) {
+    final path = resolveFolderPath(folder.id);
+    if (path == null) continue;
+    manifestFolders.add(BackupFolder(
+      id: folder.id,
+      name: folder.name,
+      parentId: folder.parentId,
+      path: path,
+    ));
+  }
 
   for (final note in request.notes) {
     final folderId = note.folderId;
@@ -148,8 +182,39 @@ ZipResult buildNotesZip(ZipRequest request) {
 
     final bytes = utf8.encode(noteMarkdownContent(note.title, note.content));
     archive.addFile(ArchiveFile(path, bytes.length, bytes));
+    manifestNotes.add(BackupNote(
+      path: path,
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      folderId: note.folderId,
+      isFavorite: note.isFavorite,
+      isPinned: note.isPinned,
+      orderIndex: note.orderIndex,
+      createdAt:
+          DateTime.fromMillisecondsSinceEpoch(note.createdAtMs, isUtc: true),
+      updatedAt:
+          DateTime.fromMillisecondsSinceEpoch(note.updatedAtMs, isUtc: true),
+    ));
     noteCount++;
   }
+
+  // Il manifest è l'ultima voce: se un giorno un Markdown dovesse chiamarsi
+  // come lui (impossibile col sanitize attuale, che appende `.md`), il file
+  // dei metadati resterebbe comunque quello canonico.
+  final manifest = BackupManifest(
+    folders: manifestFolders,
+    notes: manifestNotes,
+    settings: request.settings,
+  );
+  final manifestBytes = utf8.encode(manifest.encode());
+  archive.addFile(
+    ArchiveFile(
+      backupManifestFileName,
+      manifestBytes.length,
+      manifestBytes,
+    ),
+  );
 
   final encoded = ZipEncoder().encode(archive);
   return (bytes: Uint8List.fromList(encoded), noteCount: noteCount);

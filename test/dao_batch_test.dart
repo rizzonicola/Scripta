@@ -6,6 +6,7 @@ import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/database/sql_helpers.dart';
+import 'package:scripta/core/database/sync_meta_dao.dart';
 
 NoteRow _note(
   String id, {
@@ -143,7 +144,9 @@ void main() {
       AppDatabase.debugDatabasePathOverride = null;
     });
 
-    test('applyRemoteLWWBatch gestisce più righe del limite di variabili SQLite', () async {
+    test(
+        'applyRemoteLWWBatch gestisce più righe del limite di variabili SQLite',
+        () async {
       final dao = NotesDao();
       await dao.applyRemoteLWWBatch([
         for (var i = 0; i < 1200; i++) _note('n$i', updatedAt: 1000 + i),
@@ -153,7 +156,9 @@ void main() {
       expect(await dao.listDirty(), isEmpty);
     });
 
-    test('in un batch la modifica locale sporca più recente resta, le altre righe si applicano', () async {
+    test(
+        'in un batch la modifica locale sporca più recente resta, le altre righe si applicano',
+        () async {
       final dao = NotesDao();
       await dao.upsert(_note('keep', updatedAt: 5000, title: 'locale'));
 
@@ -181,17 +186,21 @@ void main() {
       expect(row.createdAt, 50);
     });
 
-    test('la data di creazione non supera l\'ultima modifica conosciuta', () async {
+    test('la data di creazione non supera l\'ultima modifica conosciuta',
+        () async {
       final dao = NotesDao();
       await dao.upsert(_note('a', createdAt: 9000, updatedAt: 9500));
       await dao.markSynced({'a': 9500});
 
-      await dao.applyRemoteLWWBatch([_note('a', createdAt: 1, updatedAt: 3000)]);
+      await dao
+          .applyRemoteLWWBatch([_note('a', createdAt: 1, updatedAt: 3000)]);
 
       expect((await dao.getById('a'))!.createdAt, 3000);
     });
 
-    test('lo stesso id ripetuto nel batch equivale ad applicare le righe in sequenza', () async {
+    test(
+        'lo stesso id ripetuto nel batch equivale ad applicare le righe in sequenza',
+        () async {
       final dao = NotesDao();
       await dao.applyRemoteLWWBatch([
         _note('x', updatedAt: 2000, title: 'v2'),
@@ -202,9 +211,11 @@ void main() {
       expect((await dao.getById('x'))!.title, 'v1');
     });
 
-    test('deleteCleanNotIn elimina a blocchi e risparmia le righe sporche', () async {
+    test('deleteCleanNotIn elimina a blocchi e risparmia le righe sporche',
+        () async {
       final dao = NotesDao();
-      await dao.applyRemoteLWWBatch([for (var i = 0; i < 700; i++) _note('c$i')]);
+      await dao
+          .applyRemoteLWWBatch([for (var i = 0; i < 700; i++) _note('c$i')]);
       await dao.upsert(_note('mine')); // sporca: modifica locale non inviata
 
       await dao.deleteCleanNotIn({'c0'});
@@ -212,13 +223,15 @@ void main() {
       expect(await _activeNoteIds(dao), {'c0', 'mine'});
     });
 
-    test('purgeCleanTombstones elimina solo i tombstone già confermati', () async {
+    test('purgeCleanTombstones elimina solo i tombstone già confermati',
+        () async {
       final dao = NotesDao();
       await dao.applyRemoteLWWBatch([
         _note('gone', deletedAt: 10), // tombstone ricevuto dal server: pulito
         _note('alive'),
       ]);
-      await dao.upsert(_note('pending', deletedAt: 20)); // eliminazione locale non ancora inviata
+      await dao.upsert(_note('pending',
+          deletedAt: 20)); // eliminazione locale non ancora inviata
 
       await dao.purgeCleanTombstones();
 
@@ -227,23 +240,15 @@ void main() {
       expect(await dao.getById('alive'), isNotNull);
     });
 
-    test('upsertBatch scrive tutte le righe come sporche (e non fa nulla se vuoto)', () async {
+    test(
+        'upsertBatch scrive tutte le righe come sporche (e non fa nulla se vuoto)',
+        () async {
       final dao = NotesDao();
       await dao.upsertBatch(const []);
       expect(await dao.getActive(), isEmpty);
 
       await dao.upsertBatch([_note('a'), _note('b')]);
       expect((await dao.listDirty()).map((r) => r.id).toSet(), {'a', 'b'});
-    });
-
-    test('hardDeleteIds elimina più righe del limite di variabili', () async {
-      final dao = NotesDao();
-      final ids = [for (var i = 0; i < 1200; i++) 'n$i'];
-      await dao.upsertBatch([for (final id in ids) _note(id)]);
-
-      await dao.hardDeleteIds(ids.where((id) => id != 'n0').toList());
-
-      expect(await _activeNoteIds(dao), {'n0'});
     });
   });
 
@@ -265,7 +270,9 @@ void main() {
       AppDatabase.debugDatabasePathOverride = null;
     });
 
-    test('cascadeSoftDelete cancella sottoalbero e note, risparmia le altre cartelle', () async {
+    test(
+        'cascadeSoftDelete cancella sottoalbero e note, risparmia le altre cartelle',
+        () async {
       final folders = FoldersDao();
       final notes = NotesDao();
       await folders.upsert(_folder('root'));
@@ -294,7 +301,8 @@ void main() {
       expect((await notes.getById('n2'))!.deletedAt, 5000);
     });
 
-    test('cascadeSoftDelete termina anche con riferimenti genitore ciclici', () async {
+    test('cascadeSoftDelete termina anche con riferimenti genitore ciclici',
+        () async {
       final folders = FoldersDao();
       await folders.upsert(_folder('a', parentId: 'b'));
       await folders.upsert(_folder('b', parentId: 'a'));
@@ -323,7 +331,8 @@ void main() {
       expect((await folders.listDirty()).map((f) => f.id).toSet(), {'root'});
     });
 
-    test('applyRemoteLWWBatch preserva isExpanded locale e applica il resto', () async {
+    test('applyRemoteLWWBatch preserva isExpanded locale e applica il resto',
+        () async {
       final folders = FoldersDao();
       await folders.upsert(_folder('f', name: 'F', isExpanded: false));
       await folders.markSynced({'f': 1000});
@@ -337,7 +346,8 @@ void main() {
       expect(row.isExpanded, isFalse);
     });
 
-    test('applyRemoteLWWBatch non sovrascrive una cartella sporca più recente', () async {
+    test('applyRemoteLWWBatch non sovrascrive una cartella sporca più recente',
+        () async {
       final folders = FoldersDao();
       await folders.upsert(_folder('f', name: 'locale', updatedAt: 5000));
 
@@ -349,7 +359,9 @@ void main() {
       expect((await folders.listDirty()).map((f) => f.id).toSet(), {'f'});
     });
 
-    test('purgeCleanTombstones elimina solo le cartelle cancellate e confermate', () async {
+    test(
+        'purgeCleanTombstones elimina solo le cartelle cancellate e confermate',
+        () async {
       final folders = FoldersDao();
       await folders.applyRemoteLWWBatch([
         _folder('gone', deletedAt: 10),
@@ -362,6 +374,34 @@ void main() {
       expect(await folders.getById('gone'), isNull);
       expect(await folders.getById('pending'), isNotNull);
       expect(await folders.getById('alive'), isNotNull);
+    });
+  });
+
+  group('SyncMetaDao (identità account)', () {
+    setUp(() async {
+      AppDatabase.ensureFactoryInitialized();
+      await AppDatabase.instance.close();
+      AppDatabase.debugDatabasePathOverride = p.join(
+        Directory.systemTemp.path,
+        'scripta_meta_${DateTime.now().microsecondsSinceEpoch}.db',
+      );
+    });
+
+    tearDown(() async {
+      await AppDatabase.instance.close();
+      AppDatabase.debugDatabasePathOverride = null;
+    });
+
+    test('clearSyncState azzera il cursore e conserva la nuova identità',
+        () async {
+      final meta = SyncMetaDao();
+      await meta.setSyncCursor(123456);
+      await meta.setAccountIdentity('http://old|A');
+
+      await meta.clearSyncState(accountIdentity: 'http://new|B');
+
+      expect(await meta.getSyncCursor(), 0);
+      expect(await meta.getAccountIdentity(), 'http://new|B');
     });
   });
 }

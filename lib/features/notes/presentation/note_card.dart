@@ -15,6 +15,7 @@ import '../../folders/providers/folder_provider.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
+import 'note_metadata_dialog.dart';
 
 class NoteCard extends ConsumerWidget {
   final NoteModel note;
@@ -131,10 +132,20 @@ class NoteCard extends ConsumerWidget {
     final notifier = ref.read(notesProvider.notifier);
     return [
       ContextMenuEntry(
+        label: note.isFavorite ? ds.unfavorite : ds.favorite,
+        icon: note.isFavorite ? Icons.star_outline_rounded : Icons.star_rounded,
+        onSelected: () => notifier.toggleFavorite(note.id),
+      ),
+      ContextMenuEntry(
         label: note.isPinned ? ds.unpin : ds.pin,
         icon: note.isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
         shortcut: commandShortcutLabel(AppCommand.pinNote),
         onSelected: () => notifier.togglePin(note.id),
+      ),
+      ContextMenuEntry(
+        label: ds.editMetadata,
+        icon: Icons.tune_rounded,
+        onSelected: () => showNoteMetadataDialog(context, ref, note),
       ),
       ContextMenuEntry(
         label: ds.moveTo,
@@ -215,6 +226,14 @@ class NoteCard extends ConsumerWidget {
                     children: [
                       Row(
                         children: [
+                          if (note.isFavorite) ...[
+                            Icon(
+                              Icons.star_rounded,
+                              size: 15,
+                              color: Colors.amber.shade700,
+                            ),
+                            const SizedBox(width: 4),
+                          ],
                           if (note.isPinned) ...[
                             Icon(
                               Icons.push_pin_rounded,

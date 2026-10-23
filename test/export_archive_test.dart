@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:scripta/core/services/backup_manifest.dart';
 import 'package:scripta/core/services/export_archive.dart';
 import 'package:scripta/features/folders/models/folder_node.dart';
 
@@ -10,24 +11,41 @@ ExportNote _note(
   String title, {
   String content = 'testo',
   String? folderId,
+  bool isFavorite = false,
+  bool isPinned = false,
+  int orderIndex = 0,
 }) =>
-    (id: id, title: title, content: content, folderId: folderId);
+    (
+      id: id,
+      title: title,
+      content: content,
+      folderId: folderId,
+      isFavorite: isFavorite,
+      isPinned: isPinned,
+      orderIndex: orderIndex,
+      createdAtMs: 1000,
+      updatedAtMs: 2000,
+    );
 
 ExportFolder _folder(String id, String name, {String? parentId}) =>
     (id: id, name: name, parentId: parentId);
 
 /// Elenco dei file contenuti nello ZIP (percorso → testo).
-Map<String, String> _entries(ZipResult result) {
+Map<String, String> _entries(ZipResult result, {bool includeManifest = false}) {
   final archive = ZipDecoder().decodeBytes(result.bytes);
   return {
     for (final file in archive.files)
-      if (file.isFile) file.name: utf8.decode(file.content as List<int>),
+      if (file.isFile &&
+          (includeManifest || file.name != backupManifestFileName))
+        file.name: utf8.decode(file.content as List<int>),
   };
 }
 
 void main() {
   group('buildNotesZip', () {
-    test('due note con lo stesso titolo nella stessa cartella non si sovrascrivono', () {
+    test(
+        'due note con lo stesso titolo nella stessa cartella non si sovrascrivono',
+        () {
       final result = buildNotesZip((
         folders: [_folder('f', 'Lavoro')],
         notes: [
@@ -36,6 +54,7 @@ void main() {
           // Su Windows e macOS "riunione.md" e "Riunione.md" sono lo stesso file.
           _note('id-3', 'riunione', content: 'tre', folderId: 'f'),
         ],
+        settings: null,
       ));
 
       final entries = _entries(result);
@@ -59,6 +78,7 @@ void main() {
       final result = buildNotesZip((
         folders: const <ExportFolder>[],
         notes: [_note('ab', '')],
+        settings: null,
       ));
 
       expect(_entries(result).keys, ['$uncatalogedFolderName/Nota_ab.md']);
@@ -68,12 +88,15 @@ void main() {
       final result = buildNotesZip((
         folders: const <ExportFolder>[],
         notes: [_note('abcdef123456', '   ')],
+        settings: null,
       ));
 
       expect(_entries(result).keys, ['$uncatalogedFolderName/Nota_abcdef.md']);
     });
 
-    test('note senza cartella o con cartella sconosciuta finiscono in Non_Catalogate', () {
+    test(
+        'note senza cartella o con cartella sconosciuta finiscono in Non_Catalogate',
+        () {
       final result = buildNotesZip((
         folders: [_folder('f', 'Reale')],
         notes: [
@@ -81,6 +104,7 @@ void main() {
           _note('2222222', 'B', folderId: 'inesistente'),
           _note('3333333', 'C', folderId: 'f'),
         ],
+        settings: null,
       ));
 
       expect(
@@ -101,18 +125,22 @@ void main() {
           _folder('c', 'C', parentId: 'b'),
         ],
         notes: [_note('1111111', 'Nota', folderId: 'c')],
+        settings: null,
       ));
 
       expect(_entries(result).keys, ['A/B/C/Nota.md']);
     });
 
-    test('i nomi di cartella pericolosi vengono sanitizzati (niente path traversal)', () {
+    test(
+        'i nomi di cartella pericolosi vengono sanitizzati (niente path traversal)',
+        () {
       final result = buildNotesZip((
         folders: [
           _folder('p', '..'),
           _folder('c', 'a/b', parentId: 'p'),
         ],
         notes: [_note('1111111', 'x', folderId: 'c')],
+        settings: null,
       ));
 
       final names = _entries(result).keys.toList();
@@ -130,30 +158,73 @@ void main() {
           _folder('b', 'B', parentId: 'a'),
         ],
         notes: [_note('1111111', 'N', folderId: 'a')],
+        settings: null,
       ));
 
       expect(result.noteCount, 1);
       expect(_entries(result).keys.single, endsWith('/N.md'));
     });
 
-    test('antepone il titolo solo se il testo non inizia già con un titolo', () {
+    test('antepone il titolo solo se il testo non inizia già con un titolo',
+        () {
       final result = buildNotesZip((
         folders: const <ExportFolder>[],
         notes: [
           _note('1111111', 'Senza', content: 'corpo'),
           _note('2222222', 'Con', content: '# Già presente\n\ncorpo'),
         ],
+        settings: null,
       ));
 
       final entries = _entries(result);
       expect(entries['$uncatalogedFolderName/Senza.md'], '# Senza\n\ncorpo');
-      expect(entries['$uncatalogedFolderName/Con.md'], '# Già presente\n\ncorpo');
+      expect(
+          entries['$uncatalogedFolderName/Con.md'], '# Già presente\n\ncorpo');
+    });
+
+    test(
+        'il manifest conserva metadati, cartelle vuote e path dopo le collisioni',
+        () {
+      final result = buildNotesZip((
+        folders: [
+          _folder('f', 'Lavoro'),
+          _folder('empty', 'Vuota', parentId: 'f'),
+        ],
+        notes: [
+          _note('1111111', 'Riunione',
+              content: 'uno',
+              folderId: 'f',
+              isFavorite: true,
+              isPinned: true,
+              orderIndex: 7),
+          _note('2222222', 'Riunione', content: 'due', folderId: 'f'),
+        ],
+        settings: const {'theme': 'dark', 'font_size': 18},
+      ));
+
+      final entries = _entries(result, includeManifest: true);
+      final manifest = BackupManifest.decode(
+        entries[backupManifestFileName]!,
+      );
+      expect(manifest.notes, hasLength(2));
+      expect(manifest.notes.first.path, 'Lavoro/Riunione.md');
+      expect(manifest.notes[1].path, 'Lavoro/Riunione (2).md');
+      expect(manifest.notes.first.title, 'Riunione');
+      expect(manifest.notes.first.isFavorite, isTrue);
+      expect(manifest.notes.first.isPinned, isTrue);
+      expect(manifest.notes.first.orderIndex, 7);
+      expect(
+        manifest.folders.map((f) => f.path),
+        containsAll(<String>['Lavoro', 'Lavoro/Vuota']),
+      );
+      expect(manifest.settings, const {'theme': 'dark', 'font_size': 18});
     });
 
     test('un archivio vuoto è comunque uno ZIP valido', () {
       final result = buildNotesZip((
         folders: const <ExportFolder>[],
         notes: const <ExportNote>[],
+        settings: null,
       ));
 
       expect(result.noteCount, 0);
@@ -164,7 +235,8 @@ void main() {
   group('sanitizzazione', () {
     test('sanitizeFileName sostituisce i caratteri non ammessi', () {
       expect(sanitizeFileName('a/b:c*d?e"f<g>h|i\\j'), 'a_b_c_d_e_f_g_h_i_j');
-      expect(sanitizeFileName('riga\u0000con\u001Fcontrollo'), 'riga_con_controllo');
+      expect(sanitizeFileName('riga\u0000con\u001Fcontrollo'),
+          'riga_con_controllo');
       expect(sanitizeFileName('  spazi  '), 'spazi');
     });
 

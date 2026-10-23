@@ -11,6 +11,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/folders/models/folder_node.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
+import '../../features/settings/providers/settings_provider.dart';
+import '../../features/sync/models/sync_models.dart';
+import 'backup_manifest.dart';
 import 'import_parser.dart';
 
 /// Importazione di note/cartelle da un backup ZIP (creato da
@@ -47,9 +50,17 @@ class ImportService {
   // contenuto (dimensioni dichiarate) e, dove possibile, anche dopo.
   static const int maxZipBytes = 100 * 1024 * 1024; // ZIP compresso: 100 MiB
   static const int maxZipEntries = 20000; // voci totali nell'archivio
-  static const int maxImportedFiles = 5000; // file .md/.markdown/.txt importabili
+  static const int maxImportedFiles =
+      5000; // file .md/.markdown/.txt importabili
   static const int maxEntryBytes = 10 * 1024 * 1024; // singola nota: 10 MiB
-  static const int maxTotalUncompressedBytes = 200 * 1024 * 1024; // somma: 200 MiB
+  static const int maxTotalUncompressedBytes =
+      200 * 1024 * 1024; // somma: 200 MiB
+
+  /// Il manifest contiene una copia del testo di TUTTE le note (serve a
+  /// ripristinare titolo/contenuto esatti quando il Markdown è ambiguo), quindi
+  /// non può essere soggetto al limite di 10 MiB di una singola nota: un
+  /// backup grande ma legittimo diventerebbe non ripristinabile.
+  static const int maxManifestBytes = maxTotalUncompressedBytes;
 
   static String _mb(int bytes) => '${bytes ~/ (1024 * 1024)} MiB';
 
@@ -91,7 +102,8 @@ class ImportService {
               ListTile(
                 leading: const Icon(Icons.drive_folder_upload_outlined),
                 title: const Text('Da cartella'),
-                subtitle: const Text('Una cartella di file .md sul dispositivo'),
+                subtitle:
+                    const Text('Una cartella di file .md sul dispositivo'),
                 onTap: () {
                   Navigator.of(sheetCtx).pop();
                   importFromFolder(context, ref);
@@ -134,7 +146,8 @@ class ImportService {
           pickedPath != null ? await File(pickedPath).length() : null;
       if (pickedSize != null && pickedSize > maxZipBytes) {
         if (context.mounted) {
-          _showSnack(context, 'File ZIP troppo grande (massimo ${_mb(maxZipBytes)}).',
+          _showSnack(
+              context, 'File ZIP troppo grande (massimo ${_mb(maxZipBytes)}).',
               isError: true);
         }
         return;
@@ -179,7 +192,9 @@ class ImportService {
       await _runImport(
         context,
         ref,
-        () => extractFromDirectory(Directory(dirPath)),
+        () async => ImportBundle(
+          entries: await extractFromDirectory(Directory(dirPath)),
+        ),
       );
     } catch (e) {
       if (context.mounted) {
@@ -196,15 +211,15 @@ class ImportService {
   static Future<void> _runImport(
     BuildContext context,
     WidgetRef ref,
-    Future<List<ImportEntry>> Function() extract,
+    Future<ImportBundle> Function() extract,
   ) async {
     _showLoadingDialog(context);
     try {
-      final entries = await extract();
-      final result = await _commitEntries(ref, entries);
+      final bundle = await extract();
+      final result = await _commitEntries(ref, bundle);
       if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
 
-      if (entries.isEmpty) {
+      if (bundle.entries.isEmpty && bundle.emptyFolderPaths.isEmpty) {
         if (context.mounted) {
           _showSnack(
             context,
@@ -224,7 +239,8 @@ class ImportService {
     } catch (e) {
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
-        _showSnack(context, 'Errore durante l\'importazione: $e', isError: true);
+        _showSnack(context, 'Errore durante l\'importazione: $e',
+            isError: true);
       }
     }
   }
@@ -274,30 +290,70 @@ class ImportService {
   /// isolate dedicato, lasciando la UI reattiva; [decodeZipEntries] è
   /// un metodo statico (non una closure) proprio perché è questo il
   /// requisito di `compute` per poter essere invocato nel nuovo isolate.
-  static Future<List<ImportEntry>> _extractFromZipBytes(
+  static Future<ImportBundle> _extractFromZipBytes(
     Uint8List bytes,
   ) {
-    return compute(decodeZipEntries, bytes);
+    return compute(decodeZipBundle, bytes);
   }
 
   /// Parte sincrona di [_extractFromZipBytes]. Pubblica solo perché i test
   /// la invocano direttamente, senza isolate.
   @visibleForTesting
-  static List<ImportEntry> decodeZipEntries(Uint8List bytes) {
+  static List<ImportEntry> decodeZipEntries(Uint8List bytes) =>
+      decodeZipBundle(bytes).entries;
+
+  @visibleForTesting
+  static ImportBundle decodeZipBundle(Uint8List bytes) {
     if (bytes.length > maxZipBytes) {
       throw FormatException('ZIP troppo grande (massimo ${_mb(maxZipBytes)}).');
     }
     final archive = ZipDecoder().decodeBytes(bytes);
     if (archive.files.length > maxZipEntries) {
-      throw const FormatException('ZIP con troppe voci (massimo $maxZipEntries).');
+      throw const FormatException(
+          'ZIP con troppe voci (massimo $maxZipEntries).');
     }
     final entries = <ImportEntry>[];
     var totalBytes = 0;
 
+    // Il manifest è alla radice. Un manifest presente ma illeggibile NON
+    // deve essere ignorato silenziosamente: perderemmo proprio i metadati che
+    // il backup promette di conservare. Meglio un errore chiaro.
+    BackupManifest? manifest;
+    for (final file in archive.files) {
+      if (!file.isFile) continue;
+      if (_normalizeManifestPath(file.name) != backupManifestFileName) {
+        continue;
+      }
+      if (file.size > maxManifestBytes) {
+        throw const FormatException('Manifest del backup troppo grande.');
+      }
+      final contentBytes = file.content as List<int>;
+      if (contentBytes.length > maxManifestBytes) {
+        throw const FormatException('Manifest del backup troppo grande.');
+      }
+      final raw = utf8.decode(contentBytes, allowMalformed: true);
+      try {
+        manifest = BackupManifest.decode(raw);
+      } catch (e) {
+        throw FormatException('Manifest del backup non valido: $e');
+      }
+      if (manifest.folders.length > maxImportedFiles ||
+          manifest.notes.length > maxImportedFiles) {
+        throw const FormatException('Manifest del backup con troppi elementi.');
+      }
+      break;
+    }
+
+    final notesByPath = <String, BackupNote>{
+      if (manifest != null)
+        for (final note in manifest.notes)
+          _normalizeManifestPath(note.path): note,
+    };
+
     for (final file in archive.files) {
       if (!file.isFile) continue;
       // Difesa in profondità e rumore dei sistemi operativi: uno ZIP
-      // malformato/malevolo non deve poter referenziare percorsi fuori dalla
+      // malformato/malevole non deve poter referenziare percorsi fuori dalla
       // gerarchia che stiamo costruendo (path traversal, percorsi assoluti,
       // lettere di unità Windows) e gli ZIP di macOS portano con sé cartelle
       // di metadati. `null` = voce da ignorare. Qui si decide anche che le
@@ -309,10 +365,12 @@ class ImportService {
       // Limiti verificati sulla dimensione DICHIARATA, prima di accedere a
       // `file.content` (che è ciò che decomprime davvero il contenuto).
       if (entries.length >= maxImportedFiles) {
-        throw const FormatException('Troppi file da importare (massimo $maxImportedFiles).');
+        throw const FormatException(
+            'Troppi file da importare (massimo $maxImportedFiles).');
       }
       if (file.size > maxEntryBytes) {
-        throw FormatException('Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+        throw FormatException(
+            'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
       }
       totalBytes += file.size;
       if (totalBytes > maxTotalUncompressedBytes) {
@@ -324,7 +382,8 @@ class ImportService {
       // La dimensione dichiarata nell'header può mentire: si ricontrolla
       // quella effettiva.
       if (contentBytes.length > maxEntryBytes) {
-        throw FormatException('Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+        throw FormatException(
+            'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
       }
       final rawContent = utf8.decode(contentBytes, allowMalformed: true);
 
@@ -332,11 +391,22 @@ class ImportService {
         folderPathSegments: location.folders,
         fileName: fileName,
         rawContent: rawContent,
+        manifestNote: notesByPath[_normalizeManifestPath(file.name)],
       ));
     }
 
-    return entries;
+    return ImportBundle(
+      entries: entries,
+      emptyFolderPaths: [
+        if (manifest != null)
+          for (final folder in manifest.folders) folder.path,
+      ],
+      settings: manifest?.settings,
+    );
   }
+
+  static String _normalizeManifestPath(String path) =>
+      path.replaceAll('\\', '/').replaceFirst(RegExp(r'^\./'), '');
 
   // ---------------------------------------------------------------------
   // Estrazione: cartella su filesystem
@@ -369,15 +439,18 @@ class ImportService {
       // Stessi limiti dello ZIP, controllati sulla dimensione su disco PRIMA
       // di leggere il file.
       if (entries.length >= maxImportedFiles) {
-        throw const FormatException('Troppi file da importare (massimo $maxImportedFiles).');
+        throw const FormatException(
+            'Troppi file da importare (massimo $maxImportedFiles).');
       }
       final size = await entity.length();
       if (size > maxEntryBytes) {
-        throw FormatException('Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+        throw FormatException(
+            'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
       }
       totalBytes += size;
       if (totalBytes > maxTotalUncompressedBytes) {
-        throw FormatException('Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).');
+        throw FormatException(
+            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).');
       }
 
       String rawContent;
@@ -404,13 +477,33 @@ class ImportService {
 
   static Future<({int importedNotes, int importedFolders})> _commitEntries(
     WidgetRef ref,
-    List<ImportEntry> entries,
-  ) {
-    return commitEntries(
+    ImportBundle bundle,
+  ) async {
+    final result = await commitEntries(
       ref.read(folderProvider.notifier),
       ref.read(notesProvider.notifier),
-      entries,
+      bundle.entries,
+      emptyFolderPaths: bundle.emptyFolderPaths,
     );
+
+    // Le impostazioni sono parte del backup completo. `applyRemoteSettings`
+    // scrive le preferenze e NON le rimanda al server: un import locale non
+    // deve sovrascrivere le impostazioni dell'account senza che l'utente
+    // abbia scelto di sincronizzarle.
+    final rawSettings = bundle.settings;
+    if (rawSettings != null) {
+      try {
+        final dto = UserSettingsDto.fromJson(
+          Map<String, dynamic>.from(rawSettings),
+        );
+        await ref.read(settingsProvider.notifier).applyRemoteSettings(dto);
+      } catch (_) {
+        // Un manifest di una versione futura può avere impostazioni con
+        // campi sconosciuti: le note sono già importate, non buttiamo via
+        // tutto per una preferenza.
+      }
+    }
+    return result;
   }
 
   /// Materializza [entries] in cartelle e note. Riceve i due notifier invece
@@ -419,13 +512,35 @@ class ImportService {
   static Future<({int importedNotes, int importedFolders})> commitEntries(
     FolderNotifier folders,
     NotesNotifier notes,
-    List<ImportEntry> entries,
-  ) async {
-    if (entries.isEmpty) return (importedNotes: 0, importedFolders: 0);
+    List<ImportEntry> entries, {
+    List<String> emptyFolderPaths = const [],
+  }) async {
+    if (entries.isEmpty && emptyFolderPaths.isEmpty) {
+      return (importedNotes: 0, importedFolders: 0);
+    }
 
     final folderIdByPath = <String, String?>{};
     var importedFolders = 0;
-    final notesToImport = <({String title, String content, String? folderId})>[];
+
+    // Le cartelle vuote del manifest non compaiono in nessun percorso di
+    // nota: vanno create esplicitamente, altrimenti un backup di una
+    // struttura di sole cartelle si "svuota" all'importazione. Le note poi
+    // riusano le stesse cartelle grazie alla cache dei path.
+    for (final path in emptyFolderPaths) {
+      final segments = path
+          .split('/')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(growable: false);
+      _ensureFolderPath(
+        folders,
+        segments,
+        folderIdByPath,
+        onFolderCreated: () => importedFolders++,
+      );
+    }
+
+    final notesToImport = <ImportedNote>[];
 
     for (final entry in entries) {
       // Percorso vuoto = radice: nessuna cartella, la nota compare in
@@ -437,15 +552,30 @@ class ImportService {
         onFolderCreated: () => importedFolders++,
       );
 
+      final manifest = entry.manifestNote;
+      if (manifest != null) {
+        notesToImport.add(ImportedNote(
+          title: manifest.title,
+          content: manifest.content,
+          folderId: folderId,
+          createdAt: manifest.createdAt,
+          updatedAt: manifest.updatedAt,
+          isFavorite: manifest.isFavorite,
+          isPinned: manifest.isPinned,
+          orderIndex: manifest.orderIndex,
+        ));
+        continue;
+      }
+
       final parsed = parseNoteFile(entry.rawContent, entry.fileName);
-      notesToImport.add((
+      notesToImport.add(ImportedNote(
         title: parsed.title,
         content: parsed.content,
         folderId: folderId,
       ));
     }
 
-    final importedNotes = await notes.importNotesBulk(notesToImport);
+    final importedNotes = await notes.importNotesBulkDetailed(notesToImport);
 
     return (importedNotes: importedNotes, importedFolders: importedFolders);
   }
@@ -468,8 +598,11 @@ class ImportService {
     String? parentId;
 
     for (final rawSegment in segments) {
-      final segment = rawSegment.trim().isEmpty ? 'Senza nome' : rawSegment.trim();
-      pathKey = pathKey.isEmpty ? segment.toLowerCase() : '$pathKey/${segment.toLowerCase()}';
+      final segment =
+          rawSegment.trim().isEmpty ? 'Senza nome' : rawSegment.trim();
+      pathKey = pathKey.isEmpty
+          ? segment.toLowerCase()
+          : '$pathKey/${segment.toLowerCase()}';
 
       if (cache.containsKey(pathKey)) {
         parentId = cache[pathKey];
@@ -501,7 +634,8 @@ class ImportService {
     return parentId;
   }
 
-  static List<FolderNode> _siblingsOf(FolderNotifier folders, String? parentId) {
+  static List<FolderNode> _siblingsOf(
+      FolderNotifier folders, String? parentId) {
     if (parentId == null) return folders.rootFolders;
     final parent = folders.findNode(parentId);
     return parent?.children ?? const [];

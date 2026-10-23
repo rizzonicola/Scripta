@@ -53,10 +53,12 @@ class FolderRow {
     return FolderRow(
       id: id,
       name: name ?? this.name,
-      parentId: identical(parentId, _unset) ? this.parentId : parentId as String?,
+      parentId:
+          identical(parentId, _unset) ? this.parentId : parentId as String?,
       isExpanded: isExpanded ?? this.isExpanded,
       updatedAt: updatedAt ?? this.updatedAt,
-      deletedAt: identical(deletedAt, _unset) ? this.deletedAt : deletedAt as int?,
+      deletedAt:
+          identical(deletedAt, _unset) ? this.deletedAt : deletedAt as int?,
     );
   }
 }
@@ -98,7 +100,10 @@ List<FolderRow> sortFoldersParentsFirst(List<FolderRow> rows) {
 
   for (final row in rows) {
     final parent = row.parentId;
-    if (parent != null && parent != row.id && ids.contains(parent) && !emitted.contains(parent)) {
+    if (parent != null &&
+        parent != row.id &&
+        ids.contains(parent) &&
+        !emitted.contains(parent)) {
       (waiting[parent] ??= <FolderRow>[]).add(row);
     } else {
       emitWithDescendants(row);
@@ -141,13 +146,15 @@ class FoldersDao {
 
   Future<List<FolderRow>> getActive() async {
     final db = await _db;
-    final rows = await db.query('folders', where: 'deleted_at IS NULL', orderBy: 'name COLLATE NOCASE ASC');
+    final rows = await db.query('folders',
+        where: 'deleted_at IS NULL', orderBy: 'name COLLATE NOCASE ASC');
     return rows.map(FolderRow.fromMap).toList();
   }
 
   Future<FolderRow?> getById(String id) async {
     final db = await _db;
-    final rows = await db.query('folders', where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows =
+        await db.query('folders', where: 'id = ?', whereArgs: [id], limit: 1);
     if (rows.isEmpty) return null;
     return FolderRow.fromMap(rows.first);
   }
@@ -157,11 +164,13 @@ class FoldersDao {
   /// Scrittura LOCALE: marca la riga `dirty = 1` (da inviare al server).
   Future<void> upsert(FolderRow row) async {
     final db = await _db;
-    await db.insert('folders', {...row.toMap(), 'dirty': 1}, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('folders', {...row.toMap(), 'dirty': 1},
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Applica una riga ricevuta dal server (vedi [applyRemoteLWWBatch]).
-  Future<void> applyRemoteLWW(FolderRow remote) => applyRemoteLWWBatch([remote]);
+  Future<void> applyRemoteLWW(FolderRow remote) =>
+      applyRemoteLWWBatch([remote]);
 
   /// Applica righe remote in un'unica transazione. Stessa regola di
   /// `NotesDao.applyRemoteLWWBatch`: la copia remota vince se la riga locale
@@ -205,7 +214,8 @@ class FoldersDao {
           {...remote.copyWith(isExpanded: isExpanded).toMap(), 'dirty': 0},
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
-        local[remote.id] = (isExpanded: isExpanded, updatedAt: remote.updatedAt, dirty: false);
+        local[remote.id] =
+            (isExpanded: isExpanded, updatedAt: remote.updatedAt, dirty: false);
       }
       await batch.commit(noResult: true);
     });
@@ -229,7 +239,8 @@ class FoldersDao {
     final db = await _db;
     final batch = db.batch();
     for (final e in idToPushedUpdatedAt.entries) {
-      batch.update('folders', {'dirty': 0}, where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
+      batch.update('folders', {'dirty': 0},
+          where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
     }
     await batch.commit(noResult: true);
   }
@@ -250,7 +261,8 @@ class FoldersDao {
   Future<void> deleteCleanNotIn(Set<String> serverIds) async {
     final db = await _db;
     final rows = await db.query('folders', columns: ['id'], where: 'dirty = 0');
-    final stale = [for (final r in rows) r['id'] as String]..removeWhere(serverIds.contains);
+    final stale = [for (final r in rows) r['id'] as String]
+      ..removeWhere(serverIds.contains);
     await deleteByIds(db, 'folders', stale, onlyClean: true);
   }
 
@@ -291,7 +303,8 @@ class FoldersDao {
   Future<void> cascadeSoftDelete(
     String rootFolderId,
     int now, {
-    required Future<void> Function(String folderId, int now) deleteNotesInFolder,
+    required Future<void> Function(String folderId, int now)
+        deleteNotesInFolder,
   }) async {
     final db = await _db;
     final subtree = await _collectActiveSubtreeIds(db, rootFolderId);
@@ -316,8 +329,10 @@ class FoldersDao {
   /// (poche, per natura) e visita in memoria; il set `seen` rende la visita
   /// sicura anche con riferimenti `parent_id` ciclici in un database
   /// corrotto.
-  Future<List<String>> _collectActiveSubtreeIds(Database db, String rootId) async {
-    final rows = await db.query('folders', columns: ['id', 'parent_id'], where: 'deleted_at IS NULL');
+  Future<List<String>> _collectActiveSubtreeIds(
+      Database db, String rootId) async {
+    final rows = await db.query('folders',
+        columns: ['id', 'parent_id'], where: 'deleted_at IS NULL');
     final childrenByParent = <String, List<String>>{};
     for (final r in rows) {
       final parent = r['parent_id'] as String?;
@@ -335,9 +350,39 @@ class FoldersDao {
     return result;
   }
 
-  Future<void> hardDeleteIds(List<String> ids) async {
-    if (ids.isEmpty) return;
-    await deleteByIds(await _db, 'folders', ids);
+  /// Sostituisce l'id di una cartella rifiutata dal server con `invalid_id`,
+  /// rimappando figli e note: il batch è stato annullato, quindi il vecchio
+  /// id non esiste sul server e va ritirato fuori dall'intero albero locale.
+  Future<void> replaceId(String oldId, String newId, int now) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'folders',
+        where: 'id = ?',
+        whereArgs: [oldId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+
+      await txn.insert(
+        'folders',
+        {...rows.first, 'id': newId, 'dirty': 1},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await txn.update(
+        'folders',
+        {'parent_id': newId, 'updated_at': now, 'dirty': 1},
+        where: 'parent_id = ? AND deleted_at IS NULL',
+        whereArgs: [oldId],
+      );
+      await txn.update(
+        'notes',
+        {'folder_id': newId, 'updated_at': now, 'dirty': 1},
+        where: 'folder_id = ? AND deleted_at IS NULL',
+        whereArgs: [oldId],
+      );
+      await txn.delete('folders', where: 'id = ?', whereArgs: [oldId]);
+    });
   }
 
   Future<void> hardDeleteAll() async {

@@ -40,13 +40,17 @@ class _MemorySecureStorage extends SecureStorageService {
   Future<String?> getServerUrl() async => _memory['url'];
 
   @override
-  Future<void> saveUsername(String username) async => _memory['user'] = username;
+  Future<void> saveUsername(String username) async =>
+      _memory['user'] = username;
 
   @override
   Future<String?> getUsername() async => _memory['user'];
 
   @override
   Future<void> saveUserId(String userId) async => _memory['uid'] = userId;
+
+  @override
+  Future<String?> getUserId() async => _memory['uid'];
 
   @override
   Future<void> clearAuth() async => _memory.clear();
@@ -67,7 +71,8 @@ class _FixedRandom implements Random {
 }
 
 class _Reply {
-  _Reply(this.status, {this.headers = const {}, String? body}) : body = body ?? json.encode({'error': 'x'});
+  _Reply(this.status, {this.headers = const {}, String? body})
+      : body = body ?? json.encode({'error': 'x'});
 
   _Reply.ok({Map<String, Object?>? caps})
       : status = 200,
@@ -106,16 +111,25 @@ class _Server {
 
     if (path == '/api/v1/auth/login') {
       return http.Response(
-        json.encode({'token': 'token', 'expires_at': loginExpiresAt, 'user_id': 'u1', 'username': 'mario'}),
+        json.encode({
+          'token': 'token',
+          'expires_at': loginExpiresAt,
+          'user_id': 'u1',
+          'username': 'mario'
+        }),
         200,
         headers: json200,
       );
     }
     if (path == '/api/v1/user/settings') {
-      if (request.method == 'PUT') return http.Response(request.body, 200, headers: json200);
+      if (request.method == 'PUT') {
+        return http.Response(request.body, 200, headers: json200);
+      }
       settingsGets++;
       if (settingsStatus != 200) {
-        return http.Response(json.encode({'error': 'token non valido'}), settingsStatus, headers: json200);
+        return http.Response(
+            json.encode({'error': 'token non valido'}), settingsStatus,
+            headers: json200);
       }
       return http.Response(
         json.encode({
@@ -133,8 +147,10 @@ class _Server {
     }
     if (path == '/api/v1/sync') {
       syncCalls++;
-      final reply = syncScript.isNotEmpty ? syncScript.removeAt(0) : _Reply.ok();
-      return http.Response(reply.body, reply.status, headers: {'content-type': 'application/json', ...reply.headers});
+      final reply =
+          syncScript.isNotEmpty ? syncScript.removeAt(0) : _Reply.ok();
+      return http.Response(reply.body, reply.status,
+          headers: {'content-type': 'application/json', ...reply.headers});
     }
     return http.Response('not found', 404);
   }
@@ -166,7 +182,10 @@ class _Harness {
 
   Future<bool> login() async {
     await notifier.initialized;
-    final ok = await notifier.login(serverUrl: 'http://localhost:8080', username: 'mario', password: 'password');
+    final ok = await notifier.login(
+        serverUrl: 'http://localhost:8080',
+        username: 'mario',
+        password: 'password');
     // Lascia chiudere ciò che la login avvia in parallelo (impostazioni).
     await Future<void>.delayed(const Duration(milliseconds: 100));
     return ok;
@@ -211,8 +230,10 @@ void main() {
   }
 
   group('Y-11: backoff e Retry-After', () {
-    test('un 503 con Retry-After non viene ritentato prima del tempo indicato', () async {
-      final server = _Server()..syncScript.add(_Reply(503, headers: const {'retry-after': '2'}));
+    test('un 503 con Retry-After non viene ritentato prima del tempo indicato',
+        () async {
+      final server = _Server()
+        ..syncScript.add(_Reply(503, headers: const {'retry-after': '2'}));
       final h = harness(server);
       await h.login();
 
@@ -229,11 +250,14 @@ void main() {
 
       expect(server.syncCalls, 3, reason: 'tre tentativi in tutto');
       // Jitter fisso a 0.5 => fattore 1.0: 1,5 s poi 3 s.
-      expect(h.delays, [const Duration(milliseconds: 1500), const Duration(seconds: 3)]);
+      expect(h.delays,
+          [const Duration(milliseconds: 1500), const Duration(seconds: 3)]);
     });
 
-    test('un Retry-After oltre il budget fa rinunciare subito, senza attendere', () async {
-      final server = _Server()..syncScript.add(_Reply(503, headers: const {'retry-after': '100'}));
+    test('un Retry-After oltre il budget fa rinunciare subito, senza attendere',
+        () async {
+      final server = _Server()
+        ..syncScript.add(_Reply(503, headers: const {'retry-after': '100'}));
       final h = harness(server);
       await h.login();
 
@@ -241,18 +265,23 @@ void main() {
       expect(h.delays, isEmpty);
     });
 
-    test('il jitter resta fra -25% e +25%, e una singola attesa non supera il tetto', () async {
+    test(
+        'il jitter resta fra -25% e +25%, e una singola attesa non supera il tetto',
+        () async {
       final h = harness(_Server());
       await h.notifier.initialized;
       const error = SyncApiException('x');
 
       h.random.value = 0.0;
-      expect(h.notifier.retryDelayFor(1, error), const Duration(milliseconds: 1125));
+      expect(h.notifier.retryDelayFor(1, error),
+          const Duration(milliseconds: 1125));
       h.random.value = 1.0;
-      expect(h.notifier.retryDelayFor(1, error), const Duration(milliseconds: 1875));
+      expect(h.notifier.retryDelayFor(1, error),
+          const Duration(milliseconds: 1875));
       h.random.value = 0.5;
       expect(h.notifier.retryDelayFor(2, error), const Duration(seconds: 3));
-      expect(h.notifier.retryDelayFor(10, error), const Duration(seconds: 15), reason: 'tetto della singola attesa');
+      expect(h.notifier.retryDelayFor(10, error), const Duration(seconds: 15),
+          reason: 'tetto della singola attesa');
     });
 
     test('un errore non transitorio (401) non viene ritentato', () async {
@@ -265,9 +294,60 @@ void main() {
     });
   });
 
+  group('risposta 200 non decodificabile', () {
+    test('resta online e distingue la risposta malformata dalla rete assente',
+        () async {
+      final server = _Server();
+      final h = harness(server);
+      expect(await h.login(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      server.syncScript.add(_Reply(200, body: '<html>non json</html>'));
+      expect(await h.notifier.triggerSync(), isFalse);
+      expect(h.notifier.state.isOnline, isTrue);
+      expect(
+        h.notifier.state.lastSyncMessage,
+        contains('risposta del server non valida'),
+      );
+      expect(h.delays, isEmpty, reason: 'un 502 non è transitorio');
+    });
+  });
+
+  group('422 invalid_id', () {
+    test('ripara l\'id locale e riprova, senza perdere la nota', () async {
+      final dao = NotesDao();
+      await dao.upsert(_note('bad-id', 'contenuto'));
+
+      final server = _Server()
+        ..syncScript.add(_Reply(
+          422,
+          body: json.encode({
+            'error': 'record non validi',
+            'rejected': [
+              {'kind': 'note', 'id': 'bad-id', 'reason': 'invalid_id'},
+            ],
+          }),
+        ));
+      final h = harness(server);
+
+      expect(await h.login(), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(server.syncCalls, 2, reason: 'primo 422 + retry riparato');
+      expect(await dao.getById('bad-id'), isNull);
+      final repaired = (await dao.getActive()).single;
+      expect(repaired.id, isNot('bad-id'));
+      expect(repaired.content, 'contenuto');
+      expect(await dao.listDirty(), isEmpty);
+    });
+  });
+
   group('Y-14: capability del server', () {
-    test('si ricordano dall\'ultima risposta 200 e si dimenticano se spariscono', () async {
-      final server = _Server()..syncScript.add(_Reply.ok(caps: const {'proto': 2}));
+    test(
+        'si ricordano dall\'ultima risposta 200 e si dimenticano se spariscono',
+        () async {
+      final server = _Server()
+        ..syncScript.add(_Reply.ok(caps: const {'proto': 2}));
       final h = harness(server);
       await h.login();
 
@@ -297,7 +377,8 @@ void main() {
       expect(prefs.getInt(_expiryKey), 4102444800000);
     });
 
-    test('un valore già in millisecondi non viene moltiplicato di nuovo', () async {
+    test('un valore già in millisecondi non viene moltiplicato di nuovo',
+        () async {
       final h = harness(_Server(loginExpiresAt: 4102444800000));
       await h.login();
       final prefs = await SharedPreferences.getInstance();
@@ -319,7 +400,8 @@ void main() {
       expect(prefs.getInt(_expiryKey), isNull);
     });
 
-    test('token scaduto + upload grosso: nessun upload, solo la verifica', () async {
+    test('token scaduto + upload grosso: nessun upload, solo la verifica',
+        () async {
       final server = _Server();
       final h = harness(server);
       await h.login();
@@ -332,13 +414,15 @@ void main() {
       final ok = await h.notifier.triggerSync();
 
       expect(ok, isFalse);
-      expect(server.syncCalls, syncsBefore, reason: 'nessun megabyte spedito per ricevere un 401');
+      expect(server.syncCalls, syncsBefore,
+          reason: 'nessun megabyte spedito per ricevere un 401');
       final state = h.container.read(syncProvider);
       expect(state.isAuthenticated, isFalse);
       expect(state.lastSyncMessage, contains('Sessione scaduta'));
     });
 
-    test('orologio del dispositivo sfasato: il token è valido, l\'upload parte', () async {
+    test('orologio del dispositivo sfasato: il token è valido, l\'upload parte',
+        () async {
       final server = _Server();
       final h = harness(server);
       await h.login();
@@ -351,11 +435,14 @@ void main() {
 
       expect(ok, isTrue);
       expect(server.syncCalls, syncsBefore + 1);
-      expect(prefs.getInt(_expiryKey), isNull, reason: 'la scadenza non attendibile viene dimenticata');
+      expect(prefs.getInt(_expiryKey), isNull,
+          reason: 'la scadenza non attendibile viene dimenticata');
       expect(h.container.read(syncProvider).isAuthenticated, isTrue);
     });
 
-    test('upload piccolo con token «scaduto»: nessuna verifica, si sincronizza e basta', () async {
+    test(
+        'upload piccolo con token «scaduto»: nessuna verifica, si sincronizza e basta',
+        () async {
       final server = _Server();
       final h = harness(server);
       await h.login();

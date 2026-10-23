@@ -60,10 +60,39 @@ class _FakeDao implements NotesDao {
   Future<void> softDeleteByFolder(String folderId, int now) async {}
 
   @override
-  Future<void> hardDeleteIds(List<String> ids) async {
-    for (final id in ids) {
-      rows.remove(id);
-    }
+  Future<void> replaceId(String oldId, String newId) async {
+    final row = rows.remove(oldId);
+    if (row == null) return;
+    rows[newId] = NoteRow(
+      id: newId,
+      title: row.title,
+      content: row.content,
+      folderId: row.folderId,
+      isFavorite: row.isFavorite,
+      isPinned: row.isPinned,
+      orderIndex: row.orderIndex,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+    );
+  }
+
+  @override
+  Future<void> updateCreatedAt(String id, DateTime createdAt) async {
+    final row = rows[id];
+    if (row == null) return;
+    rows[id] = NoteRow(
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      folderId: row.folderId,
+      isFavorite: row.isFavorite,
+      isPinned: row.isPinned,
+      orderIndex: row.orderIndex,
+      createdAt: createdAt.toUtc().millisecondsSinceEpoch,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+    );
   }
 
   @override
@@ -98,7 +127,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('NotesNotifier.reorderNotes', () {
-    test('con una cartella selezionata sposta la nota trascinata, non un\'altra', () async {
+    test(
+        'con una cartella selezionata sposta la nota trascinata, non un\'altra',
+        () async {
       final dao = _FakeDao()
         ..rows.addAll({
           'P1': _row('P1', 0),
@@ -119,7 +150,8 @@ void main() {
       expect(notifier.state.notes.map((n) => n.orderIndex), [0, 1, 2, 3, 4]);
     });
 
-    test('senza visibleIds riordina l\'intera lista (comportamento classico)', () async {
+    test('senza visibleIds riordina l\'intera lista (comportamento classico)',
+        () async {
       final dao = _FakeDao()
         ..rows.addAll({
           'A': _row('A', 0),
@@ -155,7 +187,8 @@ void main() {
       expect(dao.rows['B']!.orderIndex, 2);
     });
 
-    test('una lista visibile obsoleta viene ignorata senza spostare altro', () async {
+    test('una lista visibile obsoleta viene ignorata senza spostare altro',
+        () async {
       final dao = _FakeDao()
         ..rows.addAll({'A': _row('A', 0), 'B': _row('B', 1)});
       final notifier = await _customNotifier(dao);
@@ -220,7 +253,8 @@ void main() {
   });
 
   group('NotesNotifier.refreshFromDb', () {
-    test('non annulla un riordino fatto mentre la lettura DB è in corso', () async {
+    test('non annulla un riordino fatto mentre la lettura DB è in corso',
+        () async {
       final dao = _FakeDao()
         ..rows.addAll({
           'A': _row('A', 0),
@@ -252,7 +286,8 @@ void main() {
   });
 
   group('NotesNotifier - scritture in debounce vs metadati', () {
-    test('spostare una nota subito dopo aver digitato non la riporta indietro', () async {
+    test('spostare una nota subito dopo aver digitato non la riporta indietro',
+        () async {
       final dao = _FakeDao()
         ..rows.addAll({'A': _row('A', 0, folder: 'origine')});
       final notifier = await _customNotifier(dao);
@@ -268,7 +303,8 @@ void main() {
       expect(dao.rows['A']!.content, 'testo digitato');
     });
 
-    test('cancellare una nota subito dopo aver digitato non la fa risorgere', () async {
+    test('cancellare una nota subito dopo aver digitato non la fa risorgere',
+        () async {
       final dao = _FakeDao()..rows.addAll({'A': _row('A', 0)});
       final notifier = await _customNotifier(dao);
 

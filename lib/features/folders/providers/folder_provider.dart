@@ -30,9 +30,8 @@ class FolderState {
   }) {
     return FolderState(
       rootFolders: rootFolders ?? this.rootFolders,
-      selectedFolderId: selectedFolderId != null
-          ? selectedFolderId()
-          : this.selectedFolderId,
+      selectedFolderId:
+          selectedFolderId != null ? selectedFolderId() : this.selectedFolderId,
     );
   }
 
@@ -53,7 +52,8 @@ class FolderState {
   }
 
   @override
-  int get hashCode => Object.hash(identityHashCode(rootFolders), selectedFolderId);
+  int get hashCode =>
+      Object.hash(identityHashCode(rootFolders), selectedFolderId);
 }
 
 /// Gestisce l'albero delle cartelle sopra il database locale SQLite
@@ -175,7 +175,8 @@ class FolderNotifier extends StateNotifier<FolderState> {
     if (idx == -1) return;
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final updated = _activeRows[idx].copyWith(name: newName.trim(), updatedAt: now);
+    final updated =
+        _activeRows[idx].copyWith(name: newName.trim(), updatedAt: now);
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
     unawaited(_foldersDao.upsert(updated));
@@ -187,7 +188,8 @@ class FolderNotifier extends StateNotifier<FolderState> {
     final idx = _activeRows.indexWhere((r) => r.id == id);
     if (idx == -1) return;
 
-    final updated = _activeRows[idx].copyWith(isExpanded: !_activeRows[idx].isExpanded);
+    final updated =
+        _activeRows[idx].copyWith(isExpanded: !_activeRows[idx].isExpanded);
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
     unawaited(_foldersDao.setExpanded(id, updated.isExpanded));
@@ -200,15 +202,22 @@ class FolderNotifier extends StateNotifier<FolderState> {
     final idsToDelete = _collectSubtreeIds(id);
     if (idsToDelete.isEmpty) return;
 
-    if (state.selectedFolderId != null && idsToDelete.contains(state.selectedFolderId)) {
+    if (state.selectedFolderId != null &&
+        idsToDelete.contains(state.selectedFolderId)) {
       state = state.copyWith(selectedFolderId: () => null);
     }
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    _activeRows = _activeRows.where((r) => !idsToDelete.contains(r.id)).toList();
+    _activeRows =
+        _activeRows.where((r) => !idsToDelete.contains(r.id)).toList();
     _publishState();
 
     unawaited(() async {
+      // Prima di far sparire le note dal DB, scrive l'eventuale testo ancora
+      // nel debounce dell'editor: altrimenti il timer successivo riscriverebbe
+      // la nota con la vecchia cartella, annullando il tombstone appena
+      // creato dalla cascade.
+      await _ref.read(notesProvider.notifier).flushPendingSaves();
       await _foldersDao.cascadeSoftDelete(
         id,
         now,
@@ -279,13 +288,16 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// collegati tramite il proprio `parent_id`, invariato).
   bool moveFolder(String folderId, String? newParentId) {
     if (folderId == newParentId) return false;
-    if (newParentId != null && isDescendantOf(folderId, newParentId)) return false;
+    if (newParentId != null && isDescendantOf(folderId, newParentId)) {
+      return false;
+    }
 
     final idx = _activeRows.indexWhere((r) => r.id == folderId);
     if (idx == -1) return false;
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final updated = _activeRows[idx].copyWith(parentId: newParentId, updatedAt: now);
+    final updated =
+        _activeRows[idx].copyWith(parentId: newParentId, updatedAt: now);
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
     unawaited(_foldersDao.upsert(updated));
@@ -293,7 +305,8 @@ class FolderNotifier extends StateNotifier<FolderState> {
   }
 }
 
-final folderProvider = StateNotifierProvider<FolderNotifier, FolderState>((ref) {
+final folderProvider =
+    StateNotifierProvider<FolderNotifier, FolderState>((ref) {
   return FolderNotifier(
     ref,
     // Cartella dell'ultima sessione (null = "Tutte le note" o nessuna sessione).

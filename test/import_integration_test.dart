@@ -86,20 +86,43 @@ final List<ExportFolder> _folders = [
   (id: 'f-pers', name: 'Personale', parentId: null),
 ];
 
+ExportNote _n(
+  String id,
+  String title,
+  String content,
+  String? folderId, {
+  bool isFavorite = false,
+  bool isPinned = false,
+  int orderIndex = 0,
+  int createdAtMs = 1000,
+  int updatedAtMs = 2000,
+}) =>
+    (
+      id: id,
+      title: title,
+      content: content,
+      folderId: folderId,
+      isFavorite: isFavorite,
+      isPinned: isPinned,
+      orderIndex: orderIndex,
+      createdAtMs: createdAtMs,
+      updatedAtMs: updatedAtMs,
+    );
+
 final List<ExportNote> _notes = [
   // Senza cartella e con cartella sconosciuta: finiscono in Non_Catalogate/.
-  (id: '11111111-0000', title: '1 - Nome Nota', content: 'corpo A', folderId: null),
-  (id: '22222222-0000', title: '10 cose da fare', content: 'corpo B', folderId: 'cartella-fantasma'),
+  _n('11111111-0000', '1 - Nome Nota', 'corpo A', null),
+  _n('22222222-0000', '10 cose da fare', 'corpo B', 'cartella-fantasma'),
   // Il testo inizia con un proprio "# Nome Nota": l'esportazione non antepone
   // il titolo, che sopravvive solo nel nome del file ("1 - Nome Nota.md").
-  (id: '33333333-0000', title: '1 - Nome Nota', content: '# Nome Nota\n\ncorpo C', folderId: 'f-lavoro'),
+  _n('33333333-0000', '1 - Nome Nota', '# Nome Nota\n\ncorpo C', 'f-lavoro'),
   // Stesso titolo nella stessa cartella: "Riunione.md" e "Riunione (2).md".
-  (id: '44444444-0000', title: 'Riunione', content: 'uno', folderId: 'f-lavoro'),
-  (id: '55555555-0000', title: 'Riunione', content: 'due', folderId: 'f-lavoro'),
-  (id: '66666666-0000', title: '01. Introduzione', content: 'intro', folderId: 'f-prog'),
-  (id: '77777777-0000', title: '2024-01-05 Diario', content: '# Oggi\n\nsole', folderId: 'f-pers'),
+  _n('44444444-0000', 'Riunione', 'uno', 'f-lavoro'),
+  _n('55555555-0000', 'Riunione', 'due', 'f-lavoro'),
+  _n('66666666-0000', '01. Introduzione', 'intro', 'f-prog'),
+  _n('77777777-0000', '2024-01-05 Diario', '# Oggi\n\nsole', 'f-pers'),
   // Caratteri illegali nei nomi di file: il titolo vero sta nell'intestazione.
-  (id: '88888888-0000', title: 'Capitolo 1/2: "Intro"', content: 'x', folderId: 'f-pers'),
+  _n('88888888-0000', 'Capitolo 1/2: "Intro"', 'x', 'f-pers'),
 ];
 
 /// "cartella|titolo|testo" di ciò che l'utente deve ritrovarsi dopo l'import.
@@ -117,7 +140,7 @@ const List<String> _expectedImported = [
 const int _expectedFolderCount = 3;
 
 ZipResult _exportBackup() =>
-    buildNotesZip((folders: _folders, notes: _notes));
+    buildNotesZip((folders: _folders, notes: _notes, settings: null));
 
 List<String> _zipNames(Uint8List bytes) => [
       for (final f in ZipDecoder().decodeBytes(bytes).files)
@@ -204,7 +227,9 @@ void main() {
   }
 
   group('ZIP prodotto dall\'esportazione', () {
-    test('il backup contiene davvero il contenitore Non_Catalogate (premessa del difetto)', () {
+    test(
+        'il backup contiene davvero il contenitore Non_Catalogate (premessa del difetto)',
+        () {
       final names = _zipNames(_exportBackup().bytes);
 
       expect(
@@ -216,7 +241,8 @@ void main() {
       );
     });
 
-    test('esporta → importa: struttura della radice e titoli identici', () async {
+    test('esporta → importa: struttura della radice e titoli identici',
+        () async {
       final result = await commit(
         ImportService.decodeZipEntries(_exportBackup().bytes),
       );
@@ -230,7 +256,9 @@ void main() {
       expect(importedSummary(), unorderedEquals(_expectedImported));
     });
 
-    test('difetto 1: le note senza cartella stanno alla radice, senza cartella "Non_Catalogate"', () async {
+    test(
+        'difetto 1: le note senza cartella stanno alla radice, senza cartella "Non_Catalogate"',
+        () async {
       await commit(ImportService.decodeZipEntries(_exportBackup().bytes));
 
       expect(
@@ -239,15 +267,20 @@ void main() {
         reason: 'nessuna cartella visibile con il nome del contenitore',
       );
       final uncategorized = notesDao.rows.values
-          .where((n) => n.title == '10 cose da fare' || (n.title == '1 - Nome Nota' && n.content == 'corpo A'))
+          .where((n) =>
+              n.title == '10 cose da fare' ||
+              (n.title == '1 - Nome Nota' && n.content == 'corpo A'))
           .toList();
       expect(uncategorized, hasLength(2));
       for (final note in uncategorized) {
-        expect(note.folderId, isNull, reason: '"${note.title}" deve comparire solo in "Tutte le note"');
+        expect(note.folderId, isNull,
+            reason: '"${note.title}" deve comparire solo in "Tutte le note"');
       }
     });
 
-    test('difetto 2: "1 - Nome Nota" conserva il prefisso anche se il testo inizia con "# Nome Nota"', () async {
+    test(
+        'difetto 2: "1 - Nome Nota" conserva il prefisso anche se il testo inizia con "# Nome Nota"',
+        () async {
       await commit(ImportService.decodeZipEntries(_exportBackup().bytes));
 
       final imported = notesDao.rows.values
@@ -256,13 +289,65 @@ void main() {
       expect(imported.content, '# Nome Nota\n\ncorpo C');
     });
 
-    test('importare due volte è additivo: note raddoppiate, cartelle riusate, ancora nessuna Non_Catalogate', () async {
+    test('il manifest ripristina metadati, contenuto esatto e cartelle vuote',
+        () async {
+      final zip = buildNotesZip((
+        folders: [
+          (id: 'f', name: 'Lavoro', parentId: null),
+          (id: 'vuota', name: 'Vuota', parentId: 'f'),
+        ],
+        notes: [
+          _n(
+            'nota-1',
+            '1 - Titolo originale',
+            '# Intestazione diversa\n\ncorpo esatto',
+            'f',
+            isFavorite: true,
+            isPinned: true,
+            orderIndex: 42,
+            createdAtMs: 1000,
+            updatedAtMs: 2000,
+          ),
+        ],
+        settings: const {'theme': 'dark', 'font_size': 18},
+      ));
+      final bundle = ImportService.decodeZipBundle(zip.bytes);
+
+      expect(bundle.entries.single.manifestNote, isNotNull);
+      expect(bundle.emptyFolderPaths,
+          containsAll(<String>['Lavoro', 'Lavoro/Vuota']));
+      expect(bundle.settings, const {'theme': 'dark', 'font_size': 18});
+
+      final result = await ImportService.commitEntries(
+        folders,
+        notes,
+        bundle.entries,
+        emptyFolderPaths: bundle.emptyFolderPaths,
+      );
+      await _settle();
+
+      expect(result.importedFolders, 2);
+      expect(folderPaths(), unorderedEquals(['Lavoro', 'Lavoro/Vuota']));
+      final imported = notesDao.rows.values.single;
+      expect(imported.title, '1 - Titolo originale');
+      expect(imported.content, '# Intestazione diversa\n\ncorpo esatto');
+      expect(imported.isFavorite, isTrue);
+      expect(imported.isPinned, isTrue);
+      expect(imported.orderIndex, 42);
+      expect(imported.createdAt, 1000);
+      expect(imported.updatedAt, 2000);
+    });
+
+    test(
+        'importare due volte è additivo: note raddoppiate, cartelle riusate, ancora nessuna Non_Catalogate',
+        () async {
       final bytes = _exportBackup().bytes;
       await commit(ImportService.decodeZipEntries(bytes));
       final second = await commit(ImportService.decodeZipEntries(bytes));
 
       expect(second.importedNotes, _notes.length);
-      expect(second.importedFolders, 0, reason: 'le cartelle esistenti si riusano');
+      expect(second.importedFolders, 0,
+          reason: 'le cartelle esistenti si riusano');
       expect(notesDao.rows, hasLength(_notes.length * 2));
       expect(foldersDao.rows, hasLength(_expectedFolderCount));
       expect(
@@ -271,7 +356,9 @@ void main() {
       );
     });
 
-    test('una cartella "Non_Catalogate" creata da vecchie importazioni non riceve nuove note', () async {
+    test(
+        'una cartella "Non_Catalogate" creata da vecchie importazioni non riceve nuove note',
+        () async {
       final legacy = folders.addFolder(uncatalogedFolderName);
       await _settle();
 
@@ -279,7 +366,8 @@ void main() {
         ImportService.decodeZipEntries(_exportBackup().bytes),
       );
 
-      expect(result.importedFolders, _expectedFolderCount, reason: 'quella vecchia non conta né si riusa');
+      expect(result.importedFolders, _expectedFolderCount,
+          reason: 'quella vecchia non conta né si riusa');
       expect(
         notesDao.rows.values.where((n) => n.folderId == legacy.id),
         isEmpty,
@@ -291,7 +379,9 @@ void main() {
       );
     });
 
-    test('una cartella vera annidata "Lavoro/Non_Catalogate" resta una cartella', () async {
+    test(
+        'una cartella vera annidata "Lavoro/Non_Catalogate" resta una cartella',
+        () async {
       final bytes = _zipOf({
         'Lavoro/Non_Catalogate/x.md': 'dentro',
         'Non_Catalogate/y.md': 'radice',
@@ -352,7 +442,8 @@ void main() {
         ..addFile(ArchiveFile('Grande.md', size, Uint8List(size)));
       final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
 
-      expect(() => ImportService.decodeZipEntries(bytes), throwsFormatException);
+      expect(
+          () => ImportService.decodeZipEntries(bytes), throwsFormatException);
     });
 
     test('troppi file da importare vengono rifiutati', () {
@@ -362,7 +453,8 @@ void main() {
       }
       final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
 
-      expect(() => ImportService.decodeZipEntries(bytes), throwsFormatException);
+      expect(
+          () => ImportService.decodeZipEntries(bytes), throwsFormatException);
     });
   });
 
@@ -383,9 +475,11 @@ void main() {
       await file.writeAsString(text);
     }
 
-    test('stesse regole dello ZIP: radice, annidamento, rumore di macOS', () async {
+    test('stesse regole dello ZIP: radice, annidamento, rumore di macOS',
+        () async {
       await write(['Non_Catalogate', '1 - Nome Nota.md'], 'radice');
-      await write(['Lavoro', '2 - Progetti', '01. Introduzione.md'], '# Introduzione\n\ncorpo');
+      await write(['Lavoro', '2 - Progetti', '01. Introduzione.md'],
+          '# Introduzione\n\ncorpo');
       await write(['Lavoro', 'Non_Catalogate', 'x.md'], 'vera cartella');
       await write(['superiore.md'], 'in cima');
       await write(['__MACOSX', 'Lavoro', '._x.md'], 'spazzatura');
@@ -418,7 +512,8 @@ void main() {
       );
     });
 
-    test('importare la cartella equivale a importare lo ZIP da cui proviene', () async {
+    test('importare la cartella equivale a importare lo ZIP da cui proviene',
+        () async {
       final zipBytes = _exportBackup().bytes;
       for (final file in ZipDecoder().decodeBytes(zipBytes).files) {
         if (!file.isFile) continue;

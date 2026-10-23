@@ -54,7 +54,8 @@ class SecureStorageService {
       await _storage.write(key: key, value: value);
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
-      debugPrint('SecureStorage: Keychain non disponibile ($e), uso il fallback.');
+      debugPrint(
+          'SecureStorage: Keychain non disponibile ($e), uso il fallback.');
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('$_fallbackPrefix$key', value);
     }
@@ -66,7 +67,8 @@ class SecureStorageService {
       if (value != null || !_fallbackEnabled) return value;
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
-      debugPrint('SecureStorage: Keychain non disponibile ($e), uso il fallback.');
+      debugPrint(
+          'SecureStorage: Keychain non disponibile ($e), uso il fallback.');
     }
     // Keychain vuoto o non accessibile: controlla un eventuale valore salvato
     // dal fallback in una sessione precedente.
@@ -96,12 +98,25 @@ class SecureStorageService {
       _memoryOnlyToken = null;
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
-      debugPrint('SecureStorage: Keychain non disponibile ($e): token solo in memoria.');
+      debugPrint(
+          'SecureStorage: Keychain non disponibile ($e): token solo in memoria.');
       _memoryOnlyToken = token;
+      // Se il Keychain è tornato accessibile in lettura, al prossimo avvio
+      // vincerebbe il vecchio token rimasto lì: prova a rimuoverlo. Se anche
+      // la delete fallisce, il token in memoria resta comunque prioritario
+      // per la sessione corrente.
+      try {
+        await _storage.delete(key: _tokenKey);
+      } catch (_) {}
     }
   }
 
   Future<String?> getAuthToken() async {
+    // Un token scritto in memoria è la sessione più recente: NON deve essere
+    // scavalcato da un vecchio token rimasto nel Keychain quando la scrittura
+    // era fallita.
+    final memoryToken = _memoryOnlyToken;
+    if (memoryToken != null && memoryToken.isNotEmpty) return memoryToken;
     // Versioni precedenti, in fallback, salvavano il token in chiaro in
     // SharedPreferences: se ne trovi uno lo elimina (login da rifare).
     if (_fallbackEnabled) {
@@ -121,11 +136,14 @@ class SecureStorageService {
 
   Future<String?> getServerUrl() => _read(_serverUrlKey);
 
-  Future<void> saveUsername(String username) => _write(_usernameKey, username.trim());
+  Future<void> saveUsername(String username) =>
+      _write(_usernameKey, username.trim());
 
   Future<String?> getUsername() => _read(_usernameKey);
 
   Future<void> saveUserId(String userId) => _write(_userIdKey, userId);
+
+  Future<String?> getUserId() => _read(_userIdKey);
 
   Future<void> clearAuth() async {
     _memoryOnlyToken = null;

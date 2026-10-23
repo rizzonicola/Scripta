@@ -371,10 +371,11 @@ class _ReadOnlyNoteView extends ConsumerWidget {
     // modello — a valle, `MarkdownRenderedView`/`NoteSearchHighlightedView`
     // restano comunque gli unici responsabili di riparsing/caching pesanti.
     final activeNoteTitleContent = ref.watch(
-      activeNoteProvider.select((n) => n == null ? null : (n.title, n.content)),
+      activeNoteProvider
+          .select((n) => n == null ? null : (n.id, n.title, n.content)),
     );
     if (activeNoteTitleContent == null) return const SizedBox.shrink();
-    final (title, content) = activeNoteTitleContent;
+    final (noteId, title, content) = activeNoteTitleContent;
 
     // Mentre la ricerca interna è attiva con un termine non vuoto, si mostra
     // la vista dedicata con le occorrenze evidenziate (vedi doc di classe di
@@ -387,12 +388,17 @@ class _ReadOnlyNoteView extends ConsumerWidget {
     );
     if (isSearching) {
       return NoteSearchHighlightedView(
+        // La key resetta scroll/selezione quando si cambia nota: prima il
+        // `ScrollController` veniva riusato e la nota nuova si apriva alla
+        // posizione di scroll di quella precedente.
+        key: ValueKey('search-$noteId'),
         title: title,
         content: content,
       );
     }
 
     return MarkdownRenderedView(
+      key: ValueKey('read-$noteId'),
       title: title,
       content: content,
     );

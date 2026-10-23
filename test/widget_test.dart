@@ -84,7 +84,9 @@ void main() {
     expect(frL10n.modeReadOnly, 'Mode Lecture Seule');
   });
 
-  testWidgets('Scripta app initial widget pump test — no fake welcome note/folders', (WidgetTester tester) async {
+  testWidgets(
+      'Scripta app initial widget pump test — no fake welcome note/folders',
+      (WidgetTester tester) async {
     await tester.pumpWidget(
       const ProviderScope(
         child: ScriptaApp(),
@@ -124,7 +126,8 @@ void main() {
     expect(texts, jsonCode);
   });
 
-  test('moveNote updates folderId and moves note between folders and root', () async {
+  test('moveNote updates folderId and moves note between folders and root',
+      () async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
@@ -132,12 +135,14 @@ void main() {
     final note = notesNotifier.createNote(folderId: 'folder_a');
     expect(note.folderId, 'folder_a');
 
-    notesNotifier.moveNote(note.id, 'folder_b');
-    final movedNote = container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
+    await notesNotifier.moveNote(note.id, 'folder_b');
+    final movedNote =
+        container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
     expect(movedNote.folderId, 'folder_b');
 
-    notesNotifier.moveNote(note.id, null);
-    final rootNote = container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
+    await notesNotifier.moveNote(note.id, null);
+    final rootNote =
+        container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
     expect(rootNote.folderId, isNull);
   });
 
@@ -147,10 +152,16 @@ void main() {
 
     final folderNotifier = container.read(folderProvider.notifier);
     folderNotifier.addFolder('ParentFolder');
-    final parent = container.read(folderProvider).rootFolders.firstWhere((f) => f.name == 'ParentFolder');
+    final parent = container
+        .read(folderProvider)
+        .rootFolders
+        .firstWhere((f) => f.name == 'ParentFolder');
 
     folderNotifier.addFolder('ChildFolder', parentId: parent.id);
-    final updatedParent = container.read(folderProvider).rootFolders.firstWhere((f) => f.id == parent.id);
+    final updatedParent = container
+        .read(folderProvider)
+        .rootFolders
+        .firstWhere((f) => f.id == parent.id);
     expect(updatedParent.children.length, 1);
     final child = updatedParent.children.first;
 
@@ -174,7 +185,8 @@ void main() {
     final notesNotifier = container.read(notesProvider.notifier);
 
     final parent = folderNotifier.addFolder('Progetti');
-    final child = folderNotifier.addFolder('Sotto-progetto', parentId: parent.id);
+    final child =
+        folderNotifier.addFolder('Sotto-progetto', parentId: parent.id);
     final noteInParent = notesNotifier.createNote(folderId: parent.id);
     final noteInChild = notesNotifier.createNote(folderId: child.id);
 
@@ -198,7 +210,8 @@ void main() {
       return !ids.contains(noteInParent.id) && !ids.contains(noteInChild.id);
     });
 
-    final activeNoteIds = container.read(notesProvider).notes.map((n) => n.id).toSet();
+    final activeNoteIds =
+        container.read(notesProvider).notes.map((n) => n.id).toSet();
     expect(activeNoteIds.contains(noteInParent.id), isFalse);
     expect(activeNoteIds.contains(noteInChild.id), isFalse);
   });

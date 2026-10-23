@@ -51,7 +51,14 @@ class _NoteSearchHighlightedViewState
   // dover assegnare una GlobalKey a ciascuna occorrenza dell'intero
   // documento.
   final GlobalKey _activeMatchKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
   TextRange? _lastScrolledToMatch;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   void _scheduleScrollIfNeeded(TextRange? activeMatch) {
     if (activeMatch == null || activeMatch == _lastScrolledToMatch) return;
@@ -77,6 +84,31 @@ class _NoteSearchHighlightedViewState
       // verso cui ci si era scrollati non ha più alcun significato.
       _lastScrolledToMatch = null;
     }
+  }
+
+  /// Top (in coordinate del testo) della riga della occorrenza attiva.
+  /// Il TextPainter usa lo stesso stile e la stessa larghezza del
+  /// SelectableText, quindi la riga misurata coincide con quella disegnata.
+  double? _activeMatchTop({
+    required BuildContext context,
+    required String text,
+    required TextRange? activeMatch,
+    required TextStyle style,
+    required double maxWidth,
+  }) {
+    if (activeMatch == null || text.isEmpty || maxWidth <= 0) return null;
+    final start = activeMatch.start.clamp(0, text.length);
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: maxWidth);
+    final offset = painter.getOffsetForCaret(
+      TextPosition(offset: start),
+      Rect.zero,
+    );
+    painter.dispose();
+    return offset.dy;
   }
 
   @override
@@ -124,26 +156,17 @@ class _NoteSearchHighlightedViewState
       }
 
       final matchText = text.substring(start, end);
-      if (i == activeIndex) {
-        spans.add(WidgetSpan(
-          alignment: PlaceholderAlignment.baseline,
-          baseline: TextBaseline.alphabetic,
-          child: Container(
-            key: _activeMatchKey,
-            color: activeHighlight,
-            child: Text(
-              matchText,
-              style: baseStyle.copyWith(
-                  color: Colors.black, fontWeight: FontWeight.w700),
-            ),
-          ),
-        ));
-      } else {
-        spans.add(TextSpan(
-          text: matchText,
-          style: baseStyle.copyWith(backgroundColor: normalHighlight),
-        ));
-      }
+      // NIENTE WidgetSpan: Flutter lo appiattisce a U+FFFC quando il testo
+      // viene copiato. L'evidenziazione della occorrenza attiva è un normale
+      // TextSpan; la posizione per lo scroll è calcolata sotto col TextPainter
+      // e materializzata in un anchor invisibile fuori dalla selezione.
+      spans.add(TextSpan(
+        text: matchText,
+        style: baseStyle.copyWith(
+          backgroundColor: i == activeIndex ? activeHighlight : normalHighlight,
+          color: i == activeIndex ? Colors.black : null,
+        ),
+      ));
       cursor = end;
     }
     if (cursor < text.length) {
@@ -153,6 +176,7 @@ class _NoteSearchHighlightedViewState
     final hasTitle = widget.title.trim().isNotEmpty;
 
     return SingleChildScrollView(
+      controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
       child: Center(
         child: ConstrainedBox(
@@ -178,8 +202,34 @@ class _NoteSearchHighlightedViewState
                 ),
                 const SizedBox(height: 20),
               ],
-              SelectableText.rich(
-                TextSpan(style: baseStyle, children: spans),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final activeTop = _activeMatchTop(
+                    context: context,
+                    text: text,
+                    activeMatch: activeMatch,
+                    style: baseStyle,
+                    maxWidth: constraints.maxWidth,
+                  );
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      SelectableText.rich(
+                        TextSpan(style: baseStyle, children: spans),
+                      ),
+                      if (activeTop != null)
+                        Positioned(
+                          top: activeTop,
+                          left: 0,
+                          child: SizedBox(
+                            key: _activeMatchKey,
+                            width: 1,
+                            height: 1,
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
             ],
           ),
