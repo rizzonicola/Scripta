@@ -31,13 +31,19 @@ void main() {
     });
 
     test('catena inversa: ogni genitore precede il figlio', () {
-      final out = _ids(sortFoldersParentsFirst([_f('c', 'b'), _f('b', 'a'), _f('a')]));
+      final out =
+          _ids(sortFoldersParentsFirst([_f('c', 'b'), _f('b', 'a'), _f('a')]));
       expect(out, ['a', 'b', 'c']);
     });
 
-    test('righe indipendenti e genitori fuori dall\'elenco non si spostano', () {
+    test('righe indipendenti e genitori fuori dall\'elenco non si spostano',
+        () {
       // "x" ha un genitore già sul server (non fra le sporche): resta dov'è.
-      final input = [_f('x', 'gia-sul-server'), _f('y'), _f('z', 'gia-sul-server')];
+      final input = [
+        _f('x', 'gia-sul-server'),
+        _f('y'),
+        _f('z', 'gia-sul-server')
+      ];
       expect(_ids(sortFoldersParentsFirst(input)), ['x', 'y', 'z']);
     });
 
@@ -78,7 +84,8 @@ void main() {
     setUp(() async {
       AppDatabase.ensureFactoryInitialized();
       await AppDatabase.instance.close();
-      dbPath = p.join(Directory.systemTemp.path, 'scripta_folder_order_${DateTime.now().microsecondsSinceEpoch}.db');
+      dbPath = p.join(Directory.systemTemp.path,
+          'scripta_folder_order_${DateTime.now().microsecondsSinceEpoch}.db');
       AppDatabase.debugDatabasePathOverride = dbPath;
     });
 
@@ -96,14 +103,45 @@ void main() {
       expect(_ids(await dao.listDirty()), ['padre', 'figlio']);
     });
 
-    test('un REPLACE del genitore (nuovo rowid) non porta il figlio davanti', () async {
+    test('un REPLACE del genitore (nuovo rowid) non porta il figlio davanti',
+        () async {
       final dao = FoldersDao();
       await dao.upsert(_f('padre'));
       await dao.upsert(_f('figlio', 'padre'));
       // Il genitore viene riscritto (es. rinomina): REPLACE = nuovo rowid.
-      await dao.upsert(_f('padre').copyWith(name: 'rinominato', updatedAt: 2000));
+      await dao
+          .upsert(_f('padre').copyWith(name: 'rinominato', updatedAt: 2000));
 
       expect(_ids(await dao.listDirty()), ['padre', 'figlio']);
+    });
+
+    test('repairCycles spezza il ciclo e rende la riparazione sincronizzabile',
+        () async {
+      final dao = FoldersDao();
+      await dao.upsert(_f('a', 'b'));
+      await dao.upsert(_f('b', 'a'));
+
+      await dao.repairCycles(5000);
+
+      final rows = await dao.getActive();
+      expect(rows.length, 2);
+      final roots = rows.where((r) => r.parentId == null).toList();
+      expect(roots.length, 1);
+      expect(roots.single.updatedAt, 5000);
+      expect(
+          (await dao.listDirty()).map((r) => r.id), contains(roots.single.id));
+    });
+
+    test('repairCycles non tocca un albero già valido', () async {
+      final dao = FoldersDao();
+      await dao.upsert(_f('padre'));
+      await dao.upsert(_f('figlio', 'padre'));
+
+      await dao.repairCycles(5000);
+
+      final rows = await dao.getActive();
+      expect(rows.firstWhere((r) => r.id == 'figlio').parentId, 'padre');
+      expect(rows.firstWhere((r) => r.id == 'figlio').updatedAt, 1000);
     });
   });
 }

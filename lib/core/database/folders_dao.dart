@@ -266,6 +266,63 @@ class FoldersDao {
     await deleteByIds(db, 'folders', stale, onlyClean: true);
   }
 
+  /// Spezza gli eventuali cicli presenti nelle cartelle ATTIVE, azzerando un
+  /// solo `parent_id` per ciclo. Un ciclo non è raggiungibile da una radice:
+  /// le cartelle che ne fanno parte sparirebbero dall'albero, pur restando
+  /// nel DB. La riga distaccata viene marcata `dirty` così il prossimo push
+  /// propaga la riparazione anche al server; `updated_at` viene aggiornato
+  /// perché è una modifica locale da vincere in LWW.
+  Future<void> repairCycles(int now) async {
+    final db = await _db;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'folders',
+        columns: ['id', 'parent_id'],
+        where: 'deleted_at IS NULL AND parent_id IS NOT NULL',
+      );
+      if (rows.isEmpty) return;
+
+      final parents = <String, String>{};
+      for (final row in rows) {
+        parents[row['id'] as String] = row['parent_id'] as String;
+      }
+      final done = <String>{};
+      final detach = <String>{};
+      for (final start in parents.keys.toList()) {
+        if (done.contains(start)) continue;
+        final path = <String>[];
+        final index = <String, int>{};
+        var cur = start;
+        while (true) {
+          if (done.contains(cur)) break;
+          if (index.containsKey(cur)) {
+            detach.add(cur);
+            parents.remove(cur);
+            break;
+          }
+          final parent = parents[cur];
+          if (parent == null) break;
+          index[cur] = path.length;
+          path.add(cur);
+          cur = parent;
+        }
+        done.addAll(path);
+      }
+      if (detach.isEmpty) return;
+
+      final batch = txn.batch();
+      for (final id in detach) {
+        batch.update(
+          'folders',
+          {'parent_id': null, 'updated_at': now, 'dirty': 1},
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
   Future<List<String>> listActiveChildIds(String parentId) async {
     final db = await _db;
     final rows = await db.query(

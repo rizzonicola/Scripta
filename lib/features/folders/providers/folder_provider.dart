@@ -134,6 +134,11 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// La selezione si rilegge DOPO l'await: se l'utente ne ha scelta un'altra
   /// mentre il DB veniva letto, si valida quella, non quella iniziale.
   Future<void> _loadFromDb({bool validateSelection = false}) async {
+    if (!_hasLoadedOnce) {
+      await _foldersDao.repairCycles(
+        DateTime.now().toUtc().millisecondsSinceEpoch,
+      );
+    }
     var rows = [...await _foldersDao.getActive()];
     if (!mounted) return;
     if (!_hasLoadedOnce) {
