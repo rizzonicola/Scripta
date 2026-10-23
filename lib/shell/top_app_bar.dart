@@ -104,14 +104,11 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
                 // Dual Mode Toggle: Edit <-> Read-Only
                 Container(
-                  height: 38,
+                  height: 36,
                   padding: const EdgeInsets.all(3),
                   decoration: BoxDecoration(
                     color: theme.surfaceElevated,
-                    borderRadius: BorderRadius.circular(11),
-                    border: Border.all(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.35),
-                    ),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -266,7 +263,7 @@ class _ModeToggleSegment extends StatelessWidget {
     final selectedColor = theme.colorScheme.primary;
 
     return SizedBox(
-      height: 32,
+      height: 30,
       child: Tooltip(
         message: tooltip,
         excludeFromSemantics: true,
@@ -274,39 +271,24 @@ class _ModeToggleSegment extends StatelessWidget {
           button: true,
           selected: isSelected,
           label: tooltip,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(8),
-              focusColor: selectedColor.withValues(alpha: 0.12),
-              child: Center(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOutCubic,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? selectedColor.withValues(alpha: 0.14)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(7),
+                focusColor: selectedColor.withValues(alpha: 0.12),
+                child: Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: title != null ? 11 : 9,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? theme.colorScheme.surface
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isSelected
-                          ? selectedColor.withValues(alpha: 0.18)
-                          : Colors.transparent,
-                    ),
-                    boxShadow: isSelected
-                        ? [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 5,
-                              offset: const Offset(0, 2),
-                            ),
-                          ]
-                        : null,
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -317,7 +299,7 @@ class _ModeToggleSegment extends StatelessWidget {
                         color: isSelected
                             ? selectedColor
                             : theme.colorScheme.onSurface
-                                .withValues(alpha: 0.7),
+                                .withValues(alpha: 0.65),
                       ),
                       if (title != null) ...[
                         const SizedBox(width: 6),
@@ -328,9 +310,9 @@ class _ModeToggleSegment extends StatelessWidget {
                                 ? FontWeight.w600
                                 : FontWeight.normal,
                             color: isSelected
-                                ? theme.colorScheme.onSurface
+                                ? selectedColor
                                 : theme.colorScheme.onSurface
-                                    .withValues(alpha: 0.7),
+                                    .withValues(alpha: 0.65),
                           ),
                         ),
                       ],
