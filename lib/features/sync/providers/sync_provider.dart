@@ -54,6 +54,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   static const _prefInactivitySync = 'scripta_sync_on_inactivity';
   static const _prefInactivitySeconds = 'scripta_sync_inactivity_seconds';
   static const _prefLastSyncTime = 'scripta_last_sync_timestamp';
+  static const _prefLastOnline = 'scripta_last_online';
 
   /// Scadenza del token (millisecondi Unix), calcolata dall'`expires_at` della
   /// login (Y-13-A). Non è un segreto: sta fra le preferenze.
@@ -121,6 +122,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// [_reachabilityMark].
   int _networkSuccessCount = 0;
 
+  /// Ultimo valore di [SyncConfig.isOnline] scritto su disco. Evita di
+  /// riscrivere la preferenza ad ogni poll di connettività quando non cambia.
+  bool? _lastPersistedOnline;
+
   /// Istantanea di "quanto è già riuscito", da prendere PRIMA di inviare una
   /// richiesta che potrebbe scrivere `isOnline: false`.
   ///
@@ -144,6 +149,24 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   bool _reachedServerSince(_ReachabilityMark mark) =>
       _networkSuccessCount != mark.successes ||
       state.lastSyncTime != mark.lastSync;
+
+  /// Ricorda l'ultimo stato Online/Offline per il prossimo avvio. È
+  /// intenzionalmente best effort: un errore di SharedPreferences non deve
+  /// interferire con la sync o con l'indicatore.
+  void _rememberOnline(bool value) {
+    if (_lastPersistedOnline == value) return;
+    _lastPersistedOnline = value;
+    unawaited(_persistOnline(value));
+  }
+
+  Future<void> _persistOnline(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefLastOnline, value);
+    } catch (_) {
+      _lastPersistedOnline = null;
+    }
+  }
 
   late final Future<void> initialized;
 
@@ -326,6 +349,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     final lastSyncTime = lastSyncMillis != null
         ? DateTime.fromMillisecondsSinceEpoch(lastSyncMillis)
         : null;
+    final savedOnline = prefs.getBool(_prefLastOnline);
 
     final savedServerUrl = await _secureStorage.getServerUrl() ?? '';
     final savedUsername = await _secureStorage.getUsername();
@@ -334,6 +358,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!mounted) return;
 
     final hasToken = savedToken != null && savedToken.isNotEmpty;
+    // All'avvio non far lampeggiare l'indicatore giallo se l'ultima sessione
+    // era Online: il check di raggiungibilità parte subito dopo e correggerà
+    // lo stato se il server non risponde. Senza un valore salvato (primo
+    // avvio della 1.0.3) si parte ottimisticamente Online quando c'è una
+    // sessione, esattamente come dopo una login riuscita.
+    final initialOnline =
+        hasToken && savedServerUrl.isNotEmpty ? (savedOnline ?? true) : false;
+    _lastPersistedOnline = initialOnline;
 
     state = state.copyWith(
       syncOnAppLaunch: launchSync,
@@ -344,6 +376,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       serverUrl: savedServerUrl,
       username: () => savedUsername,
       isAuthenticated: hasToken,
+      isOnline: initialOnline,
       lastSyncTime: () => lastSyncTime,
     );
 
@@ -509,6 +542,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       return isOnline;
     }
     state = state.copyWith(isOnline: isOnline);
+    _rememberOnline(isOnline);
     return isOnline;
   }
 
@@ -624,6 +658,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           isSyncing: false,
           lastError: () => null,
         );
+        _rememberOnline(true);
         return true;
       });
       if (!applied) return false;
@@ -643,6 +678,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           isSyncing: false,
           lastError: () => e is SyncApiException ? e.message : e.toString(),
         );
+        _rememberOnline(false);
       }
       return false;
     }
@@ -1085,6 +1121,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
               'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
           lastError: () => null,
         );
+        _rememberOnline(true);
         return true;
       }
       return false; // irraggiungibile: il ciclo ritorna o lancia
@@ -1103,12 +1140,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       if (isLocalDbError) {
         debugPrint('SyncNotifier: errore del database locale: $e');
       }
+      // Un 422 è una risposta del server (quindi è online): non va mostrato Offline.
+      final nextOnline =
+          (isAuthError || isRejected || isBadResponse || isLocalDbError)
+              ? state.isOnline
+              : false;
       state = state.copyWith(
         isAuthenticated: isAuthError ? false : state.isAuthenticated,
-        // Un 422 è una risposta del server (quindi è online): non va mostrato Offline.
-        isOnline: (isAuthError || isRejected || isBadResponse || isLocalDbError)
-            ? state.isOnline
-            : false,
+        isOnline: nextOnline,
         isSyncing: false,
         lastError: () => e is SyncApiException ? e.message : e.toString(),
         lastSyncMessage: () => isAuthError
@@ -1121,6 +1160,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
                         ? 'Sincronizzazione non riuscita: errore del database locale'
                         : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
+      _rememberOnline(nextOnline);
       if (isAuthError) {
         await _endSession(generation);
       }
@@ -1219,6 +1259,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         // parallelo alla sync), questo fallimento è vecchio: vedi
         // [_reachabilityMark].
         state = state.copyWith(isOnline: false);
+        _rememberOnline(false);
       }
     }
   }
@@ -1255,6 +1296,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         await _endSession(generation);
       } else {
         state = state.copyWith(isOnline: false);
+        _rememberOnline(false);
       }
     }
   }

@@ -228,6 +228,42 @@ void main() {
       expect(server.syncCalls, 0);
       expect(server.settingsCalls, 0);
     });
+
+    test('lo stato Online persistito evita il giallo prima del health check',
+        () async {
+      SharedPreferences.setMockInitialValues({
+        'scripta_sync_on_launch': false,
+        'scripta_last_online': true,
+      });
+      final server = _StartupServer()..healthGate = Completer<void>();
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+      await _waitUntil(() => server.healthCalls >= 1);
+
+      expect(container.read(syncProvider).isOnline, isTrue,
+          reason: 'lo stato dell\'ultima sessione deve valere fino al check');
+      expect(server.healthGate!.isCompleted, isFalse);
+
+      server.healthGate!.complete();
+      await _waitUntil(() => container.read(syncProvider).isOnline);
+    });
+
+    test('l\'esito del health check aggiorna lo stato persistito', () async {
+      SharedPreferences.setMockInitialValues({
+        'scripta_sync_on_launch': false,
+        'scripta_last_online': false,
+      });
+      final server = _StartupServer();
+      final container = containerFor(server);
+      container.read(syncProvider.notifier);
+
+      await _waitUntil(() => container.read(syncProvider).isOnline);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('scripta_last_online'), isTrue);
+    });
   });
 
   group('indicatore online/offline con richieste concorrenti', () {

@@ -110,7 +110,7 @@ class SyncApiService {
   /// Identificativo dell'app inviato nell'header `X-Scripta-Client`. Il server
   /// lo usa SOLO nei log (non cambia nessun comportamento). Tenere allineato
   /// alla versione in pubspec.yaml.
-  static const String clientHeaderValue = 'scripta/1.0.2';
+  static const String clientHeaderValue = 'scripta/1.0.3';
 
   /// Legge `Retry-After` espresso in secondi. Altri formati (data HTTP) o
   /// valori non validi/negativi: nessuna indicazione (null).

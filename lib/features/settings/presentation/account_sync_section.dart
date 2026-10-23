@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
@@ -53,19 +54,21 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
       _serverUrlController.text = syncConfig.serverUrl;
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Section Header: Account & Server
-        _buildSectionHeader(theme, l10n.accountServerSection),
-        _buildAccountCard(context, theme, syncConfig, l10n),
+    return AutofillGroup(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section Header: Account & Server
+          _buildSectionHeader(theme, l10n.accountServerSection),
+          _buildAccountCard(context, theme, syncConfig, l10n),
 
-        const SizedBox(height: 24),
+          const SizedBox(height: 24),
 
-        // Section Header: Sync Toggles
-        _buildSectionHeader(theme, l10n.syncTogglesSection),
-        _buildSyncTogglesCard(context, theme, syncConfig, l10n),
-      ],
+          // Section Header: Sync Toggles
+          _buildSectionHeader(theme, l10n.syncTogglesSection),
+          _buildSyncTogglesCard(context, theme, syncConfig, l10n),
+        ],
+      ),
     );
   }
 
@@ -252,6 +255,9 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
               // Login Form
               TextField(
                 controller: _serverUrlController,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.url],
                 decoration: InputDecoration(
                   labelText: l10n.serverUrlLabel,
                   hintText: AppConstants.serverUrlPlaceholder,
@@ -264,6 +270,10 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
               const SizedBox(height: 12),
               TextField(
                 controller: _usernameController,
+                textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.username],
+                autocorrect: false,
+                enableSuggestions: false,
                 decoration: InputDecoration(
                   labelText: l10n.usernameLabel,
                   hintText: 'mario.rossi',
@@ -285,6 +295,8 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
               TextField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
+                textInputAction: TextInputAction.done,
+                autofillHints: const [AutofillHints.password],
                 decoration: InputDecoration(
                   labelText: l10n.passwordLabel,
                   prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20),
@@ -349,6 +361,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                                   );
 
                           if (success && context.mounted) {
+                            TextInput.finishAutofillContext();
                             _passwordController.clear();
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
