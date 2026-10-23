@@ -92,6 +92,15 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// metodi pubblici qui sotto).
   List<FolderRow> _activeRows = [];
 
+  /// Il primo caricamento può concludersi DOPO che l'utente ha già creato una
+  /// cartella (stato solo in memoria): quelle righe vanno conservate, non
+  /// sostituite dalla fotografia del DB scattata prima della scrittura.
+  bool _hasLoadedOnce = false;
+
+  /// Id cancellati mentre il primo caricamento era in corso: la fotografia
+  /// del DB può essere precedente alla delete e non deve resuscitarli.
+  final Set<String> _deletedBeforeLoad = <String>{};
+
   /// [initialSelectedFolderId] è la cartella selezionata nell'ultima sessione
   /// (vedi [sessionSnapshotProvider]): parte già selezionata fin dal primo
   /// frame, senza passare per "Tutte le note". È solo un riferimento da
@@ -106,6 +115,11 @@ class FolderNotifier extends StateNotifier<FolderState> {
         _notesDao = notesDao ?? NotesDao(),
         super(FolderState(selectedFolderId: initialSelectedFolderId)) {
     _loadFromDb(validateSelection: true);
+    // Non si può notificare un altro provider durante il build di questo:
+    // lo scope iniziale viene pubblicato appena il microtask lo consente.
+    Future.microtask(() {
+      if (mounted) _publishScope(state.selectedFolderId);
+    });
   }
 
   /// Carica le cartelle attive dal DB e ricostruisce l'albero.
@@ -120,8 +134,21 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// La selezione si rilegge DOPO l'await: se l'utente ne ha scelta un'altra
   /// mentre il DB veniva letto, si valida quella, non quella iniziale.
   Future<void> _loadFromDb({bool validateSelection = false}) async {
-    final rows = await _foldersDao.getActive();
+    var rows = [...await _foldersDao.getActive()];
     if (!mounted) return;
+    if (!_hasLoadedOnce) {
+      // Le righe toccate in memoria prima che la lettura finisse vincono sulla
+      // fotografia del DB; quelle cancellate nel frattempo non risorgono.
+      final byId = {for (final row in rows) row.id: row};
+      for (final local in _activeRows) {
+        if (!_deletedBeforeLoad.contains(local.id)) byId[local.id] = local;
+      }
+      rows = byId.values
+          .where((row) => !_deletedBeforeLoad.contains(row.id))
+          .toList();
+      _deletedBeforeLoad.clear();
+      _hasLoadedOnce = true;
+    }
     _activeRows = rows;
 
     var next = state.copyWith(rootFolders: FolderNode.buildForest(rows));
@@ -132,6 +159,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
       next = next.copyWith(selectedFolderId: () => null);
     }
     state = next;
+    _publishScope(state.selectedFolderId);
   }
 
   /// Ricarica l'albero dal database locale. Esposto principalmente per la
@@ -144,6 +172,12 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   void selectFolder(String? folderId) {
     state = state.copyWith(selectedFolderId: () => folderId);
+    _publishScope(folderId);
+  }
+
+  void _publishScope(String? folderId) {
+    final scope = _ref.read(selectedFolderScopeProvider.notifier);
+    if (scope.state != folderId) scope.state = folderId;
   }
 
   FolderNode addFolder(String name, {String? parentId}) {
@@ -201,10 +235,12 @@ class FolderNotifier extends StateNotifier<FolderState> {
   void deleteFolder(String id) {
     final idsToDelete = _collectSubtreeIds(id);
     if (idsToDelete.isEmpty) return;
+    if (!_hasLoadedOnce) _deletedBeforeLoad.addAll(idsToDelete);
 
     if (state.selectedFolderId != null &&
         idsToDelete.contains(state.selectedFolderId)) {
       state = state.copyWith(selectedFolderId: () => null);
+      _publishScope(null);
     }
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -304,6 +340,8 @@ class FolderNotifier extends StateNotifier<FolderState> {
     return true;
   }
 }
+
+final selectedFolderScopeProvider = StateProvider<String?>((ref) => null);
 
 final folderProvider =
     StateNotifierProvider<FolderNotifier, FolderState>((ref) {

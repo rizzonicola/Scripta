@@ -283,10 +283,17 @@ class NotesNotifier extends StateNotifier<NotesState> {
     super.dispose();
   }
 
-  Future<void> _loadFromDb() async {
+  Future<void> _loadFromDb({int attempt = 0}) async {
+    final before = state.notes;
     final rows = await _dao.getActive();
     if (!mounted) return;
     final loaded = rows.map(NoteModel.fromRow).toList();
+
+    // Una nota creata mentre la lettura iniziale era in corso vive solo nello
+    // stato: senza questo merge la lettura la cancellerebbe appena finita.
+    final activeBeforeLoad = state.activeNoteId;
+    final loadedIds = loaded.map((n) => n.id).toSet();
+    loaded.addAll(state.notes.where((n) => !loadedIds.contains(n.id)));
 
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
@@ -331,6 +338,13 @@ class NotesNotifier extends StateNotifier<NotesState> {
       }
     }
 
+    // Se durante la lettura lo stato è cambiato (creazione, cancellazione,
+    // cascade, sync) questa fotografia del DB è obsoleta: rileggerla evita di
+    // resuscitare note appena cancellate o di perdere quelle appena create.
+    if (!identical(state.notes, before) && attempt < 2) {
+      return _loadFromDb(attempt: attempt + 1);
+    }
+
     final sortOrder = _sortFor(_scope);
     // Si ordina UNA sola volta, con l'ordinamento della vista corrente. BUG
     // CORRETTO: la nota attiva iniziale veniva presa dalla lista ordinata con
@@ -345,9 +359,13 @@ class NotesNotifier extends StateNotifier<NotesState> {
     _restoreActiveNoteId = null;
     final restoredStillExists =
         restoreId != null && sorted.any((n) => n.id == restoreId);
-    final String? initialActiveId = restoredStillExists
-        ? restoreId
-        : (sorted.isNotEmpty ? sorted.first.id : null);
+    final loadedActiveStillExists =
+        activeBeforeLoad != null && sorted.any((n) => n.id == activeBeforeLoad);
+    final String? initialActiveId = loadedActiveStillExists
+        ? activeBeforeLoad
+        : (restoredStillExists
+            ? restoreId
+            : (sorted.isNotEmpty ? sorted.first.id : null));
 
     state = state.copyWith(
       notes: sorted,
@@ -844,8 +862,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
       notes: _sort([...state.notes, ...newNotes], state.sortOrder),
     );
 
-    unawaited(_persist(
-        () => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList())));
+    await _persist(
+        () => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList()));
 
     return newNotes.length;
   }
@@ -932,7 +950,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     updatedList[index] = updatedNote;
 
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
-    unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
+    await _persist(() => _dao.upsert(updatedNote.toRow()));
   }
 
   Future<void> deleteNote(String id) async {
@@ -957,7 +975,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     state =
         state.copyWith(notes: updatedList, activeNoteId: () => nextActiveId);
-    unawaited(_persist(() => _dao.upsert(tombstoneRow)));
+    await _persist(() => _dao.upsert(tombstoneRow));
   }
 
   /// Crea una copia della nota [id] (stessa cartella, stesso contenuto) e la
@@ -989,7 +1007,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     updatedList[index] = updatedNote;
 
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
-    unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
+    await _persist(() => _dao.upsert(updatedNote.toRow()));
   }
 
   Future<void> toggleFavorite(String id) async {
@@ -1007,7 +1025,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     updatedList[index] = updatedNote;
 
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
-    unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
+    await _persist(() => _dao.upsert(updatedNote.toRow()));
   }
 
   /// Aggiorna i metadati modificabili dal dialog della nota. `createdAt` è
@@ -1050,11 +1068,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
 
     if (syncChanged) {
-      unawaited(_persist(() => _dao.upsert(updatedNote.toRow())));
+      await _persist(() => _dao.upsert(updatedNote.toRow()));
     } else if (localChanged) {
-      unawaited(_persist(
+      await _persist(
         () => _dao.updateCreatedAt(id, updatedNote.createdAt),
-      ));
+      );
     }
   }
 }
@@ -1064,11 +1082,11 @@ final notesProvider = StateNotifierProvider<NotesNotifier, NotesState>((ref) {
     // Nota aperta nell'ultima sessione (null se nessuna).
     initialActiveNoteId: ref.read(sessionSnapshotProvider).noteId,
   );
-  // Ogni vista ("Tutte le note" / cartella) ha il proprio ordinamento: il
-  // notifier deve sapere quale cartella è selezionata. `fireImmediately`
-  // copre l'eventuale selezione già presente alla creazione.
+  // La cartella selezionata vive in un provider dedicato: notesProvider non
+  // dipende da folderProvider (che a sua volta legge notesProvider nella
+  // cascade), evitando un ciclo di dipendenze.
   ref.listen<String?>(
-    folderProvider.select((s) => s.selectedFolderId),
+    selectedFolderScopeProvider,
     (previous, next) => notifier.setScope(next),
     fireImmediately: true,
   );
