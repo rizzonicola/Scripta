@@ -170,7 +170,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   void setScope(String? folderId) {
     final key = folderId ?? _allScope;
     if (key == _scope) return;
-    unawaited(flushPendingSaves());
+    flushPendingSavesInBackground();
     _scope = key;
     final order = _sortFor(key);
     state = state.copyWith(notes: _sort(state.notes, order), sortOrder: order);
@@ -250,16 +250,32 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// Esegue [op] tracciandola in [_inflightWrites]. Il Future restituito non
   /// fallisce mai: un errore di I/O viene loggato invece di diventare
   /// un'eccezione asincrona non gestita.
-  Future<void> _persist(Future<void> Function() op) {
+  Future<void> _persist(Future<void> Function() op) =>
+      _trackPersist(op, rethrowOnError: false);
+
+  /// Variante per le scritture che il chiamante DEVE poter verificare
+  /// (import, flush prima della sync): l'errore viene propagato, così non si
+  /// mostra un successo per dati che non sono finiti su SQLite.
+  Future<void> _persistStrict(Future<void> Function() op) =>
+      _trackPersist(op, rethrowOnError: true);
+
+  Future<void> _trackPersist(
+    Future<void> Function() op, {
+    required bool rethrowOnError,
+  }) {
     final Future<void> f = () async {
       try {
         await op();
       } catch (e, st) {
         debugPrint('NotesNotifier: scrittura su SQLite fallita: $e\n$st');
+        if (rethrowOnError) rethrow;
       }
     }();
     _inflightWrites.add(f);
-    f.whenComplete(() => _inflightWrites.remove(f));
+    unawaited(f.then(
+      (_) => _inflightWrites.remove(f),
+      onError: (_) => _inflightWrites.remove(f),
+    ));
     return f;
   }
 
@@ -279,7 +295,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // realmente il Future restituito da flushPendingSaves, altrimenti la
     // sync rischia di leggere il database PRIMA che questa scrittura sia
     // stata effettivamente committata (vedi flushPendingSaves).
-    unawaited(flushPendingSaves());
+    flushPendingSavesInBackground();
     super.dispose();
   }
 
@@ -455,7 +471,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // cascade di una cartella), il timer non deve riscriverla: sarebbe un
     // upsert con `deleted_at = NULL` che fa "risorgere" un tombstone.
     if (pending != null && state.notes.any((n) => n.id == pending.id)) {
-      _pendingWrite = _persist(() => _dao.upsert(pending.toRow()));
+      _pendingWrite = _persistStrict(() => _dao.upsert(pending.toRow()));
     }
 
     // Attende anche una scrittura eventualmente già avviata (dal debounce
@@ -464,11 +480,29 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // l'upsert reale è ancora in volo.
     final inFlight = _pendingWrite;
     if (inFlight != null) {
-      await inFlight;
-      if (identical(_pendingWrite, inFlight)) {
-        _pendingWrite = null;
+      try {
+        await inFlight;
+      } finally {
+        if (identical(_pendingWrite, inFlight)) {
+          _pendingWrite = null;
+        }
       }
     }
+  }
+
+  /// Variante fire-and-forget per i chiamanti che non possono attendere
+  /// (lifecycle, cambio selezione, dispose). L'errore viene loggato qui: un
+  /// `unawaited(flushPendingSaves())` lascerebbe invece un'eccezione
+  /// asincrona non gestita se SQLite rifiuta la scrittura.
+  void flushPendingSavesInBackground() {
+    unawaited(
+      flushPendingSaves().then<void>(
+        (_) {},
+        onError: (Object e, StackTrace st) {
+          debugPrint('NotesNotifier: flush in background fallito: $e\n$st');
+        },
+      ),
+    );
   }
 
   /// Prepara il notifier al cambio account: annulla l'autosave in sospeso e
@@ -479,8 +513,17 @@ class NotesNotifier extends StateNotifier<NotesState> {
     _saveDebounceTimer = null;
     _pendingNote = null;
     final pendingWrite = _pendingWrite;
-    if (pendingWrite != null) await pendingWrite;
-    await Future.wait(List<Future<void>>.of(_inflightWrites));
+    if (pendingWrite != null) {
+      try {
+        await pendingWrite;
+      } catch (_) {
+        // Il reset deve procedere comunque: il DB dell'account precedente
+        // viene cancellato subito dopo.
+      }
+    }
+    await Future.wait(List<Future<void>>.of(_inflightWrites).map(
+      (f) => f.catchError((_) {}),
+    ));
     _pendingWrite = null;
     _restoreActiveNoteId = null;
     _folderCustomOrders.clear();
@@ -644,7 +687,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       // Fire-and-forget qui è accettabile: si sta solo cambiando la nota
       // attiva in UI, non si sta per interrogare "cosa è dirty" subito dopo
       // (a differenza di SyncNotifier.triggerSync, che invece DEVE attendere).
-      unawaited(flushPendingSaves());
+      flushPendingSavesInBackground();
       final sorted = _sort(state.notes, state.sortOrder);
       state = state.copyWith(notes: sorted, activeNoteId: () => id);
     }
@@ -657,7 +700,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// Imposta l'ordinamento della vista CORRENTE ("Tutte le note" o la cartella
   /// selezionata): le altre viste mantengono il proprio.
   Future<void> setSortOrder(NoteSortOrder order) async {
-    unawaited(flushPendingSaves());
+    flushPendingSavesInBackground();
     var notes = state.notes;
 
     if (order == NoteSortOrder.custom &&
@@ -716,7 +759,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// hanno `updated_at` aggiornato): un riordino non genera più un push di
   /// tutte le note dell'archivio.
   void reorderNotes(int oldIndex, int newIndex, {List<String>? visibleIds}) {
-    unawaited(flushPendingSaves());
+    flushPendingSavesInBackground();
     if (oldIndex < newIndex) {
       newIndex -= 1;
     }
@@ -858,18 +901,26 @@ class NotesNotifier extends StateNotifier<NotesState> {
         ),
     ];
 
+    final previousNotes = state.notes;
     state = state.copyWith(
       notes: _sort([...state.notes, ...newNotes], state.sortOrder),
     );
 
-    await _persist(
-        () => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList()));
+    try {
+      await _persistStrict(
+          () => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList()));
+    } catch (_) {
+      // Niente falsi successi: se SQLite non ha accettato il batch, le note
+      // non esistono davvero e vanno tolte anche dallo stato in memoria.
+      if (mounted) state = state.copyWith(notes: previousNotes);
+      rethrow;
+    }
 
     return newNotes.length;
   }
 
   NoteModel createNote({String? folderId}) {
-    unawaited(flushPendingSaves());
+    flushPendingSavesInBackground();
     final now = DateTime.now();
     // La nuova nota va in cima all'ordine manuale con un indice INFERIORE al
     // minimo esistente, invece di incrementare in memoria l'indice di tutte
@@ -949,8 +1000,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final updatedList = List<NoteModel>.from(state.notes);
     updatedList[index] = updatedNote;
 
+    final previousNotes = state.notes;
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
-    await _persist(() => _dao.upsert(updatedNote.toRow()));
+    try {
+      await _persistStrict(() => _dao.upsert(updatedNote.toRow()));
+    } catch (_) {
+      if (mounted) state = state.copyWith(notes: previousNotes);
+      rethrow;
+    }
   }
 
   Future<void> deleteNote(String id) async {
@@ -973,9 +1030,21 @@ class NotesNotifier extends StateNotifier<NotesState> {
       nextActiveId = state.activeNoteId;
     }
 
+    final previousNotes = state.notes;
+    final previousActiveId = state.activeNoteId;
     state =
         state.copyWith(notes: updatedList, activeNoteId: () => nextActiveId);
-    await _persist(() => _dao.upsert(tombstoneRow));
+    try {
+      await _persistStrict(() => _dao.upsert(tombstoneRow));
+    } catch (_) {
+      if (mounted) {
+        state = state.copyWith(
+          notes: previousNotes,
+          activeNoteId: () => previousActiveId,
+        );
+      }
+      rethrow;
+    }
   }
 
   /// Crea una copia della nota [id] (stessa cartella, stesso contenuto) e la

@@ -18,6 +18,7 @@ import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/database/sync_meta_dao.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/core/services/sync_api_service.dart';
+import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/features/settings/providers/settings_provider.dart';
 import 'package:scripta/features/sync/models/sync_models.dart';
 import 'package:scripta/features/sync/providers/sync_provider.dart';
@@ -54,13 +55,43 @@ class _MemorySecureStorage extends SecureStorageService {
   Future<void> clearAuth() async => _memory.clear();
 }
 
+class _BlockingNotesDao extends NotesDao {
+  bool block = true;
+  Completer<void>? entered;
+  Completer<void>? releaseGate;
+
+  void blockNextMarkSynced() {
+    entered = Completer<void>();
+    releaseGate = Completer<void>();
+  }
+
+  void release() {
+    block = false;
+    releaseGate?.complete();
+  }
+
+  @override
+  Future<void> markSynced(Map<String, int> idToPushedUpdatedAt) async {
+    if (block && releaseGate != null) {
+      entered?.complete();
+      await releaseGate!.future;
+    }
+    await super.markSynced(idToPushedUpdatedAt);
+  }
+}
+
 class _RaceServer {
+  int loginCalls = 0;
+  int syncCalls = 0;
   int settingsGets = 0;
   int settingsPuts = 0;
   int blockSettingsCall = -1;
   int blockPutCall = -1;
+  int blockSyncCall = -1;
   Completer<void>? settingsGate;
   Completer<void>? putGate;
+  Completer<void>? syncGate;
+  List<Map<String, dynamic>> firstSyncNotes = const [];
 
   late final http.Client client = MockClient(_handle);
 
@@ -69,6 +100,7 @@ class _RaceServer {
     final path = request.url.path;
 
     if (path == '/api/v1/auth/login') {
+      loginCalls++;
       final body = json.decode(request.body) as Map<String, dynamic>;
       final username = body['username'] as String;
       return http.Response(
@@ -120,12 +152,18 @@ class _RaceServer {
       );
     }
     if (path == '/api/v1/sync') {
+      syncCalls++;
+      final call = syncCalls;
+      if (call == blockSyncCall) {
+        syncGate = Completer<void>();
+        await syncGate!.future;
+      }
       return http.Response(
         json.encode({
           'server_time': 1000,
           'full_resync': false,
           'folders': <Object>[],
-          'notes': <Object>[],
+          'notes': call == 1 ? firstSyncNotes : <Object>[],
         }),
         200,
         headers: json200,
@@ -136,7 +174,7 @@ class _RaceServer {
 }
 
 class _Harness {
-  _Harness(this.server) {
+  _Harness(this.server, {NotesDao? notesDao}) {
     container = ProviderContainer(
       overrides: [
         syncProvider.overrideWith(
@@ -144,6 +182,7 @@ class _Harness {
             ref,
             SyncApiService(server.client),
             _MemorySecureStorage(),
+            notesDao: notesDao,
             retryWait: (d) async {},
           ),
         ),
@@ -172,11 +211,12 @@ class _Harness {
   }
 }
 
-Future<void> _waitUntil(bool Function() predicate) async {
+Future<void> _waitUntil(bool Function() predicate,
+    {String reason = 'condizione non raggiunta'}) async {
   final deadline = DateTime.now().add(const Duration(seconds: 2));
   while (!predicate()) {
     if (DateTime.now().isAfter(deadline)) {
-      fail('condizione non raggiunta');
+      fail(reason);
     }
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
@@ -261,6 +301,30 @@ void main() {
     expect(state.username, 'B');
   });
 
+  test('un push impostazioni di A non viene riaccodato per B', () async {
+    final server = _RaceServer();
+    final h = _Harness(server);
+    addTearDown(h.container.dispose);
+
+    expect(await h.login('A'), isTrue);
+    final settings = h.container.read(settingsProvider.notifier);
+
+    server.blockPutCall = server.settingsPuts + 1;
+    await settings.setThemeMode(ThemeMode.dark);
+    settings.flushRemotePush();
+    await _waitUntil(() => server.settingsPuts == server.blockPutCall);
+    await _waitUntil(() => server.putGate != null);
+
+    await h.notifier.logout();
+    expect(await h.login('B'), isTrue);
+    server.putGate!.complete();
+    await _waitUntil(() => !settings.hasPendingRemotePush);
+
+    expect(server.settingsPuts, server.blockPutCall,
+        reason: 'la PUT di A non deve essere ritentata come B');
+    expect(settings.hasPendingRemotePush, isFalse);
+  });
+
   test(
       'cambiare account cancella note, cartelle e cursore della sessione precedente',
       () async {
@@ -305,6 +369,102 @@ void main() {
     // iniziale di B: qui conta che non sia rimasto quello di A.
     expect(await metaDao.getSyncCursor(), isNot(123));
     expect(await metaDao.getAccountIdentity(), 'http://localhost:8080|uid-B');
+    expect(h.container.read(syncProvider).username, 'B');
+  });
+
+  test(
+      'il logout conserva le note e il login dello stesso account non le cancella',
+      () async {
+    final server = _RaceServer();
+    final h = _Harness(server);
+    addTearDown(h.container.dispose);
+
+    expect(await h.login('A'), isTrue);
+
+    final notesDao = NotesDao();
+    const note = NoteRow(
+      id: 'nota-locale',
+      title: 'Nota locale',
+      content: 'deve restare dopo il logout',
+      folderId: null,
+      isFavorite: false,
+      isPinned: false,
+      orderIndex: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    );
+    await notesDao.upsert(note);
+    final notes = h.container.read(notesProvider.notifier);
+    await notes.refreshFromDb();
+    expect(
+      h.container.read(notesProvider).notes.any((n) => n.id == note.id),
+      isTrue,
+    );
+
+    await h.notifier.logout();
+
+    expect(await notesDao.getById(note.id), isNotNull,
+        reason: 'il logout non deve cancellare i dati locali');
+    expect(
+      h.container.read(notesProvider).notes.any((n) => n.id == note.id),
+      isTrue,
+      reason: 'la nota deve restare visibile anche da disconnessi',
+    );
+
+    expect(await h.login('A'), isTrue);
+
+    expect(await notesDao.getById(note.id), isNotNull,
+        reason: 'lo stesso account ritrova le proprie note');
+    expect(
+      h.container.read(notesProvider).notes.any((n) => n.id == note.id),
+      isTrue,
+    );
+  });
+
+  test('una risposta sync di A non viene applicata dopo il login di B',
+      () async {
+    final server = _RaceServer()
+      ..blockSyncCall = 1
+      ..firstSyncNotes = [
+        {
+          'id': 'nota-remota-A',
+          'title': 'Remota A',
+          'content': 'non deve apparire in B',
+          'folder_id': null,
+          'is_favorite': false,
+          'is_pinned': false,
+          'order_index': 0,
+          'updated_at': 1,
+          'deleted_at': null,
+        }
+      ];
+    final notesDao = _BlockingNotesDao()..blockNextMarkSynced();
+    final h = _Harness(server, notesDao: notesDao);
+    addTearDown(h.container.dispose);
+
+    // La prima sync di A resta bloccata dopo la risposta HTTP, dentro
+    // markSynced: è la finestra in cui il vecchio codice applicava la
+    // risposta anche se nel frattempo era partito il login di B.
+    final loginA = h.login('A');
+    await _waitUntil(() => server.syncGate != null,
+        reason: 'sync A non partita');
+    server.syncGate!.complete();
+    await _waitUntil(() => notesDao.entered?.isCompleted ?? false,
+        reason: 'markSynced A non bloccato');
+
+    final logout = h.notifier.logout();
+    final loginB = h.login('B');
+    await _waitUntil(() => server.loginCalls >= 2,
+        reason: 'login B non partito');
+    notesDao.release();
+
+    await Future.wait([loginA, logout, loginB]);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(await notesDao.getById('nota-remota-A'), isNull,
+        reason: 'la risposta della sessione A non deve finire nel DB di B');
+    expect(h.container.read(syncProvider).isAuthenticated, isTrue);
     expect(h.container.read(syncProvider).username, 'B');
   });
 }

@@ -98,15 +98,38 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   /// PUT, e risposte in ordine diverso da quello di invio potevano lasciare
   /// sul server un valore intermedio invece dell'ultimo.
   static const Duration _remotePushDebounce = Duration(milliseconds: 400);
+  static const Duration _remotePushRetryDelay = Duration(seconds: 5);
 
   final Ref? _ref;
   Timer? _remotePushTimer;
+  Timer? _remotePushRetryTimer;
 
   /// Vero se esiste una modifica non ancora inviata al server. Flag esplicito
   /// invece di `Timer.isActive`: dentro il callback del timer stesso il suo
   /// valore dipende dall'implementazione, e un falso negativo farebbe
   /// scartare l'invio.
   bool _remotePushPending = false;
+
+  /// Ultimo payload da inviare. Se durante una PUT arrivano altre modifiche,
+  /// il payload più recente sostituisce quello in coda: niente invii
+  /// concorrenti fuori ordine, e nessuna modifica persa.
+  UserSettingsDto? _queuedPayload;
+  bool _remotePushInFlight = false;
+
+  /// Incrementato ad ogni modifica locale di aspetto. Una GET partita prima
+  /// della modifica non deve applicare la risposta remota sopra quella locale.
+  int _localRevision = 0;
+
+  int get revision => _localRevision;
+
+  /// Cambia quando la sessione viene chiusa: una PUT già in volo non deve
+  /// riaccodare le impostazioni dell'account precedente per inviarle al
+  /// successivo.
+  int _pushEpoch = 0;
+
+  @visibleForTesting
+  bool get hasPendingRemotePush =>
+      _remotePushPending || _queuedPayload != null || _remotePushInFlight;
 
   /// [initial]: impostazioni già lette prima del primo frame (vedi
   /// [loadSettingsSnapshot]). Se presenti il notifier parte già dallo stato
@@ -120,17 +143,20 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   @override
   void dispose() {
     _remotePushTimer?.cancel();
+    _remotePushRetryTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     state = readAppSettingsFromPrefs(prefs);
   }
 
   /// Pianifica l'invio al server dello stato CORRENTE (debounced: vince
   /// sempre l'ultimo valore).
   void _pushRemoteSettings() {
+    _localRevision++;
     if (_ref == null) return;
     _remotePushPending = true;
     _remotePushTimer?.cancel();
@@ -145,7 +171,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   void flushRemotePush() {
     final ref = _ref;
     if (ref == null || !mounted || !_remotePushPending) return;
-    _remotePushPending = false;
     _remotePushTimer?.cancel();
     _remotePushTimer = null;
 
@@ -155,7 +180,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
             ? 'light'
             : 'system';
 
-    final payload = UserSettingsDto(
+    _queuedPayload = UserSettingsDto(
       theme: themeStr,
       colorScheme: state.selectedThemeId,
       language: state.locale?.languageCode ?? 'it',
@@ -164,18 +189,89 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       lineSpacing: state.lineHeight,
       layout: 'split',
     );
-    unawaited(ref.read(syncProvider.notifier).pushUserSettings(payload));
+    _remotePushPending = true;
+    unawaited(_drainRemotePush());
   }
 
-  Future<void> applyRemoteSettings(UserSettingsDto remote) async {
+  /// Scarta un invio rimasto in sospeso quando la sessione finisce. Le
+  /// preferenze locali restano applicate, ma non vengono attribuite a un
+  /// account diverso al login successivo.
+  void discardPendingPush() {
+    _pushEpoch++;
+    _remotePushTimer?.cancel();
+    _remotePushTimer = null;
+    _remotePushRetryTimer?.cancel();
+    _remotePushRetryTimer = null;
+    _queuedPayload = null;
+    _remotePushPending = false;
+    // Invalida anche le GET delle impostazioni partite prima della chiusura.
+    _localRevision++;
+  }
+
+  Future<void> _drainRemotePush() async {
+    final epoch = _pushEpoch;
+    final ref = _ref;
+    if (ref == null || !mounted || _remotePushInFlight) return;
+    _remotePushInFlight = true;
+    try {
+      while (mounted && epoch == _pushEpoch && _queuedPayload != null) {
+        final payload = _queuedPayload!;
+        _queuedPayload = null;
+        final sent =
+            await ref.read(syncProvider.notifier).pushUserSettings(payload);
+        if (!mounted || epoch != _pushEpoch) return;
+        if (!sent) {
+          // Conserva il payload più recente (potrebbe essere arrivato mentre
+          // la PUT era in volo) e ritenta più tardi, ma solo se c'è ancora una
+          // sessione: da disconnessi non ha senso martellare il server.
+          _queuedPayload ??= payload;
+          _remotePushPending = true;
+          if (ref.read(syncProvider).isAuthenticated) {
+            _scheduleRemotePushRetry();
+          }
+          return;
+        }
+        if (_queuedPayload == null) {
+          _remotePushPending = false;
+        }
+      }
+    } finally {
+      _remotePushInFlight = false;
+    }
+    if (epoch == _pushEpoch && _queuedPayload != null) {
+      _scheduleRemotePushRetry();
+    }
+  }
+
+  void _scheduleRemotePushRetry() {
+    if (_remotePushRetryTimer?.isActive ?? false) return;
+    _remotePushRetryTimer = Timer(_remotePushRetryDelay, () {
+      _remotePushRetryTimer = null;
+      if (mounted && _remotePushPending) flushRemotePush();
+    });
+  }
+
+  Future<void> applyRemoteSettings(
+    UserSettingsDto remote, {
+    int? expectedRevision,
+  }) async {
+    // Una modifica locale (o un push ancora in coda) vince sulla fotografia
+    // remota: applicarla qui la sovrascriverebbe silenziosamente.
+    if (_remotePushPending || _remotePushInFlight || _queuedPayload != null) {
+      return;
+    }
+    if (expectedRevision != null && expectedRevision != _localRevision) {
+      return;
+    }
+    if (!mounted) return;
+
     final themeMode = remote.theme == 'dark'
         ? ThemeMode.dark
         : remote.theme == 'light'
             ? ThemeMode.light
             : ThemeMode.system;
 
-    final locale =
-        remote.language.isNotEmpty ? Locale(remote.language) : null;
+    final locale = remote.language.isNotEmpty ? Locale(remote.language) : null;
 
     state = state.copyWith(
       themeMode: themeMode,
@@ -183,9 +279,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           ? remote.colorScheme
           : state.selectedThemeId,
       locale: () => locale,
-      fontFamily: remote.fontFamily.isNotEmpty
-          ? remote.fontFamily
-          : state.fontFamily,
+      fontFamily:
+          remote.fontFamily.isNotEmpty ? remote.fontFamily : state.fontFamily,
       fontSize:
           remote.fontSize > 0 ? remote.fontSize.toDouble() : state.fontSize,
       lineHeight:
@@ -275,4 +370,3 @@ final settingsProvider =
   // cambia mai; osservarla ricreerebbe il notifier (e perderebbe lo stato).
   return SettingsNotifier(ref, ref.read(settingsSnapshotProvider));
 });
-

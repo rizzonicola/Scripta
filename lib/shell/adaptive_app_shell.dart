@@ -77,7 +77,7 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       // utente solo-locale che mandava l'app in background subito dopo aver
       // digitato rischiava di perdere gli ultimi caratteri se l'OS
       // terminava il processo. È idempotente e quasi sempre un no-op.
-      unawaited(ref.read(notesProvider.notifier).flushPendingSaves());
+      ref.read(notesProvider.notifier).flushPendingSavesInBackground();
       ref.read(syncProvider.notifier).onAppPaused();
     } else if (state == AppLifecycleState.resumed) {
       // Re-validate connectivity as soon as the app comes back to the

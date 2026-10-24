@@ -48,12 +48,12 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       # x64: azione standard.
       - name: Setup Flutter (x64)
         if: matrix.name == 'x64'
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           # Allineato a pubspec.lock: le versioni transitive pinnate da Flutter
           # cambiano tra SDK, quindi il lockfile vale solo con questa versione.
@@ -158,7 +158,7 @@ jobs:
       # sul rilevamento della toolchain da parte di Flutter/CMake.
       # Su ARM64 il build è nativo: arch 'arm64' (non più 'amd64_arm64').
       - name: Ambiente MSVC (${{ matrix.msvc_arch }})
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: ${{ matrix.msvc_arch }}
 
@@ -186,7 +186,7 @@ jobs:
       # Il bundle passa al job di packaging (installer). Retention breve: è un
       # artefatto intermedio, non un prodotto finale.
       - name: Upload bundle (intermedio)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows-bundle-${{ matrix.name }}
           path: ${{ env.BUNDLE }}
@@ -213,12 +213,12 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Scarica il bundle
         id: download
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: windows-bundle-${{ matrix.name }}
           path: bundle
@@ -264,14 +264,14 @@ jobs:
 
       - name: Upload Build Artifact
         if: steps.download.outcome == 'success'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: Scripta-windows-${{ matrix.name }}-setup
           path: dist/Scripta-windows-${{ matrix.name }}-setup.exe
 
       - name: Upload Installer to Release (tentativo 1)
         id: release_attempt_1
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         if: steps.download.outcome == 'success' && startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
         with:
@@ -286,7 +286,7 @@ jobs:
 
       - name: Upload Installer to Release (tentativo 2)
         if: steps.download.outcome == 'success' && startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/Scripta-windows-${{ matrix.name }}-setup.exe
         env:

@@ -7,16 +7,20 @@
 # di destinazione (ilammy/msvc-dev-cmd), così 'cl' produce la DLL corretta
 # (x64 oppure ARM64, anche in cross-compilazione da un runner x64).
 #
-# Uso: pwsh windows/packaging/windows_sqlite_dll.ps1 -OutDir <cartella> [-Year 2025] [-Version 3500400]
+# Uso: pwsh windows/packaging/windows_sqlite_dll.ps1 -OutDir <cartella> [-Year 2025] [-Version 3500400] [-Sha256 <hash>]
 #
 # NOTA: Year/Version puntano a un URL di sqlite.org (formato
 # https://www.sqlite.org/<anno>/sqlite-amalgamation-<versione>.zip, con la
 # versione scritta come MNNPPFF: 3.50.4 -> 3500400). Se sqlite.org non la
-# serve più, aggiornare i due valori con una release attuale.
+# serve più, aggiornare i due valori con una release attuale. Aggiornare
+# SEMPRE anche Sha256: il download viene rifiutato se il contenuto non
+# corrisponde, così un URL compromesso o una risposta inattesa non finisce
+# nel bundle Windows.
 param(
   [Parameter(Mandatory = $true)][string]$OutDir,
   [string]$Year = "2025",
-  [string]$Version = "3500400"
+  [string]$Version = "3500400",
+  [string]$Sha256 = "1d3049dd0f830a025a53105fc79fd2ab9431aea99e137809d064d8ee8356b032"
 )
 $ErrorActionPreference = "Stop"
 
@@ -32,6 +36,10 @@ try {
   $url = "https://www.sqlite.org/$Year/sqlite-amalgamation-$Version.zip"
   Write-Host "Scarico $url"
   Invoke-WebRequest -Uri $url -OutFile sqlite.zip
+  $actual = (Get-FileHash -Path sqlite.zip -Algorithm SHA256).Hash
+  if ($actual -ne $Sha256.ToUpperInvariant()) {
+    throw "Checksum SHA-256 di sqlite.zip non valido: atteso $Sha256, ottenuto $actual"
+  }
   Expand-Archive -Path sqlite.zip -DestinationPath . -Force
   $src = Get-ChildItem -Recurse -Filter sqlite3.c | Select-Object -First 1
   if (-not $src) { throw "sqlite3.c non trovato nell'archivio scaricato." }

@@ -28,16 +28,16 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           # Allineato a pubspec.lock: le versioni transitive pinnate da Flutter
           # cambiano tra SDK, quindi il lockfile vale solo con questa versione.
@@ -71,7 +71,7 @@ jobs:
 
       - name: Upload Artifacts to Release (tentativo 1)
         id: release_attempt_1
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         if: startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
         with:
@@ -89,7 +89,7 @@ jobs:
 
       - name: Upload Artifacts to Release (tentativo 2)
         if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             build/app/outputs/flutter-apk/Scripta-armeabi-v7a.apk

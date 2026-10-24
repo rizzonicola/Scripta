@@ -95,7 +95,7 @@ class _AppShortcutsScopeState extends ConsumerState<AppShortcutsScope> {
       case AppCommand.save:
         // Il salvataggio è già automatico (debounce): questo lo forza subito
         // e, se l'account è connesso, avvia anche la sincronizzazione.
-        unawaited(notes.flushPendingSaves());
+        notes.flushPendingSavesInBackground();
         if (ref.read(syncProvider).isAuthenticated) {
           unawaited(ref.read(syncProvider.notifier).triggerSync());
         }

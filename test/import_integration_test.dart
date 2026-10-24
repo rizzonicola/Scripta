@@ -456,6 +456,17 @@ void main() {
       expect(
           () => ImportService.decodeZipEntries(bytes), throwsFormatException);
     });
+
+    test('un percorso troppo profondo viene rifiutato', () {
+      final deepName = [
+        for (var i = 0; i <= ImportService.maxFolderDepth; i++) 'd$i',
+        'nota.md',
+      ].join('/');
+      final bytes = _zipOf({deepName: 'contenuto'});
+
+      expect(
+          () => ImportService.decodeZipEntries(bytes), throwsFormatException);
+    });
   });
 
   group('cartella scelta sul filesystem', () {

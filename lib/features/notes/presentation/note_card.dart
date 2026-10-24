@@ -69,8 +69,18 @@ class NoteCard extends ConsumerWidget {
           cancelLabel: 'Annulla',
           destinations: destinations,
           currentFolderId: note.folderId,
-          onSelected: (targetId) {
-            notes.moveNote(note.id, targetId);
+          onSelected: (targetId) async {
+            try {
+              await notes.moveNote(note.id, targetId);
+            } catch (_) {
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text('Impossibile spostare la nota. Riprova.'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              return;
+            }
             sync.onFolderStructureChanged();
             final String message = targetId == null
                 ? 'Nota spostata in "Nessuna cartella"'
@@ -93,6 +103,7 @@ class NoteCard extends ConsumerWidget {
     AppLocalizations l10n,
     NoteModel note,
   ) {
+    final messenger = ScaffoldMessenger.of(context);
     showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
@@ -114,9 +125,17 @@ class NoteCard extends ConsumerWidget {
           ),
         ],
       ),
-    ).then((confirmed) {
-      if (confirmed == true) {
-        ref.read(notesProvider.notifier).deleteNote(note.id);
+    ).then((confirmed) async {
+      if (confirmed != true) return;
+      try {
+        await ref.read(notesProvider.notifier).deleteNote(note.id);
+      } catch (_) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Impossibile eliminare la nota. Riprova.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     });
   }

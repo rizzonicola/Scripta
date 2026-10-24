@@ -192,6 +192,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// scattare un logout della nuova sessione con un 401 ormai vecchio).
   int _sessionGeneration = 0;
 
+  /// Identifica il trigger di sync attualmente proprietario di `isSyncing`.
+  /// Un trigger vecchio non deve azzerare il flag di uno nuovo partito dopo
+  /// un login (che azzera `isSyncing` mentre una sync precedente è in volo).
+  int _syncTriggerId = 0;
+
   bool _isCurrentSession(int generation) =>
       mounted && generation == _sessionGeneration;
 
@@ -294,6 +299,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   Future<void> _endSession(int generation) async {
     if (generation != _sessionGeneration) return;
     final endedGeneration = ++_sessionGeneration;
+    _ref.read(settingsProvider.notifier).discardPendingPush();
     await _withSessionWriteLock(() async {
       if (_sessionGeneration != endedGeneration) return;
       await _clearAuthCredentials();
@@ -642,6 +648,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _folderStructureDebounceTimer?.cancel();
     _capsByUrl.clear();
 
+    // Attende anche le scritture di cartelle già accodate: una cascade o un
+    // upsert partito prima del reset non deve scrivere dopo la cancellazione.
+    await _ref.read(folderProvider.notifier).flushPendingWrites();
     // Annulla/attende l'autosave prima della cancellazione: un upsert tardivo
     // riscriverebbe una nota appena eliminata.
     await _ref.read(notesProvider.notifier).prepareForAccountReset();
@@ -778,6 +787,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
   Future<void> logout() async {
     final generation = ++_sessionGeneration;
+    _ref.read(settingsProvider.notifier).discardPendingPush();
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
@@ -887,9 +897,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _folderStructureDebounceTimer?.cancel();
     _folderStructureDebounceTimer =
         Timer(const Duration(milliseconds: 600), () {
-      if (mounted) {
-        unawaited(triggerSync());
-      }
+      if (!mounted) return;
+      unawaited(() async {
+        // La UI aggiorna lo stato in modo sincrono ma la scrittura SQLite è
+        // accodata: senza questa attesa la sync può leggere `dirty` prima
+        // che la nuova cartella/rinomina sia davvero persistita.
+        await _ref.read(folderProvider.notifier).flushPendingWrites();
+        if (mounted) await triggerSync();
+      }());
     });
   }
 
@@ -1000,6 +1015,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // Questo giro leggerà ORA le righe dirty: copre ogni richiesta precedente.
     // Il flag torna a true solo se un trigger arriva mentre si sincronizza.
     _resyncRequested = false;
+    final triggerId = ++_syncTriggerId;
     _markSyncStarted();
 
     try {
@@ -1022,7 +1038,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     } finally {
       // Rete di sicurezza: qualunque uscita (anche eccezione inattesa) deve
       // riportare isSyncing a false, altrimenti la sync resterebbe bloccata.
-      if (mounted && state.isSyncing) {
+      if (mounted && _syncTriggerId == triggerId && state.isSyncing) {
         state = state.copyWith(isSyncing: false);
       }
     }
@@ -1070,9 +1086,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     final generation = _sessionGeneration;
     final serverUrl = state.serverUrl;
 
-    // Scrive il testo ancora in debounce (500 ms) prima di leggere le righe
-    // dirty, così anche l'ultima battitura rientra in questo giro.
+    // Scrive il testo ancora in debounce (500 ms) e le mutazioni di cartelle
+    // già accodate prima di leggere le righe dirty, così anche l'ultima
+    // modifica rientra in questo giro.
     await _ref.read(notesProvider.notifier).flushPendingSaves();
+    await _ref.read(folderProvider.notifier).flushPendingWrites();
     if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
       return false;
     }
@@ -1148,71 +1166,123 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           return false;
         }
 
-        // Y-14: capability annunciate dal server in QUESTA risposta (assenti =
-        // server senza caps: nessuna funzione opzionale).
-        _rememberServerCaps(serverUrl, response.caps);
+        // Tutte le scritture derivate dalla risposta avvengono sotto il lock
+        // di sessione: il reset per cambio account non può cancellare il DB
+        // nel mezzo, e ogni await ricontrolla la generazione per non applicare
+        // dati della sessione precedente a quella nuova.
+        final applied = await _withSessionWriteLock(() async {
+          if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+            return false;
+          }
 
-        // 1) Righe inviate -> pulite (solo se non ri-modificate durante il
-        //    round-trip). 2) Applica la risposta (che include anche la
-        //    versione del server per i conflitti persi). Ordine importante:
-        //    markSynced prima, così l'eco del server sostituisce le righe.
-        await _foldersDao
-            .markSynced({for (final f in dirtyFolders) f.id: f.updatedAt});
-        await _notesDao
-            .markSynced({for (final n in dirtyNotes) n.id: n.updatedAt});
+          // Y-14: capability annunciate dal server in QUESTA risposta (assenti
+          // = server senza caps: nessuna funzione opzionale).
+          _rememberServerCaps(serverUrl, response.caps);
 
-        await _foldersDao
-            .applyRemoteLWWBatch(response.folders.map(_fromFolderDto).toList());
-        await _notesDao
-            .applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
-
-        if (response.fullResync) {
-          // Cursore più vecchio della retention dei tombstone del server:
-          // la risposta è lo stato completo. Le righe pulite che il server non
-          // elenca sono state eliminate mentre eravamo offline.
+          // 1) Righe inviate -> pulite (solo se non ri-modificate durante il
+          //    round-trip). 2) Applica la risposta (che include anche la
+          //    versione del server per i conflitti persi). Ordine importante:
+          //    markSynced prima, così l'eco del server sostituisce le righe.
           await _foldersDao
-              .deleteCleanNotIn({for (final f in response.folders) f.id});
+              .markSynced({for (final f in dirtyFolders) f.id: f.updatedAt});
           await _notesDao
-              .deleteCleanNotIn({for (final n in response.notes) n.id});
-        }
+              .markSynced({for (final n in dirtyNotes) n.id: n.updatedAt});
 
-        // Tombstone locali ormai inutili (confermati dal server o ricevuti da
-        // lui): eliminati fisicamente, non si accumulano nel DB locale.
-        await _foldersDao.purgeCleanTombstones();
-        await _notesDao.purgeCleanTombstones();
+          if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+            return false;
+          }
 
-        await _syncMetaDao.setSyncCursor(response.serverTime);
+          await _foldersDao.applyRemoteLWWBatch(
+              response.folders.map(_fromFolderDto).toList());
+          await _notesDao
+              .applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
 
-        // Si rilegge dal DB (tutte le note, contenuto incluso) SOLO se il DB
-        // locale è cambiato rispetto allo stato in memoria: il server ha
-        // restituito righe, è stato un full_resync oppure sono stati
-        // riparati dei record. Con "sync al cambio nota" attiva ogni
-        // cambio nota avvia un giro: rileggere e ricostruire l'intero
-        // archivio a ogni giro, anche con risposta vuota, era puro lavoro
-        // sprecato. markSynced e la purge dei tombstone non toccano nulla
-        // che la UI mostri.
-        final localDbChanged = repaired ||
-            response.fullResync ||
-            response.folders.isNotEmpty ||
-            response.notes.isNotEmpty;
-        if (localDbChanged) {
-          await _ref.read(folderProvider.notifier).refreshFromDb();
-          await _ref.read(notesProvider.notifier).refreshFromDb();
-        }
+          if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+            return false;
+          }
 
-        final syncedAt = DateTime.now();
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setInt(_prefLastSyncTime, syncedAt.millisecondsSinceEpoch);
+          if (response.fullResync) {
+            // Un full_resync VUOTO su un dispositivo che ha dati locali è
+            // quasi sempre una risposta anomala (server appena inizializzato,
+            // errore di account, backup parziale): cancellare tutto in blocco
+            // sarebbe irreversibile. Si conserva il locale e si segnala
+            // l'anomalia; il cursore non avanza, quindi il prossimo giro
+            // riproverà.
+            if (response.folders.isEmpty &&
+                response.notes.isEmpty &&
+                (await _foldersDao.getActive()).isNotEmpty) {
+              throw const SyncApiException(
+                'Il server ha restituito un archivio vuoto: dati locali conservati.',
+                502,
+              );
+            }
+            if (response.folders.isEmpty &&
+                response.notes.isEmpty &&
+                (await _notesDao.getActive()).isNotEmpty) {
+              throw const SyncApiException(
+                'Il server ha restituito un archivio vuoto: dati locali conservati.',
+                502,
+              );
+            }
 
-        if (!mounted) return true;
-        state = state.copyWith(
-          isOnline: true,
-          isSyncing: false,
-          lastSyncTime: () => syncedAt,
-          lastSyncMessage: () =>
-              'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
-          lastError: () => null,
-        );
+            // Cursore più vecchio della retention dei tombstone del server:
+            // la risposta è lo stato completo. Le righe pulite che il server
+            // non elenca sono state eliminate mentre eravamo offline.
+            await _foldersDao
+                .deleteCleanNotIn({for (final f in response.folders) f.id});
+            await _notesDao
+                .deleteCleanNotIn({for (final n in response.notes) n.id});
+          }
+
+          // Tombstone locali ormai inutili (confermati dal server o ricevuti
+          // da lui): eliminati fisicamente, non si accumulano nel DB locale.
+          await _foldersDao.purgeCleanTombstones();
+          await _notesDao.purgeCleanTombstones();
+
+          await _syncMetaDao.setSyncCursor(response.serverTime);
+
+          if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+            return false;
+          }
+
+          // Si rilegge dal DB (tutte le note, contenuto incluso) SOLO se il DB
+          // locale è cambiato rispetto allo stato in memoria: il server ha
+          // restituito righe, è stato un full_resync oppure sono stati
+          // riparati dei record. Con "sync al cambio nota" attiva ogni
+          // cambio nota avvia un giro: rileggere e ricostruire l'intero
+          // archivio a ogni giro, anche con risposta vuota, era puro lavoro
+          // sprecato. markSynced e la purge dei tombstone non toccano nulla
+          // che la UI mostri.
+          final localDbChanged = repaired ||
+              response.fullResync ||
+              response.folders.isNotEmpty ||
+              response.notes.isNotEmpty;
+          if (localDbChanged) {
+            await _ref.read(folderProvider.notifier).refreshFromDb();
+            await _ref.read(notesProvider.notifier).refreshFromDb();
+          }
+
+          final syncedAt = DateTime.now();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setInt(
+              _prefLastSyncTime, syncedAt.millisecondsSinceEpoch);
+
+          if (!_isCurrentSession(generation) ||
+              serverUrl != state.serverUrl ||
+              !mounted) {
+            return false;
+          }
+          state = state.copyWith(
+            isOnline: true,
+            isSyncing: false,
+            lastSyncTime: () => syncedAt,
+            lastSyncMessage: () =>
+                'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
+            lastError: () => null,
+          );
+          return true;
+        });
+        if (!applied) return false;
         _rememberOnline(true);
         return true;
       }
@@ -1328,6 +1398,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (token == null) return;
 
     final mark = _reachabilityMark();
+    final settingsRevision = _ref.read(settingsProvider.notifier).revision;
     try {
       final remoteSettings = await _withNetworkRetry(
         () => _apiService.getUserSettings(
@@ -1339,9 +1410,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         return;
       }
       _networkSuccessCount++;
-      unawaited(_ref
-          .read(settingsProvider.notifier)
-          .applyRemoteSettings(remoteSettings));
+      unawaited(_ref.read(settingsProvider.notifier).applyRemoteSettings(
+            remoteSettings,
+            expectedRevision: settingsRevision,
+          ));
     } catch (e) {
       if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
         return;
@@ -1367,14 +1439,20 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
   }
 
-  /// Sends updated preferences to PUT /api/v1/user/settings
-  Future<void> pushUserSettings(UserSettingsDto settings) async {
-    if (!state.isAuthenticated) return;
+  /// Sends updated preferences to PUT /api/v1/user/settings.
+  ///
+  /// Ritorna `true` solo se il server ha accettato il payload. Il chiamante
+  /// (SettingsNotifier) usa l'esito per NON perdere una modifica quando il
+  /// push fallisce o la sessione cambia nel frattempo.
+  Future<bool> pushUserSettings(UserSettingsDto settings) async {
+    if (!state.isAuthenticated) return false;
     final generation = _sessionGeneration;
     final serverUrl = state.serverUrl;
     final token = await _secureStorage.getAuthToken();
-    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) return;
-    if (token == null) return;
+    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+      return false;
+    }
+    if (token == null) return false;
 
     try {
       await _withNetworkRetry(
@@ -1384,9 +1462,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           settings: settings,
         ),
       );
+      return _isCurrentSession(generation) && serverUrl == state.serverUrl;
     } catch (e) {
       if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
-        return;
+        return false;
       }
       if (e is SyncApiException && e.statusCode == 401) {
         final reason = e.message;
@@ -1402,6 +1481,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         state = state.copyWith(isOnline: nextOnline);
         _rememberOnline(nextOnline);
       }
+      return false;
     }
   }
 }

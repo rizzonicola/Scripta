@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
@@ -144,7 +142,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       // canto attende già il proprio flush interno in
       // SyncNotifier.triggerSync), ma resta corretto attendere qui la
       // scrittura su disco prima di considerare la nota "chiusa".
-      unawaited(ref.read(notesProvider.notifier).flushPendingSaves());
+      ref.read(notesProvider.notifier).flushPendingSavesInBackground();
       ref.read(syncProvider.notifier).onNoteChangedOrClosed();
     }
 

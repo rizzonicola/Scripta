@@ -55,6 +55,8 @@ class ImportService {
   static const int maxEntryBytes = 10 * 1024 * 1024; // singola nota: 10 MiB
   static const int maxTotalUncompressedBytes =
       200 * 1024 * 1024; // somma: 200 MiB
+  static const int maxFolderDepth = 32;
+  static const int maxImportedFolders = 5000;
 
   /// Il manifest contiene una copia del testo di TUTTE le note (serve a
   /// ripristinare titolo/contenuto esatti quando il Markdown è ambiguo), quindi
@@ -302,11 +304,131 @@ class ImportService {
   static List<ImportEntry> decodeZipEntries(Uint8List bytes) =>
       decodeZipBundle(bytes).entries;
 
+  /// Validazione del central directory ZIP eseguita PRIMA di `ZipDecoder`.
+  /// Non decomprime nulla: limita numero di voci, dimensione complessiva,
+  /// singola voce, ZIP64, cifratura e symlink.
+  static void _preflightZip(Uint8List bytes) {
+    if (bytes.length < 22) {
+      throw const FormatException('ZIP non valido o troncato.');
+    }
+
+    var eocd = -1;
+    final minOffset = bytes.length - 22 - 0xffff;
+    for (var i = bytes.length - 22; i >= (minOffset < 0 ? 0 : minOffset); i--) {
+      if (_u32(bytes, i) != 0x06054b50) continue;
+      final commentLength = _u16(bytes, i + 20);
+      if (i + 22 + commentLength <= bytes.length) {
+        eocd = i;
+        break;
+      }
+    }
+    if (eocd < 0) {
+      throw const FormatException('ZIP non valido: central directory assente.');
+    }
+
+    final disk = _u16(bytes, eocd + 4);
+    final cdDisk = _u16(bytes, eocd + 6);
+    final entriesOnDisk = _u16(bytes, eocd + 8);
+    final entries = _u16(bytes, eocd + 10);
+    final cdSize = _u32(bytes, eocd + 12);
+    final cdOffset = _u32(bytes, eocd + 16);
+
+    if (disk != 0 || cdDisk != 0 || entriesOnDisk != entries) {
+      throw const FormatException('ZIP multi-volume non supportato.');
+    }
+    if (entries == 0xffff || cdOffset == 0xffffffff || cdSize == 0xffffffff) {
+      throw const FormatException('ZIP64 non supportato per l\'importazione.');
+    }
+    if (entries > maxZipEntries) {
+      throw const FormatException(
+          'ZIP con troppe voci (massimo $maxZipEntries).');
+    }
+    if (cdOffset + cdSize > bytes.length) {
+      throw const FormatException(
+          'ZIP non valido: central directory corrotta.');
+    }
+
+    var position = cdOffset;
+    var totalBytes = 0;
+    for (var i = 0; i < entries; i++) {
+      if (position + 46 > bytes.length || _u32(bytes, position) != 0x02014b50) {
+        throw const FormatException(
+            'ZIP non valido: voce del central directory corrotta.');
+      }
+
+      final madeBy = _u16(bytes, position + 4);
+      final flags = _u16(bytes, position + 8);
+      final method = _u16(bytes, position + 10);
+      final compressedSize = _u32(bytes, position + 20);
+      final uncompressedSize = _u32(bytes, position + 24);
+      final nameLength = _u16(bytes, position + 28);
+      final extraLength = _u16(bytes, position + 30);
+      final commentLength = _u16(bytes, position + 32);
+      final externalAttributes = _u32(bytes, position + 38);
+      final nameStart = position + 46;
+      final nextPosition = nameStart + nameLength + extraLength + commentLength;
+      if (nextPosition > bytes.length) {
+        throw const FormatException(
+            'ZIP non valido: nome della voce fuori dai limiti.');
+      }
+      if (compressedSize == 0xffffffff || uncompressedSize == 0xffffffff) {
+        throw const FormatException(
+            'ZIP64 non supportato per l\'importazione.');
+      }
+      if (flags & 0x0001 != 0) {
+        throw const FormatException('ZIP cifrato non supportato.');
+      }
+      if (method != 0 && method != 8) {
+        throw const FormatException('Metodo di compressione non supportato.');
+      }
+
+      // Creatore Unix + permessi 0xA000: symlink. Non va mai importato.
+      if (madeBy >> 8 == 3 && ((externalAttributes >> 16) & 0xf000) == 0xa000) {
+        throw const FormatException(
+            'Il backup contiene un collegamento simbolico non supportato.');
+      }
+
+      final rawName = utf8.decode(
+        bytes.sublist(nameStart, nameStart + nameLength),
+        allowMalformed: true,
+      );
+      final limit = _normalizeManifestPath(rawName) == backupManifestFileName
+          ? maxManifestBytes
+          : maxEntryBytes;
+      if (uncompressedSize > limit) {
+        throw FormatException('La voce "$rawName" supera ${_mb(limit)}.');
+      }
+      totalBytes += uncompressedSize;
+      if (totalBytes > maxTotalUncompressedBytes) {
+        throw FormatException(
+            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
+      }
+      position = nextPosition;
+    }
+  }
+
+  static int _u16(Uint8List bytes, int offset) =>
+      bytes[offset] | (bytes[offset + 1] << 8);
+
+  static int _u32(Uint8List bytes, int offset) =>
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
+
   @visibleForTesting
   static ImportBundle decodeZipBundle(Uint8List bytes) {
     if (bytes.length > maxZipBytes) {
       throw FormatException('ZIP troppo grande (massimo ${_mb(maxZipBytes)}).');
     }
+
+    // Il decoder dell'archivio legge TUTTO il central directory e, per le
+    // voci symlink, ne decomprime subito il contenuto. La preflight legge
+    // prima numero di voci, dimensioni dichiarate e tipo di file direttamente
+    // dal central directory: un archivio ostile viene rifiutato senza
+    // costruire l'Archive né decomprimere nulla.
+    _preflightZip(bytes);
+
     final archive = ZipDecoder().decodeBytes(bytes);
     if (archive.files.length > maxZipEntries) {
       throw const FormatException(
@@ -330,6 +452,11 @@ class ImportService {
       final contentBytes = file.content as List<int>;
       if (contentBytes.length > maxManifestBytes) {
         throw const FormatException('Manifest del backup troppo grande.');
+      }
+      totalBytes += contentBytes.length;
+      if (totalBytes > maxTotalUncompressedBytes) {
+        throw FormatException(
+            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
       }
       final raw = utf8.decode(contentBytes, allowMalformed: true);
       try {
@@ -358,8 +485,16 @@ class ImportService {
       // lettere di unità Windows) e gli ZIP di macOS portano con sé cartelle
       // di metadati. `null` = voce da ignorare. Qui si decide anche che le
       // note di `Non_Catalogate/` tornano alla radice (vedi import_parser).
+      if (file.isSymbolicLink) {
+        throw const FormatException(
+            'Il backup contiene un collegamento simbolico non supportato.');
+      }
       final location = mapZipEntryPath(file.name);
       if (location == null) continue;
+      if (location.folders.length > maxFolderDepth) {
+        throw const FormatException(
+            'Percorso troppo profondo (massimo $maxFolderDepth livelli).');
+      }
       final fileName = location.fileName;
 
       // Limiti verificati sulla dimensione DICHIARATA, prima di accedere a
@@ -372,18 +507,17 @@ class ImportService {
         throw FormatException(
             'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
       }
-      totalBytes += file.size;
-      if (totalBytes > maxTotalUncompressedBytes) {
-        throw FormatException(
-            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
-      }
-
       final contentBytes = file.content as List<int>;
       // La dimensione dichiarata nell'header può mentire: si ricontrolla
       // quella effettiva.
       if (contentBytes.length > maxEntryBytes) {
         throw FormatException(
             'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+      }
+      totalBytes += contentBytes.length;
+      if (totalBytes > maxTotalUncompressedBytes) {
+        throw FormatException(
+            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
       }
       final rawContent = utf8.decode(contentBytes, allowMalformed: true);
 
@@ -434,6 +568,10 @@ class ImportService {
       // carattere legale di un nome di file.
       final location = mapFilePath(entity.path, rootPath: root.path);
       if (location == null) continue;
+      if (location.folders.length > maxFolderDepth) {
+        throw const FormatException(
+            'Percorso troppo profondo (massimo $maxFolderDepth livelli).');
+      }
       final fileName = location.fileName;
 
       // Stessi limiti dello ZIP, controllati sulla dimensione su disco PRIMA
@@ -593,6 +731,10 @@ class ImportService {
     required VoidCallback onFolderCreated,
   }) {
     if (segments.isEmpty) return null;
+    if (segments.length > maxFolderDepth) {
+      throw const FormatException(
+          'Percorso troppo profondo (massimo $maxFolderDepth livelli).');
+    }
 
     String pathKey = '';
     String? parentId;
@@ -628,6 +770,10 @@ class ImportService {
       }
 
       cache[pathKey] = resolvedId;
+      if (cache.length > maxImportedFolders) {
+        throw const FormatException(
+            'Troppe cartelle da importare (massimo $maxImportedFolders).');
+      }
       parentId = resolvedId;
     }
 

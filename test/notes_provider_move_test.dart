@@ -8,6 +8,7 @@ import 'package:scripta/features/notes/providers/notes_provider.dart';
 /// esattamente la stessa interfaccia usata da [NotesNotifier].
 class FakeNotesDao implements NotesDao {
   final Map<String, NoteRow> _rows = {};
+  bool failUpserts = false;
 
   @override
   Future<List<NoteRow>> getActive() async =>
@@ -17,7 +18,10 @@ class FakeNotesDao implements NotesDao {
   Future<NoteRow?> getById(String id) async => _rows[id];
 
   @override
-  Future<void> upsert(NoteRow row) async => _rows[row.id] = row;
+  Future<void> upsert(NoteRow row) async {
+    if (failUpserts) throw StateError('disco pieno');
+    _rows[row.id] = row;
+  }
 
   @override
   Future<void> applyRemoteLWW(NoteRow remote) async {
@@ -155,6 +159,26 @@ void main() {
       final after = notifier.state.notes.firstWhere((n) => n.id == note.id);
       expect(after.updatedAt, before.updatedAt);
       expect(after.folderId, 'folder-a');
+    });
+
+    test('se il DB rifiuta la scrittura lo spostamento viene annullato',
+        () async {
+      final dao = FakeNotesDao();
+      final notifier = NotesNotifier(dao: dao);
+      await Future<void>.delayed(Duration.zero);
+
+      final note = notifier.createNote(folderId: 'folder-a');
+      await Future<void>.delayed(Duration.zero);
+
+      dao.failUpserts = true;
+      await expectLater(
+        notifier.moveNote(note.id, 'folder-b'),
+        throwsStateError,
+      );
+
+      final after = notifier.state.notes.firstWhere((n) => n.id == note.id);
+      expect(after.folderId, 'folder-a');
+      expect((await dao.getById(note.id))!.folderId, 'folder-a');
     });
 
     test('deleteNote removes it from the active list and persists a tombstone',

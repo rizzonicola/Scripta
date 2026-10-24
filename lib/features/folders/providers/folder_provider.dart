@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
 // in questo import separato, non rimossi). La classe resta una
@@ -101,6 +102,23 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// del DB può essere precedente alla delete e non deve resuscitarli.
   final Set<String> _deletedBeforeLoad = <String>{};
 
+  /// Coda delle scritture su SQLite: mantiene l'ordine UI (crea -> rinomina ->
+  /// elimina) e impedisce che un upsert partito prima di una delete la
+  /// faccia "risorgere" scrivendo dopo la cascade. Gli errori vengono
+  /// loggati ma non bloccano le scritture successive.
+  Future<void> _writeQueue = Future<void>.value();
+
+  Future<void> _enqueueWrite(Future<void> Function() op) {
+    final next = _writeQueue.then((_) => op());
+    _writeQueue = next.catchError((Object e, StackTrace st) {
+      debugPrint('FolderNotifier: scrittura su SQLite fallita: $e\n$st');
+    });
+    return _writeQueue;
+  }
+
+  /// Attende che tutte le mutazioni già richieste siano state scritte.
+  Future<void> flushPendingWrites() => _writeQueue;
+
   /// [initialSelectedFolderId] è la cartella selezionata nell'ultima sessione
   /// (vedi [sessionSnapshotProvider]): parte già selezionata fin dal primo
   /// frame, senza passare per "Tutte le note". È solo un riferimento da
@@ -198,7 +216,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
     _activeRows = [..._activeRows, row];
     _publishState();
-    unawaited(_foldersDao.upsert(row));
+    unawaited(_enqueueWrite(() => _foldersDao.upsert(row)));
 
     return FolderNode(
       id: row.id,
@@ -218,7 +236,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
         _activeRows[idx].copyWith(name: newName.trim(), updatedAt: now);
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
-    unawaited(_foldersDao.upsert(updated));
+    unawaited(_enqueueWrite(() => _foldersDao.upsert(updated)));
   }
 
   /// Espandi/comprimi: puro stato UI locale, non tocca `updated_at` e quindi
@@ -231,7 +249,8 @@ class FolderNotifier extends StateNotifier<FolderState> {
         _activeRows[idx].copyWith(isExpanded: !_activeRows[idx].isExpanded);
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
-    unawaited(_foldersDao.setExpanded(id, updated.isExpanded));
+    unawaited(
+        _enqueueWrite(() => _foldersDao.setExpanded(id, updated.isExpanded)));
   }
 
   /// Cancella una cartella e, ricorsivamente, tutte le sue sottocartelle e
@@ -253,7 +272,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
         _activeRows.where((r) => !idsToDelete.contains(r.id)).toList();
     _publishState();
 
-    unawaited(() async {
+    unawaited(_enqueueWrite(() async {
       // Prima di far sparire le note dal DB, scrive l'eventuale testo ancora
       // nel debounce dell'editor: altrimenti il timer successivo riscriverebbe
       // la nota con la vecchia cartella, annullando il tombstone appena
@@ -268,7 +287,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
       // Le note della cartella cancellata sono sparite anche dal DB locale:
       // la vista "Tutte le note"/per-cartella deve rifletterlo subito.
       await _ref.read(notesProvider.notifier).refreshFromDb();
-    }());
+    }));
   }
 
   /// Raccoglie, a partire dallo specchio in memoria [_activeRows], l'ID
@@ -341,7 +360,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
         _activeRows[idx].copyWith(parentId: newParentId, updatedAt: now);
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
-    unawaited(_foldersDao.upsert(updated));
+    unawaited(_enqueueWrite(() => _foldersDao.upsert(updated)));
     return true;
   }
 }

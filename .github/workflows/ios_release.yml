@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           # Allineato a pubspec.lock: le versioni transitive pinnate da Flutter
           # cambiano tra SDK, quindi il lockfile vale solo con questa versione.
@@ -53,14 +53,14 @@ jobs:
           ls -lh dist
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: Scripta-ios-unsigned.ipa
           path: dist/Scripta-ios-unsigned.ipa
 
       - name: Upload IPA to Release (tentativo 1)
         id: release_attempt_1
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         if: startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
         with:
@@ -74,7 +74,7 @@ jobs:
 
       - name: Upload IPA to Release (tentativo 2)
         if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/Scripta-ios-unsigned.ipa
         env:
