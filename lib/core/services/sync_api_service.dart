@@ -110,7 +110,7 @@ class SyncApiService {
   /// Identificativo dell'app inviato nell'header `X-Scripta-Client`. Il server
   /// lo usa SOLO nei log (non cambia nessun comportamento). Tenere allineato
   /// alla versione in pubspec.yaml.
-  static const String clientHeaderValue = 'scripta/1.0.3';
+  static const String clientHeaderValue = 'scripta/1.0.4';
 
   /// Legge `Retry-After` espresso in secondi. Altri formati (data HTTP) o
   /// valori non validi/negativi: nessuna indicazione (null).
@@ -232,29 +232,55 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/auth/login');
 
-    final response = await _client
-        .post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Scripta-Client': clientHeaderValue
-          },
-          body: json.encode({
-            'username': username,
-            'password': password,
-          }),
-        )
-        .timeout(const Duration(seconds: 10));
+    final http.Response response;
+    try {
+      response = await _client
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Scripta-Client': clientHeaderValue
+            },
+            body: json.encode({
+              'username': username,
+              'password': password,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      // Il chiamante distingue un timeout da una risposta HTTP: senza status
+      // code il login può ritentare dentro il proprio budget.
+      throw const SyncApiException(
+          'Tempo scaduto durante la connessione al server');
+    } on Exception {
+      // SocketException, ClientException, TLS...: la richiesta non ha prodotto
+      // una risposta HTTP. Non esporre dettagli potenzialmente sensibili.
+      throw const SyncApiException('Impossibile connettersi al server');
+    }
 
     if (response.statusCode == 200) {
-      final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
-      return LoginResponseDto.fromJson(decoded);
+      try {
+        final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
+        return LoginResponseDto.fromJson(decoded);
+      } catch (_) {
+        // 502 = risposta non valida, non transitoria: ritentare la stessa
+        // richiesta non può migliorare il JSON.
+        throw const SyncApiException(
+            'Risposta del server non valida (JSON malformato)', 502);
+      }
     } else if (response.statusCode == 401) {
       throw const SyncApiException('Credenziali non valide', 401);
     } else {
-      throw SyncApiException(
-          _extractError(bodyText(response), 'Errore durante l\'autenticazione'),
-          response.statusCode);
+      final message =
+          _extractError(bodyText(response), 'Errore durante l\'autenticazione');
+      if (response.statusCode == 429 || response.statusCode == 503) {
+        final retryAfter = parseRetryAfter(response.headers['retry-after']);
+        if (retryAfter != null) {
+          throw SyncApiException.withRetryAfter(
+              message, response.statusCode, retryAfter);
+        }
+      }
+      throw SyncApiException(message, response.statusCode);
     }
   }
 

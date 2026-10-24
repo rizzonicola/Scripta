@@ -157,7 +157,8 @@ class _Server {
 }
 
 class _Harness {
-  _Harness(this.server) : random = _FixedRandom(0.5) {
+  _Harness(this.server, {Duration loginBudget = const Duration(seconds: 20)})
+      : random = _FixedRandom(0.5) {
     container = ProviderContainer(
       overrides: [
         syncProvider.overrideWith(
@@ -167,6 +168,7 @@ class _Harness {
             _MemorySecureStorage(),
             retryWait: (d) async => delays.add(d),
             random: random,
+            loginBudget: loginBudget,
           ),
         ),
       ],
@@ -223,8 +225,11 @@ void main() {
     AppDatabase.debugDatabasePathOverride = null;
   });
 
-  _Harness harness(_Server server) {
-    final h = _Harness(server);
+  _Harness harness(
+    _Server server, {
+    Duration loginBudget = const Duration(seconds: 20),
+  }) {
+    final h = _Harness(server, loginBudget: loginBudget);
     addTearDown(h.container.dispose);
     return h;
   }
@@ -310,6 +315,36 @@ void main() {
         contains('risposta del server non valida'),
       );
       expect(h.delays, isEmpty, reason: 'un 502 non è transitorio');
+    });
+  });
+
+  group('errori HTTP del server', () {
+    test('un 500 resta Online e non viene ritentato', () async {
+      final server = _Server();
+      final h = harness(server);
+      expect(await h.login(), isTrue);
+
+      server.syncScript.add(_Reply(500));
+      expect(await h.notifier.triggerSync(), isFalse);
+
+      expect(h.notifier.state.isOnline, isTrue,
+          reason: 'il server ha risposto, anche se con un errore');
+      expect(h.notifier.state.lastSyncMessage, contains('errore del server'));
+      expect(h.delays, isEmpty, reason: 'un 500 non è transitorio per la sync');
+    });
+
+    test('un 503 resta Online dopo i tentativi', () async {
+      final server = _Server()
+        ..syncScript.addAll([_Reply(503), _Reply(503), _Reply(503)]);
+      final h = harness(server);
+      expect(await h.login(), isTrue);
+
+      expect(h.notifier.state.isOnline, isTrue);
+      expect(
+        h.notifier.state.lastSyncMessage,
+        contains('server temporaneamente occupato'),
+      );
+      expect(h.delays, hasLength(2));
     });
   });
 

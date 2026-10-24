@@ -84,6 +84,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// l'utente in attesa. Vale anche per un `Retry-After` troppo lungo.
   static const Duration _retryBudget = Duration(seconds: 20);
 
+  /// Budget complessivo del login interattivo, comprensivo di timeout, retry e
+  /// attese. Oltre questo limite il pulsante torna attivo e l'utente vede
+  /// l'errore, invece di restare in caricamento a tempo indefinito.
+  static const Duration _defaultLoginBudget = Duration(seconds: 10);
+
   /// Interval for the background connectivity watchdog that keeps the
   /// online/offline indicator accurate even when no sync is otherwise
   /// triggered (e.g. the user isn't editing notes).
@@ -174,6 +179,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   final Future<void> Function(Duration) _retryWait;
   final Random _random;
 
+  /// Limite complessivo del login interattivo (vedi [_defaultLoginBudget]).
+  final Duration _loginBudget;
+
   /// Capability annunciate dal server, per URL (Y-14). Si aggiornano a ogni
   /// risposta 200 di sync; una risposta senza `caps` cancella la voce.
   final Map<String, ServerCaps> _capsByUrl = {};
@@ -213,11 +221,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     SyncMetaDao? syncMetaDao,
     Future<void> Function(Duration)? retryWait,
     Random? random,
+    Duration loginBudget = _defaultLoginBudget,
   })  : _foldersDao = foldersDao ?? FoldersDao(),
         _notesDao = notesDao ?? NotesDao(),
         _syncMetaDao = syncMetaDao ?? SyncMetaDao(),
         _retryWait = retryWait ?? Future<void>.delayed,
         _random = random ?? Random(),
+        _loginBudget = loginBudget,
         super(const SyncConfig()) {
     initialized = _init();
   }
@@ -459,6 +469,34 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     return true;
   }
 
+  /// Vero se il server ha prodotto una risposta HTTP, anche se di errore.
+  /// Serve a distinguere "server irraggiungibile" da "server raggiunto ma in
+  /// errore": il 400 locale di `_cleanUrl` (URL non valido) non è una risposta.
+  bool _serverRespondedTo(Object error) {
+    if (error is SyncApiException) {
+      final status = error.statusCode;
+      return status != null && status != 400;
+    }
+    return error is FormatException;
+  }
+
+  /// Errori ritentabili del login: trasporto/timeout e risposte transitorie.
+  /// Credenziali errate, URL non valido, richiesta rifiutata o risposta
+  /// malformata non devono essere ritentati.
+  bool _isRetryableLoginError(Object error) {
+    if (error is SyncApiException) {
+      final status = error.statusCode;
+      if (status == null) return true;
+      return status == 408 ||
+          status == 425 ||
+          status == 429 ||
+          status == 500 ||
+          status == 503 ||
+          status == 504;
+    }
+    return error is! FormatException;
+  }
+
   /// Attesa prima del tentativo successivo: [_retryDelay] raddoppiato a ogni
   /// tentativo, con jitter ±25% (evita che molti client riprovino insieme),
   /// limitato a [_retryMaxDelay]. Se il server ha indicato `Retry-After` non si
@@ -511,6 +549,47 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
     // Unreachable in practice (loop either returns or rethrows), but keeps
     // the analyzer happy about a guaranteed return/throw.
+    throw lastError;
+  }
+
+  /// Login interattivo con budget complessivo di [_loginBudget]. Ritenta solo
+  /// gli errori transitori, usando il tempo residuo come timeout del singolo
+  /// tentativo: superato il budget il pulsante torna attivo e l'errore è
+  /// visibile.
+  Future<LoginResponseDto> _loginWithRetry({
+    required String serverUrl,
+    required String username,
+    required String password,
+  }) async {
+    final deadline = DateTime.now().add(_loginBudget);
+    Object lastError =
+        const SyncApiException('Errore di connessione sconosciuto');
+
+    for (var attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+
+      try {
+        return await _apiService
+            .login(
+              baseUrl: serverUrl,
+              username: username,
+              password: password,
+            )
+            .timeout(remaining);
+      } catch (e) {
+        lastError = e;
+        if (!_isRetryableLoginError(e) || attempt == _maxRetryAttempts) {
+          rethrow;
+        }
+        final delay = _retryDelayFor(attempt, e);
+        if (deadline.difference(DateTime.now()) <= delay) {
+          rethrow;
+        }
+        await _retryWait(delay);
+      }
+    }
+
     throw lastError;
   }
 
@@ -585,6 +664,15 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
   }
 
+  String _loginErrorMessage(Object error) {
+    if (error is SyncApiException) return error.message;
+    if (error is TimeoutException) {
+      return 'Tempo scaduto durante la connessione al server';
+    }
+    if (error is FormatException) return 'Risposta del server non valida';
+    return 'Impossibile connettersi al server. Controlla la connessione e riprova.';
+  }
+
   Future<bool> login({
     required String serverUrl,
     required String username,
@@ -604,12 +692,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     );
 
     try {
-      final response = await _withNetworkRetry(
-        () => _apiService.login(
-          baseUrl: serverUrl,
-          username: username,
-          password: password,
-        ),
+      // Login interattivo: budget complessivo di 10 s. Gli errori transitori
+      // (timeout, rete, 429/500/503/504) vengono ritentati finché c'è tempo;
+      // credenziali errate e altri errori definitivi si fermano subito.
+      final response = await _loginWithRetry(
+        serverUrl: serverUrl,
+        username: username,
+        password: password,
       );
       // Un secondo login (o un logout) è partito mentre questa richiesta era
       // in volo: non sovrascrivere credenziali e stato della sessione nuova.
@@ -672,13 +761,16 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       return _isCurrentSession(generation);
     } catch (e) {
       if (_isCurrentSession(generation)) {
+        // Se il server ha risposto (401, 429, 500...) siamo Online anche se il
+        // login è fallito; Offline solo quando la richiesta non è arrivata.
+        final nextOnline = _serverRespondedTo(e);
         state = state.copyWith(
           isAuthenticated: false,
-          isOnline: false,
+          isOnline: nextOnline,
           isSyncing: false,
-          lastError: () => e is SyncApiException ? e.message : e.toString(),
+          lastError: () => _loginErrorMessage(e),
         );
-        _rememberOnline(false);
+        _rememberOnline(nextOnline);
       }
       return false;
     }
@@ -1137,12 +1229,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // Un errore di SQLite locale non dice nulla sulla raggiungibilità del
       // server: prima veniva mostrato come "server non raggiungibile".
       final isLocalDbError = e is DatabaseException;
+      final isServerBusy =
+          e is SyncApiException && (e.statusCode == 429 || e.statusCode == 503);
       if (isLocalDbError) {
         debugPrint('SyncNotifier: errore del database locale: $e');
       }
-      // Un 422 è una risposta del server (quindi è online): non va mostrato Offline.
-      final nextOnline =
-          (isAuthError || isRejected || isBadResponse || isLocalDbError)
+      // Qualunque risposta HTTP (401, 422, 429, 500, 502, 503...) prova che il
+      // server è raggiungibile: l'indicatore resta Online. Offline solo per
+      // timeout/trasporto. Un errore DB locale non cambia la raggiungibilità.
+      final nextOnline = _serverRespondedTo(e)
+          ? true
+          : isLocalDbError
               ? state.isOnline
               : false;
       state = state.copyWith(
@@ -1158,7 +1255,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
                     ? 'Sincronizzazione non riuscita: risposta del server non valida'
                     : isLocalDbError
                         ? 'Sincronizzazione non riuscita: errore del database locale'
-                        : 'Sincronizzazione non riuscita: server non raggiungibile',
+                        : isServerBusy
+                            ? 'Sincronizzazione non riuscita: server temporaneamente occupato'
+                            : e is SyncApiException && e.statusCode != null
+                                ? 'Sincronizzazione non riuscita: errore del server'
+                                : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       _rememberOnline(nextOnline);
       if (isAuthError) {
@@ -1257,9 +1358,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       } else if (!_reachedServerSince(mark)) {
         // Se nel frattempo un'altra richiesta è riuscita (all'avvio gira in
         // parallelo alla sync), questo fallimento è vecchio: vedi
-        // [_reachabilityMark].
-        state = state.copyWith(isOnline: false);
-        _rememberOnline(false);
+        // [_reachabilityMark]. Se invece il server ha risposto con un errore,
+        // resta Online: non è un problema di raggiungibilità.
+        final nextOnline = _serverRespondedTo(e);
+        state = state.copyWith(isOnline: nextOnline);
+        _rememberOnline(nextOnline);
       }
     }
   }
@@ -1295,8 +1398,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         );
         await _endSession(generation);
       } else {
-        state = state.copyWith(isOnline: false);
-        _rememberOnline(false);
+        final nextOnline = _serverRespondedTo(e);
+        state = state.copyWith(isOnline: nextOnline);
+        _rememberOnline(nextOnline);
       }
     }
   }

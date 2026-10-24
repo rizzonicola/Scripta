@@ -360,12 +360,21 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                                     password: password,
                                   );
 
-                          if (success && context.mounted) {
+                          if (!context.mounted) return;
+                          if (success) {
                             TextInput.finishAutofillContext();
                             _passwordController.clear();
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(l10n.syncSuccess),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          } else {
+                            final error = ref.read(syncProvider).lastError;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(error ?? l10n.syncFailed),
                                 behavior: SnackBarBehavior.floating,
                               ),
                             );

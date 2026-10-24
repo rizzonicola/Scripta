@@ -33,7 +33,8 @@ class _MemorySecureStorage extends SecureStorageService {
   Future<String?> getServerUrl() async => _memory['url'];
 
   @override
-  Future<void> saveUsername(String username) async => _memory['user'] = username;
+  Future<void> saveUsername(String username) async =>
+      _memory['user'] = username;
 
   @override
   Future<String?> getUsername() async => _memory['user'];
@@ -49,8 +50,16 @@ class _MemorySecureStorage extends SecureStorageService {
 /// trattenere la PRIMA sync finché il test non la rilascia.
 class _FakeServer {
   int syncCalls = 0;
+  int loginCalls = 0;
+  bool loginOffline = false;
+  bool loginMalformed = false;
+  int loginFailuresRemaining = 0;
+  int loginFailureStatus = 500;
   int syncStatus = 200;
   final List<Map<String, dynamic>> settingsPuts = [];
+
+  /// Se valorizzato, la login resta in attesa di questo completer.
+  Completer<void>? loginGate;
 
   /// Se valorizzato, la prima sync resta in attesa di questo completer.
   Completer<void>? firstSyncGate;
@@ -64,6 +73,23 @@ class _FakeServer {
     final path = request.url.path;
 
     if (path == '/api/v1/auth/login') {
+      loginCalls++;
+      final gate = loginGate;
+      if (gate != null) await gate.future;
+      if (loginOffline) {
+        throw http.ClientException('rete assente');
+      }
+      if (loginFailuresRemaining > 0) {
+        loginFailuresRemaining--;
+        return http.Response(
+          json.encode({'error': 'errore finto del server'}),
+          loginFailureStatus,
+          headers: _headers,
+        );
+      }
+      if (loginMalformed) {
+        return http.Response('<html>non json</html>', 200, headers: _headers);
+      }
       return http.Response(
         json.encode({
           'token': 'token',
@@ -156,11 +182,25 @@ void main() {
     AppDatabase.debugDatabasePathOverride = null;
   });
 
-  ProviderContainer containerFor(_FakeServer server) {
+  ProviderContainer containerFor(
+    _FakeServer server, {
+    Duration loginBudget = const Duration(seconds: 20),
+  }) {
+    final storage = _MemorySecureStorage();
+    final api = SyncApiService(server.client);
     final container = ProviderContainer(
       overrides: [
-        secureStorageProvider.overrideWithValue(_MemorySecureStorage()),
-        syncApiServiceProvider.overrideWithValue(SyncApiService(server.client)),
+        secureStorageProvider.overrideWithValue(storage),
+        syncApiServiceProvider.overrideWithValue(api),
+        syncProvider.overrideWith(
+          (ref) => SyncNotifier(
+            ref,
+            api,
+            storage,
+            retryWait: (d) async {},
+            loginBudget: loginBudget,
+          ),
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -173,15 +213,144 @@ void main() {
         password: 'password',
       );
 
+  group('login interattivo', () {
+    test('senza rete ritenta entro il budget e consente il retry manuale',
+        () async {
+      final server = _FakeServer()..loginOffline = true;
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      expect(await loginFuture(notifier), isFalse);
+      expect(server.loginCalls, 3,
+          reason: 'un errore di trasporto è transitorio: 3 tentativi');
+      expect(container.read(syncProvider).isSyncing, isFalse,
+          reason: 'il pulsante deve tornare attivo');
+      expect(container.read(syncProvider).isAuthenticated, isFalse);
+      expect(container.read(syncProvider).isOnline, isFalse);
+      expect(
+        container.read(syncProvider).lastError,
+        contains('Impossibile connettersi'),
+      );
+
+      server.loginOffline = false;
+      expect(await loginFuture(notifier), isTrue,
+          reason: 'un nuovo tentativo manuale deve poter riuscire');
+      expect(server.loginCalls, 4);
+      expect(container.read(syncProvider).isAuthenticated, isTrue);
+      expect(container.read(syncProvider).isSyncing, isFalse);
+    });
+
+    test('un 401 non viene ritentato e resta Online', () async {
+      final server = _FakeServer()
+        ..loginFailuresRemaining = 1
+        ..loginFailureStatus = 401;
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      expect(await loginFuture(notifier), isFalse);
+      expect(server.loginCalls, 1,
+          reason: 'le credenziali errate non sono un errore transitorio');
+      expect(container.read(syncProvider).isOnline, isTrue,
+          reason: 'il server ha risposto: non è Offline');
+      expect(container.read(syncProvider).isSyncing, isFalse);
+      expect(
+        container.read(syncProvider).lastError,
+        contains('Credenziali non valide'),
+      );
+    });
+
+    test('un 500 transitorio viene ritentato e poi riesce', () async {
+      final server = _FakeServer()
+        ..loginFailuresRemaining = 1
+        ..loginFailureStatus = 500;
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      expect(await loginFuture(notifier), isTrue);
+      expect(server.loginCalls, 2, reason: 'primo 500, poi successo');
+      expect(container.read(syncProvider).isOnline, isTrue);
+      expect(container.read(syncProvider).isAuthenticated, isTrue);
+    });
+
+    test('dopo tre 500 si ferma, mostra l\'errore e resta Online', () async {
+      final server = _FakeServer()
+        ..loginFailuresRemaining = 10
+        ..loginFailureStatus = 500;
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      expect(await loginFuture(notifier), isFalse);
+      expect(server.loginCalls, 3);
+      expect(container.read(syncProvider).isOnline, isTrue);
+      expect(container.read(syncProvider).isSyncing, isFalse);
+      expect(
+        container.read(syncProvider).lastError,
+        contains('errore finto del server'),
+      );
+    });
+
+    test('una risposta 200 malformata non viene ritentata e resta Online',
+        () async {
+      final server = _FakeServer()..loginMalformed = true;
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      expect(await loginFuture(notifier), isFalse);
+      expect(server.loginCalls, 1,
+          reason: 'un JSON malformato non migliora ritentando');
+      expect(container.read(syncProvider).isOnline, isTrue);
+      expect(container.read(syncProvider).isSyncing, isFalse);
+      expect(
+        container.read(syncProvider).lastError,
+        contains('Risposta del server non valida'),
+      );
+    });
+
+    test('il budget complessivo ferma un login che non risponde', () async {
+      final server = _FakeServer()..loginGate = Completer<void>();
+      final container = containerFor(
+        server,
+        loginBudget: const Duration(milliseconds: 150),
+      );
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      final stopwatch = Stopwatch()..start();
+      expect(await loginFuture(notifier), isFalse);
+      stopwatch.stop();
+
+      expect(server.loginCalls, 1);
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)),
+          reason: 'il timeout complessivo deve fermare il login');
+      expect(container.read(syncProvider).isOnline, isFalse);
+      expect(container.read(syncProvider).isSyncing, isFalse);
+      expect(
+        container.read(syncProvider).lastError,
+        contains('Tempo scaduto'),
+      );
+
+      server.loginGate!.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+  });
+
   group('coalescing dei trigger di sync', () {
-    test('i trigger arrivati durante una sync producono un solo giro di recupero', () async {
+    test(
+        'i trigger arrivati durante una sync producono un solo giro di recupero',
+        () async {
       final server = _FakeServer()..firstSyncGate = Completer<void>();
       final container = containerFor(server);
       final notifier = container.read(syncProvider.notifier);
       await notifier.initialized;
 
       final login = loginFuture(notifier);
-      await server.firstSyncReceived.future.timeout(const Duration(seconds: 10));
+      await server.firstSyncReceived.future
+          .timeout(const Duration(seconds: 10));
       expect(container.read(syncProvider).isSyncing, isTrue);
 
       // Tre trigger mentre la prima sync è ancora in volo: nessuno parte in
@@ -193,7 +362,8 @@ void main() {
       server.firstSyncGate!.complete();
       expect(await login, isTrue);
 
-      expect(server.syncCalls, 2, reason: '1 giro iniziale + 1 solo giro di recupero');
+      expect(server.syncCalls, 2,
+          reason: '1 giro iniziale + 1 solo giro di recupero');
       expect(container.read(syncProvider).isSyncing, isFalse);
 
       // Nessuna richiesta residua: una sync successiva fa un solo giro.
@@ -210,20 +380,23 @@ void main() {
       await notifier.initialized;
 
       final login = loginFuture(notifier);
-      await server.firstSyncReceived.future.timeout(const Duration(seconds: 10));
+      await server.firstSyncReceived.future
+          .timeout(const Duration(seconds: 10));
 
       expect(await notifier.triggerSync(), isFalse);
 
       server.firstSyncGate!.complete();
       expect(await login, isTrue);
 
-      expect(server.syncCalls, 1, reason: 'con il server in errore non si riprova subito');
+      expect(server.syncCalls, 1,
+          reason: 'con il server in errore non si riprova subito');
       expect(container.read(syncProvider).isSyncing, isFalse);
     });
   });
 
   group('invio remoto delle impostazioni', () {
-    test('modifiche ravvicinate producono una sola PUT con l\'ultimo valore', () async {
+    test('modifiche ravvicinate producono una sola PUT con l\'ultimo valore',
+        () async {
       final server = _FakeServer();
       final container = containerFor(server);
       final sync = container.read(syncProvider.notifier);
@@ -246,7 +419,9 @@ void main() {
       expect(server.settingsPuts.single['font_size'], 20);
     });
 
-    test('andando in background l\'invio in attesa parte subito e una volta sola', () async {
+    test(
+        'andando in background l\'invio in attesa parte subito e una volta sola',
+        () async {
       final server = _FakeServer();
       final container = containerFor(server);
       final sync = container.read(syncProvider.notifier);
