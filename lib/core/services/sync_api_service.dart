@@ -11,25 +11,32 @@ class SyncApiException implements Exception {
   final int? statusCode;
   final String message;
 
+  /// Codice stabile restituito dal server (es. `account_blocked`,
+  /// `rate_limited`). Permette di distinguere casi diversi con lo stesso
+  /// status HTTP senza interpretare il testo del messaggio.
+  final String? code;
+
   /// Valorizzato solo per HTTP 422: i record rifiutati dal server. Il batch è
   /// stato annullato per intero e il cursore NON deve avanzare.
   final List<SyncRejectedItem> rejected;
 
-  /// Valorizzato solo per HTTP 503 quando il server indica `Retry-After`
+  /// Valorizzato per HTTP 429/503 quando il server indica `Retry-After`
   /// (secondi): il ritentativo non deve partire prima (Y-11).
   final Duration? retryAfter;
 
   const SyncApiException(this.message,
-      [this.statusCode, this.rejected = const []])
+      [this.statusCode, this.rejected = const [], this.code])
       : retryAfter = null;
 
   const SyncApiException.withRetryAfter(
-      this.message, this.statusCode, this.retryAfter)
+      this.message, this.statusCode, this.retryAfter,
+      {this.code})
       : rejected = const [];
 
   @override
   String toString() =>
-      'SyncApiException: $message${statusCode != null ? ' (Status: $statusCode)' : ''}';
+      'SyncApiException: $message${statusCode != null ? ' (Status: $statusCode)' : ''}'
+      '${code != null ? ' [$code]' : ''}';
 }
 
 /// Limiti di tempo del round di sync (Y-05). Prima c'era un solo `timeout(30 s)`
@@ -110,7 +117,7 @@ class SyncApiService {
   /// Identificativo dell'app inviato nell'header `X-Scripta-Client`. Il server
   /// lo usa SOLO nei log (non cambia nessun comportamento). Tenere allineato
   /// alla versione in pubspec.yaml.
-  static const String clientHeaderValue = 'scripta/1.0.4';
+  static const String clientHeaderValue = 'scripta/1.0.5';
 
   /// Legge `Retry-After` espresso in secondi. Altri formati (data HTTP) o
   /// valori non validi/negativi: nessuna indicazione (null).
@@ -268,19 +275,40 @@ class SyncApiService {
         throw const SyncApiException(
             'Risposta del server non valida (JSON malformato)', 502);
       }
-    } else if (response.statusCode == 401) {
-      throw const SyncApiException('Credenziali non valide', 401);
     } else {
-      final message =
-          _extractError(bodyText(response), 'Errore durante l\'autenticazione');
-      if (response.statusCode == 429 || response.statusCode == 503) {
+      final body = bodyText(response);
+      final message = _extractError(body, 'Errore durante l\'autenticazione');
+      final code = _extractErrorCode(body);
+      if (response.statusCode == 401) {
+        throw SyncApiException('Credenziali non valide', 401, const [],
+            code ?? 'invalid_credentials');
+      }
+      if (response.statusCode == 403 && code == 'account_blocked') {
+        throw const SyncApiException(
+          'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+          403,
+          [],
+          'account_blocked',
+        );
+      }
+      if (response.statusCode == 429) {
+        throw SyncApiException.withRetryAfter(
+          'Troppi tentativi di accesso. Attendi qualche minuto e riprova.',
+          response.statusCode,
+          parseRetryAfter(response.headers['retry-after']) ??
+              const Duration(seconds: 5),
+          code: code ?? 'rate_limited',
+        );
+      }
+      if (response.statusCode == 503) {
         final retryAfter = parseRetryAfter(response.headers['retry-after']);
         if (retryAfter != null) {
           throw SyncApiException.withRetryAfter(
-              message, response.statusCode, retryAfter);
+              message, response.statusCode, retryAfter,
+              code: code ?? 'service_unavailable');
         }
       }
-      throw SyncApiException(message, response.statusCode);
+      throw SyncApiException(message, response.statusCode, const [], code);
     }
   }
 
@@ -318,14 +346,8 @@ class SyncApiService {
     if (response.statusCode == 200) {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return UserSettingsDto.fromJson(decoded);
-    } else if (response.statusCode == 401) {
-      throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
-    } else {
-      throw SyncApiException(
-          _extractError(bodyText(response),
-              'Impossibile scaricare le impostazioni remote'),
-          response.statusCode);
     }
+    throw _apiError(response, 'Impossibile scaricare le impostazioni remote');
   }
 
   /// Updates remote user preferences
@@ -351,14 +373,8 @@ class SyncApiService {
     if (response.statusCode == 200) {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return UserSettingsDto.fromJson(decoded);
-    } else if (response.statusCode == 401) {
-      throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
-    } else {
-      throw SyncApiException(
-          _extractError(bodyText(response),
-              'Impossibile aggiornare le impostazioni utente'),
-          response.statusCode);
     }
+    throw _apiError(response, 'Impossibile aggiornare le impostazioni utente');
   }
 
   /// Esegue un round di sync Delta Sync Push/Pull con risoluzione dei
@@ -395,12 +411,37 @@ class SyncApiService {
     if (response.statusCode == 200) {
       return _decodeSyncResponse(response);
     } else if (response.statusCode == 401) {
-      throw const SyncApiException('Sessione scaduta o non autorizzata', 401);
+      final body = bodyText(response);
+      throw SyncApiException('Sessione scaduta o non autorizzata', 401,
+          const [], _extractErrorCode(body) ?? 'unauthorized');
+    } else if (response.statusCode == 403) {
+      final body = bodyText(response);
+      final code = _extractErrorCode(body);
+      if (code == 'account_blocked') {
+        throw const SyncApiException(
+          'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+          403,
+          [],
+          'account_blocked',
+        );
+      }
+      throw SyncApiException(_extractError(body, 'Accesso negato dal server'),
+          403, const [], code);
+    } else if (response.statusCode == 429) {
+      final body = bodyText(response);
+      throw SyncApiException.withRetryAfter(
+        'Sincronizzazione temporaneamente limitata. Riprova tra poco.',
+        response.statusCode,
+        parseRetryAfter(response.headers['retry-after']) ??
+            const Duration(seconds: 1),
+        code: _extractErrorCode(body) ?? 'rate_limited',
+      );
     } else if (response.statusCode == 503) {
       throw SyncApiException.withRetryAfter(
         'Server temporaneamente occupato, riprovare a breve',
         503,
         parseRetryAfter(response.headers['retry-after']),
+        code: 'service_unavailable',
       );
     } else if (response.statusCode == 422) {
       // Record rifiutati: il server ha annullato l'intero batch.
@@ -414,12 +455,15 @@ class SyncApiService {
       throw SyncApiException(
           'Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)',
           422,
-          rejected);
+          rejected,
+          'validation_failed');
     } else {
+      final body = bodyText(response);
       throw SyncApiException(
-          _extractError(
-              bodyText(response), 'Errore durante la sincronizzazione'),
-          response.statusCode);
+          _extractError(body, 'Errore durante la sincronizzazione'),
+          response.statusCode,
+          const [],
+          _extractErrorCode(body));
     }
   }
 
@@ -513,5 +557,30 @@ class SyncApiService {
       }
     } catch (_) {}
     return fallback;
+  }
+
+  String? _extractErrorCode(String body) {
+    try {
+      final decoded = json.decode(body) as Map<String, dynamic>;
+      final code = decoded['code'];
+      return code is String && code.isNotEmpty ? code : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Never _apiError(http.Response response, String fallback) {
+    final body = bodyText(response);
+    final message = _extractError(body, fallback);
+    final code = _extractErrorCode(body);
+    if (response.statusCode == 403 && code == 'account_blocked') {
+      throw const SyncApiException(
+        'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+        403,
+        [],
+        'account_blocked',
+      );
+    }
+    throw SyncApiException(message, response.statusCode, const [], code);
   }
 }

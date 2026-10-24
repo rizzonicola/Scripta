@@ -77,12 +77,17 @@ class AboutCreditsDialog extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              _buildCreditItem(theme, 'Drift / SQLite', l10n.creditDrift),
-              _buildCreditItem(theme, 'Flutter Secure Storage', l10n.creditSecureStorage),
-              _buildCreditItem(theme, 'Riverpod 2.x', l10n.creditRiverpod),
-              _buildCreditItem(theme, 'flutter_md', l10n.creditMarkdown),
+              _buildCreditItem(theme, 'Flutter / Dart', l10n.creditFlutter),
+              _buildCreditItem(theme, 'Riverpod 3.x', l10n.creditRiverpod),
+              _buildCreditItem(theme, 'flutter_md / Math', l10n.creditMarkdown),
+              _buildCreditItem(theme, 'sqflite / SQLite', l10n.creditDrift),
+              _buildCreditItem(theme, 'Shared Preferences', l10n.creditStorage),
+              _buildCreditItem(
+                  theme, 'Secure Storage', l10n.creditSecureStorage),
+              _buildCreditItem(theme, 'HTTP / Archive', l10n.creditSyncArchive),
               _buildCreditItem(theme, 'Google Fonts', l10n.creditFonts),
-              _buildCreditItem(theme, 'Http & Archive', l10n.creditSyncArchive),
+              _buildCreditItem(
+                  theme, 'UUID / URL Launcher', l10n.creditUtility),
               const SizedBox(height: 16),
               const Divider(height: 1),
               const SizedBox(height: 8),
@@ -109,7 +114,8 @@ class AboutCreditsDialog extends StatelessWidget {
                     context: context,
                     applicationName: AppConstants.appName,
                     applicationVersion: AppConstants.appVersion,
-                    applicationLegalese: '© 2026 Scripta Open Source Project • ${l10n.licenseGpl}',
+                    applicationLegalese:
+                        '© 2026 Scripta Open Source Project • ${l10n.licenseGpl}',
                   );
                 },
               ),
@@ -192,7 +198,8 @@ class AboutCreditsDialog extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.check_circle_outline, size: 16, color: theme.colorScheme.primary),
+          Icon(Icons.check_circle_outline,
+              size: 16, color: theme.colorScheme.primary),
           const SizedBox(width: 8),
           Expanded(
             child: RichText(
@@ -201,11 +208,15 @@ class AboutCreditsDialog extends StatelessWidget {
                 children: [
                   TextSpan(
                     text: '$title: ',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.onSurface),
                   ),
                   TextSpan(
                     text: subtitle,
-                    style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
+                    style: TextStyle(
+                        color:
+                            theme.colorScheme.onSurface.withValues(alpha: 0.7)),
                   ),
                 ],
               ),

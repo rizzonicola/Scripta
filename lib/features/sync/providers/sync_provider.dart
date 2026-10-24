@@ -292,10 +292,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     await _clearTokenExpiry();
   }
 
-  /// Chiude la sessione [generation] per un 401. Incrementa la generazione
-  /// PRIMA di cancellare, così ogni altra risposta in volo della stessa
-  /// sessione viene scartata; se nel frattempo è partito un login nuovo, non
-  /// ne cancella le credenziali.
+  /// Chiude la sessione [generation] per un 401 o per un account bloccato.
+  /// Incrementa la generazione PRIMA di cancellare, così ogni altra risposta
+  /// in volo della stessa sessione viene scartata; se nel frattempo è partito
+  /// un login nuovo, non ne cancella le credenziali.
   Future<void> _endSession(int generation) async {
     if (generation != _sessionGeneration) return;
     final endedGeneration = ++_sessionGeneration;
@@ -339,7 +339,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // Il token è valido: l'orologio locale è sbagliato. Non si ripete il controllo.
       await _clearTokenExpiry();
     } on SyncApiException catch (e) {
-      if (e.statusCode == 401) rethrow;
+      if (e.statusCode == 401 || _isAccountBlocked(e)) rethrow;
     } catch (_) {}
   }
 
@@ -457,6 +457,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _connectivityTimer = null;
   }
 
+  /// L'account è stato bloccato dall'amministratore. Il server risponde 403
+  /// con un codice stabile: non va confuso con un 401 (sessione scaduta) né
+  /// con un 429 (rate limit temporaneo).
+  bool _isAccountBlocked(Object error) =>
+      error is SyncApiException &&
+      error.statusCode == 403 &&
+      error.code == 'account_blocked';
+
   /// True when the error represents a connectivity/timeout problem (as
   /// opposed to an authenticated/HTTP-level error), and therefore eligible
   /// for the automatic retry mechanism.
@@ -465,9 +473,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // A SyncApiException with no status code means the request never
       // reached / completed against the server in a way that produced an
       // HTTP response (e.g. wrapped timeout), so treat it as transient.
-      // A 503 (server temporaneamente occupato, vedi SyncHandler lato
-      // backend) è transitorio per definizione: vale la pena ritentare.
-      return error.statusCode == null || error.statusCode == 503;
+      // 503 (server occupato) e 429 (rate limit) sono transitori; per il
+      // secondo `_retryDelayFor` rispetta Retry-After.
+      return error.statusCode == null ||
+          error.statusCode == 503 ||
+          error.statusCode == 429;
     }
     // Anything else (SocketException, TimeoutException, http.ClientException,
     // etc.) reaching this point means the request itself failed at the
@@ -1292,15 +1302,16 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       // sessione nuova.
       if (!_isCurrentSession(generation)) return false;
       final isAuthError = e is SyncApiException && e.statusCode == 401;
+      final isBlocked = _isAccountBlocked(e);
       final isRejected = e is SyncApiException && e.statusCode == 422;
+      final isRateLimited = e is SyncApiException && e.statusCode == 429;
       // 502 = risposta 200 non decodificabile: il server ha risposto, quindi
       // non è offline; il messaggio deve dire che il problema è la risposta.
       final isBadResponse = e is SyncApiException && e.statusCode == 502;
       // Un errore di SQLite locale non dice nulla sulla raggiungibilità del
       // server: prima veniva mostrato come "server non raggiungibile".
       final isLocalDbError = e is DatabaseException;
-      final isServerBusy =
-          e is SyncApiException && (e.statusCode == 429 || e.statusCode == 503);
+      final isServerBusy = e is SyncApiException && e.statusCode == 503;
       if (isLocalDbError) {
         debugPrint('SyncNotifier: errore del database locale: $e');
       }
@@ -1313,26 +1324,32 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
               ? state.isOnline
               : false;
       state = state.copyWith(
-        isAuthenticated: isAuthError ? false : state.isAuthenticated,
+        isAuthenticated:
+            isAuthError || isBlocked ? false : state.isAuthenticated,
         isOnline: nextOnline,
         isSyncing: false,
         lastError: () => e is SyncApiException ? e.message : e.toString(),
-        lastSyncMessage: () => isAuthError
-            ? 'Sessione scaduta: effettua nuovamente l\'accesso'
-            : isRejected
-                ? 'Sincronizzazione non riuscita: alcuni elementi non sono validi per il server'
-                : isBadResponse
-                    ? 'Sincronizzazione non riuscita: risposta del server non valida'
-                    : isLocalDbError
-                        ? 'Sincronizzazione non riuscita: errore del database locale'
-                        : isServerBusy
-                            ? 'Sincronizzazione non riuscita: server temporaneamente occupato'
-                            : e is SyncApiException && e.statusCode != null
-                                ? 'Sincronizzazione non riuscita: errore del server'
-                                : 'Sincronizzazione non riuscita: server non raggiungibile',
+        lastSyncMessage: () => isBlocked
+            ? 'Account bloccato: contatta l\'amministratore'
+            : isAuthError
+                ? 'Sessione scaduta: effettua nuovamente l\'accesso'
+                : isRateLimited
+                    ? 'Sincronizzazione non riuscita: limite di richieste raggiunto, riprova tra poco'
+                    : isRejected
+                        ? 'Sincronizzazione non riuscita: alcuni elementi non sono validi per il server'
+                        : isBadResponse
+                            ? 'Sincronizzazione non riuscita: risposta del server non valida'
+                            : isLocalDbError
+                                ? 'Sincronizzazione non riuscita: errore del database locale'
+                                : isServerBusy
+                                    ? 'Sincronizzazione non riuscita: server temporaneamente occupato'
+                                    : e is SyncApiException &&
+                                            e.statusCode != null
+                                        ? 'Sincronizzazione non riuscita: errore del server'
+                                        : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       _rememberOnline(nextOnline);
-      if (isAuthError) {
+      if (isAuthError || isBlocked) {
         await _endSession(generation);
       }
       return false;
@@ -1427,6 +1444,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
               'Sessione scaduta: effettua nuovamente l\'accesso',
         );
         await _endSession(generation);
+      } else if (e is SyncApiException && _isAccountBlocked(e)) {
+        state = state.copyWith(
+          isAuthenticated: false,
+          lastError: () => e.message,
+          lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
+        );
+        await _endSession(generation);
       } else if (!_reachedServerSince(mark)) {
         // Se nel frattempo un'altra richiesta è riuscita (all'avvio gira in
         // parallelo alla sync), questo fallimento è vecchio: vedi
@@ -1474,6 +1498,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           lastError: () => reason,
           lastSyncMessage: () =>
               'Sessione scaduta: effettua nuovamente l\'accesso',
+        );
+        await _endSession(generation);
+      } else if (e is SyncApiException && _isAccountBlocked(e)) {
+        state = state.copyWith(
+          isAuthenticated: false,
+          lastError: () => e.message,
+          lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
         );
         await _endSession(generation);
       } else {

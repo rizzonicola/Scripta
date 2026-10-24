@@ -355,27 +355,39 @@ class AppLocalizationsIt extends AppLocalizations {
   String get openSourceTech => 'Librerie Open Source & Tecnologie:';
 
   @override
+  String get creditFlutter =>
+      'Flutter e Dart SDK, flutter_localizations, intl e path';
+
+  @override
   String get creditDrift =>
-      'Database locale relazionale reattivo ad alte prestazioni';
+      'Database locale sqflite + sqflite_common_ffi (SQLite)';
 
   @override
   String get creditSecureStorage =>
-      'Archiviazione sicura su Keystore/Keychain per token JWT';
+      'flutter_secure_storage su Keystore/Keychain per token JWT';
 
   @override
   String get creditRiverpod =>
-      'Gestione reattiva dello stato & Dependency Injection';
+      'flutter_riverpod per stato reattivo e dependency injection';
 
   @override
   String get creditMarkdown =>
-      'Parser e visualizzatore formattato CommonMark & GFM';
+      'flutter_md e flutter_math_fork per Markdown, GFM e formule';
 
   @override
-  String get creditFonts => 'Tipografia JetBrains Mono & Inter';
+  String get creditStorage =>
+      'shared_preferences e path_provider per preferenze e file locali';
+
+  @override
+  String get creditFonts => 'google_fonts per la tipografia dell\'interfaccia';
 
   @override
   String get creditSyncArchive =>
-      'Sincronizzazione API REST & compressione ZIP';
+      'http, archive e file_picker per API REST, ZIP e file';
+
+  @override
+  String get creditUtility =>
+      'uuid e url_launcher per identificatori e link esterni';
 
   @override
   String get replayTutorial => 'Rivedi Tutorial Iniziale';

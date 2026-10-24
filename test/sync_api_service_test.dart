@@ -218,6 +218,40 @@ void main() {
       );
     });
 
+    test('403 account_blocked conserva il codice stabile sulle impostazioni',
+        () async {
+      final client = MockClient((_) async => http.Response(
+            json.encode({
+              'error': 'account bloccato',
+              'code': 'account_blocked',
+            }),
+            403,
+          ));
+
+      final service = SyncApiService(client);
+
+      expect(
+        () => service.getUserSettings(
+            baseUrl: 'http://localhost:8080', token: 't'),
+        throwsA(predicate((e) =>
+            e is SyncApiException &&
+            e.statusCode == 403 &&
+            e.code == 'account_blocked')),
+      );
+
+      expect(
+        () => service.updateUserSettings(
+          baseUrl: 'http://localhost:8080',
+          token: 't',
+          settings: const UserSettingsDto(),
+        ),
+        throwsA(predicate((e) =>
+            e is SyncApiException &&
+            e.statusCode == 403 &&
+            e.code == 'account_blocked')),
+      );
+    });
+
     test('handles 401 token expiration across all endpoints', () async {
       final client = MockClient((request) async {
         return http.Response(json.encode({'error': 'token scaduto'}), 401);

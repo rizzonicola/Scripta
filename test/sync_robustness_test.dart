@@ -55,7 +55,9 @@ class _FakeServer {
   bool loginMalformed = false;
   int loginFailuresRemaining = 0;
   int loginFailureStatus = 500;
+  String? loginFailureCode;
   int syncStatus = 200;
+  String? syncFailureCode;
   final List<Map<String, dynamic>> settingsPuts = [];
 
   /// Se valorizzato, la login resta in attesa di questo completer.
@@ -82,7 +84,10 @@ class _FakeServer {
       if (loginFailuresRemaining > 0) {
         loginFailuresRemaining--;
         return http.Response(
-          json.encode({'error': 'errore finto del server'}),
+          json.encode({
+            'error': 'errore finto del server',
+            if (loginFailureCode != null) 'code': loginFailureCode,
+          }),
           loginFailureStatus,
           headers: _headers,
         );
@@ -132,7 +137,10 @@ class _FakeServer {
       }
       if (syncStatus != 200) {
         return http.Response(
-          json.encode({'error': 'rifiutata'}),
+          json.encode({
+            'error': 'rifiutata',
+            if (syncFailureCode != null) 'code': syncFailureCode,
+          }),
           syncStatus,
           headers: _headers,
         );
@@ -259,6 +267,49 @@ void main() {
         container.read(syncProvider).lastError,
         contains('Credenziali non valide'),
       );
+    });
+
+    test('un account bloccato ha un messaggio distinto e non viene ritentato',
+        () async {
+      final server = _FakeServer()
+        ..loginFailuresRemaining = 1
+        ..loginFailureStatus = 403
+        ..loginFailureCode = 'account_blocked';
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      expect(await loginFuture(notifier), isFalse);
+      expect(server.loginCalls, 1,
+          reason: 'un account bloccato non è un errore transitorio');
+      expect(container.read(syncProvider).isAuthenticated, isFalse);
+      expect(
+        container.read(syncProvider).lastError,
+        contains('Account bloccato'),
+      );
+      expect(
+        container.read(syncProvider).lastError,
+        isNot(contains('Credenziali non valide')),
+      );
+    });
+
+    test('un 429 al login mostra il messaggio rate limit', () async {
+      final server = _FakeServer()
+        ..loginFailuresRemaining = 10
+        ..loginFailureStatus = 429
+        ..loginFailureCode = 'rate_limited';
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+
+      expect(await loginFuture(notifier), isFalse);
+      expect(server.loginCalls, 3,
+          reason: 'il 429 è transitorio e viene ritentato');
+      expect(
+        container.read(syncProvider).lastError,
+        contains('Troppi tentativi'),
+      );
+      expect(container.read(syncProvider).isOnline, isTrue);
     });
 
     test('un 500 transitorio viene ritentato e poi riesce', () async {
@@ -391,6 +442,49 @@ void main() {
       expect(server.syncCalls, 1,
           reason: 'con il server in errore non si riprova subito');
       expect(container.read(syncProvider).isSyncing, isFalse);
+    });
+  });
+
+  group('errori account e rate limit durante la sync', () {
+    test('un account bloccato chiude la sessione con un messaggio distinto',
+        () async {
+      final server = _FakeServer();
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+      expect(await loginFuture(notifier), isTrue);
+
+      server
+        ..syncStatus = 403
+        ..syncFailureCode = 'account_blocked';
+      expect(await notifier.triggerSync(), isFalse);
+
+      final state = container.read(syncProvider);
+      expect(state.isAuthenticated, isFalse);
+      expect(state.isOnline, isTrue,
+          reason: 'il server ha risposto con un 403');
+      expect(state.lastSyncMessage, contains('Account bloccato'));
+      expect(state.lastError, contains('Account bloccato'));
+    });
+
+    test('un 429 persistente mostra il limite di richieste senza sloggare',
+        () async {
+      final server = _FakeServer();
+      final container = containerFor(server);
+      final notifier = container.read(syncProvider.notifier);
+      await notifier.initialized;
+      expect(await loginFuture(notifier), isTrue);
+
+      server
+        ..syncStatus = 429
+        ..syncFailureCode = 'rate_limited';
+      expect(await notifier.triggerSync(), isFalse);
+
+      final state = container.read(syncProvider);
+      expect(state.isAuthenticated, isTrue,
+          reason: 'il rate limit è temporaneo, non invalida il token');
+      expect(state.lastSyncMessage, contains('limite di richieste'));
+      expect(state.lastError, isNot(contains('Account bloccato')));
     });
   });
 

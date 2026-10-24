@@ -766,41 +766,59 @@ abstract class AppLocalizations {
   /// **'Open Source Libraries & Technologies:'**
   String get openSourceTech;
 
+  /// No description provided for @creditFlutter.
+  ///
+  /// In en, this message translates to:
+  /// **'Flutter and Dart SDK, flutter_localizations, intl and path'**
+  String get creditFlutter;
+
   /// No description provided for @creditDrift.
   ///
   /// In en, this message translates to:
-  /// **'High-performance reactive local relational database'**
+  /// **'sqflite + sqflite_common_ffi local SQLite database'**
   String get creditDrift;
 
   /// No description provided for @creditSecureStorage.
   ///
   /// In en, this message translates to:
-  /// **'Secure storage on Keystore/Keychain for JWT tokens'**
+  /// **'flutter_secure_storage on Keystore/Keychain for JWT tokens'**
   String get creditSecureStorage;
 
   /// No description provided for @creditRiverpod.
   ///
   /// In en, this message translates to:
-  /// **'Reactive state management & Dependency Injection'**
+  /// **'flutter_riverpod for reactive state and dependency injection'**
   String get creditRiverpod;
 
   /// No description provided for @creditMarkdown.
   ///
   /// In en, this message translates to:
-  /// **'CommonMark & GFM parser and rich viewer'**
+  /// **'flutter_md and flutter_math_fork for Markdown, GFM and math'**
   String get creditMarkdown;
+
+  /// No description provided for @creditStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'shared_preferences and path_provider for preferences and local files'**
+  String get creditStorage;
 
   /// No description provided for @creditFonts.
   ///
   /// In en, this message translates to:
-  /// **'JetBrains Mono & Inter typography'**
+  /// **'google_fonts for interface typography'**
   String get creditFonts;
 
   /// No description provided for @creditSyncArchive.
   ///
   /// In en, this message translates to:
-  /// **'REST API synchronization & ZIP compression'**
+  /// **'http, archive and file_picker for REST APIs, ZIP and files'**
   String get creditSyncArchive;
+
+  /// No description provided for @creditUtility.
+  ///
+  /// In en, this message translates to:
+  /// **'uuid and url_launcher for identifiers and external links'**
+  String get creditUtility;
 
   /// No description provided for @replayTutorial.
   ///
