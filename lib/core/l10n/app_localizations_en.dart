@@ -312,6 +312,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get usernameLabel => 'Username';
 
   @override
+  String get usernameCaseSensitiveHint => 'Usernames are case-sensitive.';
+
+  @override
   String get passwordLabel => 'Password';
 
   @override

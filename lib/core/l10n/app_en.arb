@@ -97,6 +97,7 @@
   "inactivityMinDefault": "Minimum: 10s • Default: 30s",
   "serverUrlLabel": "Backend Server URL",
   "usernameLabel": "Username",
+  "usernameCaseSensitiveHint": "Usernames are case-sensitive.",
   "passwordLabel": "Password",
   "connectLogin": "Login / Connect to Server",
   "disconnect": "Disconnect",

@@ -314,6 +314,10 @@ class AppLocalizationsFr extends AppLocalizations {
   String get usernameLabel => 'Nom d\'utilisateur';
 
   @override
+  String get usernameCaseSensitiveHint =>
+      'Les majuscules et minuscules sont significatives.';
+
+  @override
   String get passwordLabel => 'Mot de passe';
 
   @override

@@ -271,11 +271,13 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
               TextField(
                 controller: _usernameController,
                 textInputAction: TextInputAction.next,
+                textCapitalization: TextCapitalization.none,
                 autofillHints: const [AutofillHints.username],
                 autocorrect: false,
                 enableSuggestions: false,
                 decoration: InputDecoration(
                   labelText: l10n.usernameLabel,
+                  helperText: l10n.usernameCaseSensitiveHint,
                   hintText: 'mario.rossi',
                   // Il testo di esempio deve leggersi chiaramente come
                   // placeholder (non come un valore già inserito): usiamo

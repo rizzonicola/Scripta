@@ -682,6 +682,12 @@ abstract class AppLocalizations {
   /// **'Username'**
   String get usernameLabel;
 
+  /// No description provided for @usernameCaseSensitiveHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Usernames are case-sensitive.'**
+  String get usernameCaseSensitiveHint;
+
   /// No description provided for @passwordLabel.
   ///
   /// In en, this message translates to:

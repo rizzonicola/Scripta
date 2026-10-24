@@ -97,6 +97,7 @@
   "inactivityMinDefault": "Minimum : 10s • Défaut : 30s",
   "serverUrlLabel": "URL du serveur backend",
   "usernameLabel": "Nom d'utilisateur",
+  "usernameCaseSensitiveHint": "Les majuscules et minuscules sont significatives.",
   "passwordLabel": "Mot de passe",
   "connectLogin": "Connexion au serveur",
   "disconnect": "Déconnexion",
