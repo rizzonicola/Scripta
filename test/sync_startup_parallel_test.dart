@@ -38,6 +38,18 @@ class _SeededSecureStorage extends SecureStorageService {
   Future<String?> getAuthToken() async => _memory['token'];
 
   @override
+  Future<void> saveRefreshToken(String token) async {
+    if (token.isEmpty) {
+      _memory.remove('refresh');
+    } else {
+      _memory['refresh'] = token;
+    }
+  }
+
+  @override
+  Future<String?> getRefreshToken() async => _memory['refresh'];
+
+  @override
   Future<String?> getServerUrl() async => _memory['url'];
 
   @override
@@ -67,7 +79,8 @@ class _StartupServer {
   late final http.Client client = MockClient(_handle);
 
   http.Response _error(int status) =>
-      http.Response(json.encode({'error': 'errore di prova'}), status, headers: _headers);
+      http.Response(json.encode({'error': 'errore di prova'}), status,
+          headers: _headers);
 
   Future<http.Response> _handle(http.Request request) async {
     switch (request.url.path) {
@@ -203,13 +216,15 @@ void main() {
         reason: 'la sync non è partita mentre le impostazioni erano in attesa',
       );
       expect(server.settingsCalls, greaterThanOrEqualTo(1),
-          reason: 'il fetch delle impostazioni è partito ed è ancora in attesa');
+          reason:
+              'il fetch delle impostazioni è partito ed è ancora in attesa');
 
       server.settingsGate!.complete();
       await waitFirstSyncDone(container);
     });
 
-    test('con la sync all\'avvio disattivata parte solo il health check', () async {
+    test('con la sync all\'avvio disattivata parte solo il health check',
+        () async {
       // Guardia di regressione: il ramo `launchSync == false` non deve
       // lanciare né sync né impostazioni.
       SharedPreferences.setMockInitialValues({'scripta_sync_on_launch': false});
@@ -267,7 +282,9 @@ void main() {
   });
 
   group('indicatore online/offline con richieste concorrenti', () {
-    test('un health check che fallisce DOPO una sync riuscita non riporta Offline', () async {
+    test(
+        'un health check che fallisce DOPO una sync riuscita non riporta Offline',
+        () async {
       final server = _StartupServer()
         ..healthGate = Completer<void>()
         ..healthStatus = 500;
@@ -284,10 +301,13 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 300));
 
       expect(container.read(syncProvider).isOnline, isTrue,
-          reason: 'la sync era riuscita dopo la partenza del controllo: il server è raggiungibile');
+          reason:
+              'la sync era riuscita dopo la partenza del controllo: il server è raggiungibile');
     });
 
-    test('un fetch delle impostazioni fallito DOPO una sync riuscita non riporta Offline', () async {
+    test(
+        'un fetch delle impostazioni fallito DOPO una sync riuscita non riporta Offline',
+        () async {
       final server = _StartupServer()
         ..settingsGate = Completer<void>()
         ..settingsStatus = 500;
@@ -305,7 +325,9 @@ void main() {
       expect(container.read(syncProvider).isOnline, isTrue);
     });
 
-    test('un controllo che fallisce DOPO una richiesta leggera riuscita non riporta Offline', () async {
+    test(
+        'un controllo che fallisce DOPO una richiesta leggera riuscita non riporta Offline',
+        () async {
       // Percorso del contatore (health check e impostazioni), distinto da
       // `lastSyncTime`: con la sync all'avvio disattivata non ci sono sync, quindi
       // l'unico segnale di raggiungibilità è la richiesta delle impostazioni,
@@ -336,12 +358,16 @@ void main() {
 
       // Ora il controllo fallisce (3 tentativi, pause da 1,5 s).
       server.healthGate!.complete();
-      expect(await probe, isFalse, reason: 'il valore di ritorno resta quello del controllo');
+      expect(await probe, isFalse,
+          reason: 'il valore di ritorno resta quello del controllo');
       expect(container.read(syncProvider).isOnline, isTrue,
-          reason: 'le impostazioni sono riuscite dopo la partenza del controllo');
+          reason:
+              'le impostazioni sono riuscite dopo la partenza del controllo');
     });
 
-    test('un controllo che fallisce SENZA successi nel frattempo abbassa l\'indicatore', () async {
+    test(
+        'un controllo che fallisce SENZA successi nel frattempo abbassa l\'indicatore',
+        () async {
       final server = _StartupServer(); // tutto risponde 200
       final container = containerFor(server);
       final notifier = container.read(syncProvider.notifier);

@@ -19,6 +19,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
   late final TextEditingController _usernameController;
   late final TextEditingController _passwordController;
   bool _obscurePassword = true;
+  bool _loggingOutAll = false;
 
   @override
   void initState() {
@@ -41,6 +42,45 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
   String _formatTimestamp(DateTime? dateTime, String neverText) {
     if (dateTime == null) return neverText;
     return DateFormat('dd/MM/yyyy HH:mm:ss').format(dateTime);
+  }
+
+  Future<void> _confirmLogoutAll(
+      BuildContext context, AppLocalizations l10n) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.logoutAllDevicesConfirmTitle),
+        content: Text(l10n.logoutAllDevicesConfirmMessage),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).dangerColor,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.logoutAllDevicesConfirmAction),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || !context.mounted) return;
+
+    setState(() => _loggingOutAll = true);
+    final revoked = await ref.read(syncProvider.notifier).logoutAllDevices();
+    if (!mounted || !context.mounted) return;
+    setState(() => _loggingOutAll = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(revoked
+            ? l10n.logoutAllDevicesSuccess
+            : l10n.logoutAllDevicesFailed),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
@@ -251,6 +291,28 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                   ),
                 ],
               ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _loggingOutAll
+                      ? null
+                      : () => _confirmLogoutAll(context, l10n),
+                  style: TextButton.styleFrom(
+                    foregroundColor: theme.dangerColor,
+                    disabledForegroundColor:
+                        theme.dangerColor.withValues(alpha: 0.45),
+                    minimumSize: const Size(0, 36),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  child: Text(l10n.logoutAllDevices),
+                ),
+              ),
             ] else ...[
               // Login Form
               TextField(
@@ -277,7 +339,6 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 enableSuggestions: false,
                 decoration: InputDecoration(
                   labelText: l10n.usernameLabel,
-                  helperText: l10n.usernameCaseSensitiveHint,
                   hintText: 'mario.rossi',
                   // Il testo di esempio deve leggersi chiaramente come
                   // placeholder (non come un valore già inserito): usiamo

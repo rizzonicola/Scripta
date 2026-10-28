@@ -128,7 +128,7 @@ L'applicazione espone all'utente una sezione dedicata nelle Impostazioni per con
 Tutti gli endpoint REST sono esposti dal server Go sulla radice `/api/v1`. I dati sono scambiati in formato JSON con encoding UTF-8.
 
 ### 4.1 Autenticazione: `POST /api/v1/auth/login`
-Autentica l'utente e rilascia un JSON Web Token (HMAC-SHA256). La durata è **24 ore di default** e si configura sul server con la variabile `JWT_TTL`.
+Autentica l'utente e rilascia un JSON Web Token (HMAC-SHA256) con un refresh token opaco. L'access token dura **1 ora di default** (`JWT_TTL`); il refresh token dura **90 giorni di default** (`REFRESH_TOKEN_TTL`) ed è sliding: ogni refresh ne emette uno nuovo con scadenza rinnovata.
 
 - **Headers**: `Content-Type: application/json`, `X-Scripta-Client: scripta/<versione>` (solo per i log del server)
 - **Request Body**:
@@ -140,12 +140,20 @@ Autentica l'utente e rilascia un JSON Web Token (HMAC-SHA256). La durata è **24
 {
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "expires_at": 1767225600,
+  "refresh_token": "u7V...opaco...",
+  "refresh_expires_at": 1775001600,
   "user_id": "b3f1c24e-89a1-4321-bcde-1234567890ab",
   "username": "mario.rossi"
 }
 ```
-- **`expires_at` è in SECONDI Unix** (come il campo `exp` di un JWT), a differenza di tutti i timestamp di sync, che sono in millisecondi. Il client lo converte in millisecondi (`SyncNotifier.tokenExpiryMillis`) e lo salva nelle preferenze; serve solo a evitare un upload grosso con un token scaduto (§4.6).
-- **Gestione Token**: il JWT è memorizzato in modo cifrato via `SecureStorageService` (`flutter_secure_storage`) e inviato come `Authorization: Bearer <token>` nelle richieste successive. Il logout lo revoca anche lato server (best effort).
+- **`expires_at` e `refresh_expires_at` sono in SECONDI Unix** (come il campo `exp` di un JWT), a differenza di tutti i timestamp di sync, che sono in millisecondi. Il client converte `expires_at` in millisecondi (`SyncNotifier.tokenExpiryMillis`) e lo salva nelle preferenze; serve solo a evitare un upload grosso con un token scaduto (§4.6).
+- **Gestione Token**: access token e refresh token sono memorizzati in modo cifrato via `SecureStorageService` (`flutter_secure_storage`). L'access token è inviato come `Authorization: Bearer <token>`; su `401` il client chiama `POST /api/v1/auth/refresh` una sola volta per sessione, salva prima il nuovo refresh token e poi il nuovo access token, e riprova la richiesta. Un refresh rifiutato chiude la sessione; un errore di rete/5xx non cancella le credenziali.
+
+### 4.1.1 Refresh: `POST /api/v1/auth/refresh`
+Pubblico. Body `{ "refresh_token": "..." }`; risposta 200 con lo stesso formato del login (nuovo access token + nuovo refresh token). Ogni token è monouso: il riuso di uno già ruotato revoca l'intera famiglia. Errori: `401` `invalid_grant` (mancante, sconosciuto, scaduto o già usato) e `403` `account_blocked`.
+
+### 4.1.2 Logout: `POST /api/v1/auth/logout` e `POST /api/v1/auth/logout-all`
+`logout` è pubblico e accetta un Bearer opzionale e un body opzionale `{ "refresh_token": "..." }`: revoca la famiglia del refresh token e, se presente, il `jti` dell'access token. Funziona anche con l'access token scaduto. `logout-all` richiede un access token valido (o un refresh riuscito) e revoca tutte le famiglie refresh dell'utente più tutti i JWT emessi fino a quel momento.
 
 ---
 
@@ -195,7 +203,7 @@ L'unico endpoint di sincronizzazione: **delta sync** basato su ID. Il client inv
 
 | Codice | Significato | Cosa fa il client |
 |---|---|---|
-| `401` | token scaduto, mancante o revocato | `isAuthenticated = false`, credenziali cancellate, messaggio «Sessione scaduta»; i dati locali restano |
+| `401` | access token scaduto, mancante o revocato | un tentativo di refresh; se anche il refresh è rifiutato, `isAuthenticated = false`, credenziali cancellate, messaggio «Sessione scaduta»; i dati locali restano |
 | `413` | corpo troppo grande | errore mostrato; nessuna modifica persa (restano sporche) |
 | `422` | uno o più elementi rifiutati (`rejected: [{kind, id, reason}]`); **il server ha annullato l'intero batch** e non restituisce un cursore | ripara le righe rifiutate (§5) e riprova una volta |
 | `503` | database occupato; header `Retry-After` | riprova con attesa (§4.6) |
@@ -314,14 +322,14 @@ Client invia una riga (id, updated_at, ...)
 ## 6. Sicurezza e Storage Cifrato
 
 1. **Storage Cifrato Locale**:
-   - Il client memorizza il token JWT, il nome utente e l'URL del server tramite `SecureStorageService`.
+   - Il client memorizza l'access token JWT, il refresh token opaco, il nome utente e l'URL del server tramite `SecureStorageService`.
    - Piattaforme supportate:
      - **Android**: Android Keystore + `EncryptedSharedPreferences` (AES-256 GCM).
      - **iOS / macOS**: Apple Keychain con accessibilità `first_unlock`.
      - **Linux**: Secret Service API (Freedesktop Secret Service / GNOME Keyring / KWallet).
 2. **Nessun salvataggio in chiaro delle password**:
    - L'applicazione non memorizza mai la password dell'utente sul disco locale dopo il login completato.
-   - Solo il token JWT cifrato e a tempo determinato risiede nello storage sicuro.
+   - Solo l'access token JWT e il refresh token opaco risiedono nello storage sicuro; entrambi sono revocabili lato server.
    - Sul server, le password vengono cifrate immediatamente con **bcrypt** e non vengono mai scritte nei log né mostrate nella dashboard amministrativa.
 
 ---

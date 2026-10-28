@@ -312,10 +312,6 @@ class AppLocalizationsIt extends AppLocalizations {
   String get usernameLabel => 'Username';
 
   @override
-  String get usernameCaseSensitiveHint =>
-      'Maiuscole e minuscole sono significative.';
-
-  @override
   String get passwordLabel => 'Password';
 
   @override
@@ -323,6 +319,26 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get disconnect => 'Disconnetti';
+
+  @override
+  String get logoutAllDevices => 'Esci da tutti i dispositivi';
+
+  @override
+  String get logoutAllDevicesConfirmTitle => 'Uscire da tutti i dispositivi?';
+
+  @override
+  String get logoutAllDevicesConfirmMessage =>
+      'Verrai disconnesso da tutti i dispositivi, incluso questo. Dovrai effettuare di nuovo l\'accesso.';
+
+  @override
+  String get logoutAllDevicesConfirmAction => 'Esci da tutti';
+
+  @override
+  String get logoutAllDevicesSuccess => 'Disconnesso da tutti i dispositivi.';
+
+  @override
+  String get logoutAllDevicesFailed =>
+      'Sessione locale chiusa, ma non è stato possibile revocare le altre sessioni.';
 
   @override
   String get lastSync => 'Ultimo sync';

@@ -14,6 +14,12 @@ class _MemorySecureStorage extends SecureStorageService {
   Future<String?> getAuthToken() async => null;
 
   @override
+  Future<void> saveRefreshToken(String token) async {}
+
+  @override
+  Future<String?> getRefreshToken() async => null;
+
+  @override
   Future<String?> getServerUrl() async => null;
 
   @override

@@ -312,18 +312,95 @@ class SyncApiService {
     }
   }
 
-  /// Revoca lato server il token corrente (POST /api/v1/auth/logout). Best
-  /// effort: un errore di rete non deve impedire il logout locale, quindi non
-  /// lancia mai.
-  Future<void> logout({required String baseUrl, required String token}) async {
+  /// Rinnova la sessione con il refresh token (POST /api/v1/auth/refresh).
+  /// Il server ruota il token: la risposta contiene sia il nuovo access token
+  /// sia il nuovo refresh token.
+  Future<LoginResponseDto> refresh({
+    required String baseUrl,
+    required String refreshToken,
+  }) async {
+    final clean = _cleanUrl(baseUrl);
+    final uri = Uri.parse('$clean/api/v1/auth/refresh');
+
+    final http.Response response;
+    try {
+      response = await _client
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Scripta-Client': clientHeaderValue,
+            },
+            body: json.encode({'refresh_token': refreshToken}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      throw const SyncApiException(
+          'Tempo scaduto durante il rinnovo della sessione');
+    } on Exception {
+      throw const SyncApiException('Impossibile connettersi al server');
+    }
+
+    if (response.statusCode == 200) {
+      try {
+        final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
+        return LoginResponseDto.fromJson(decoded);
+      } catch (_) {
+        throw const SyncApiException(
+            'Risposta del server non valida (JSON malformato)', 502);
+      }
+    }
+    throw _apiError(response, 'Impossibile rinnovare la sessione');
+  }
+
+  /// Revoca lato server il token corrente (POST /api/v1/auth/logout). Se
+  /// [refreshToken] è presente, revoca anche la famiglia del dispositivo.
+  /// Best effort: un errore di rete non deve impedire il logout locale,
+  /// quindi non lancia mai.
+  Future<void> logout({
+    required String baseUrl,
+    required String token,
+    String? refreshToken,
+  }) async {
     try {
       final clean = _cleanUrl(baseUrl);
-      await _client.post(
-        Uri.parse('$clean/api/v1/auth/logout'),
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 5));
+      final hasRefresh = refreshToken != null && refreshToken.isNotEmpty;
+      await _client
+          .post(
+            Uri.parse('$clean/api/v1/auth/logout'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              if (hasRefresh) 'Content-Type': 'application/json',
+            },
+            body: hasRefresh
+                ? json.encode({'refresh_token': refreshToken})
+                : null,
+          )
+          .timeout(const Duration(seconds: 5));
     } catch (_) {
       // Ignorato: il token verrà comunque scartato localmente.
+    }
+  }
+
+  /// Revoca tutte le sessioni dell'utente (POST /api/v1/auth/logout-all).
+  /// Restituisce false su errore, così il chiamante può comunque chiudere la
+  /// sessione locale e mostrare un avviso.
+  Future<bool> logoutAll({
+    required String baseUrl,
+    required String token,
+  }) async {
+    try {
+      final clean = _cleanUrl(baseUrl);
+      final response = await _client.post(
+        Uri.parse('$clean/api/v1/auth/logout-all'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'X-Scripta-Client': clientHeaderValue,
+        },
+      ).timeout(const Duration(seconds: 10));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
     }
   }
 

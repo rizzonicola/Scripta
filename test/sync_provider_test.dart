@@ -20,13 +20,26 @@ class MockSecureStorageService extends SecureStorageService {
   Future<String?> getAuthToken() async => _memory['token'];
 
   @override
+  Future<void> saveRefreshToken(String token) async {
+    if (token.isEmpty) {
+      _memory.remove('refresh');
+    } else {
+      _memory['refresh'] = token;
+    }
+  }
+
+  @override
+  Future<String?> getRefreshToken() async => _memory['refresh'];
+
+  @override
   Future<void> saveServerUrl(String url) async => _memory['url'] = url;
 
   @override
   Future<String?> getServerUrl() async => _memory['url'];
 
   @override
-  Future<void> saveUsername(String username) async => _memory['user'] = username;
+  Future<void> saveUsername(String username) async =>
+      _memory['user'] = username;
 
   @override
   Future<String?> getUsername() async => _memory['user'];

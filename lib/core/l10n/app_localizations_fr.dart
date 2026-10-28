@@ -314,10 +314,6 @@ class AppLocalizationsFr extends AppLocalizations {
   String get usernameLabel => 'Nom d\'utilisateur';
 
   @override
-  String get usernameCaseSensitiveHint =>
-      'Les majuscules et minuscules sont significatives.';
-
-  @override
   String get passwordLabel => 'Mot de passe';
 
   @override
@@ -325,6 +321,27 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get disconnect => 'Déconnexion';
+
+  @override
+  String get logoutAllDevices => 'Se déconnecter de tous les appareils';
+
+  @override
+  String get logoutAllDevicesConfirmTitle =>
+      'Se déconnecter de tous les appareils ?';
+
+  @override
+  String get logoutAllDevicesConfirmMessage =>
+      'Vous serez déconnecté de tous les appareils, y compris celui-ci. Vous devrez vous reconnecter.';
+
+  @override
+  String get logoutAllDevicesConfirmAction => 'Tout déconnecter';
+
+  @override
+  String get logoutAllDevicesSuccess => 'Déconnecté de tous les appareils.';
+
+  @override
+  String get logoutAllDevicesFailed =>
+      'Session locale fermée, mais les autres sessions n\'ont pas pu être révoquées.';
 
   @override
   String get lastSync => 'Dernière synchro';

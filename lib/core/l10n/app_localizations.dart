@@ -682,12 +682,6 @@ abstract class AppLocalizations {
   /// **'Username'**
   String get usernameLabel;
 
-  /// No description provided for @usernameCaseSensitiveHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Usernames are case-sensitive.'**
-  String get usernameCaseSensitiveHint;
-
   /// No description provided for @passwordLabel.
   ///
   /// In en, this message translates to:
@@ -705,6 +699,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Disconnect'**
   String get disconnect;
+
+  /// No description provided for @logoutAllDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out of all devices'**
+  String get logoutAllDevices;
+
+  /// No description provided for @logoutAllDevicesConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out of all devices?'**
+  String get logoutAllDevicesConfirmTitle;
+
+  /// No description provided for @logoutAllDevicesConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ll be signed out on every device, including this one. You\'ll need to sign in again.'**
+  String get logoutAllDevicesConfirmMessage;
+
+  /// No description provided for @logoutAllDevicesConfirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out everywhere'**
+  String get logoutAllDevicesConfirmAction;
+
+  /// No description provided for @logoutAllDevicesSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Signed out of all devices.'**
+  String get logoutAllDevicesSuccess;
+
+  /// No description provided for @logoutAllDevicesFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Local session closed, but the other sessions couldn\'t be revoked.'**
+  String get logoutAllDevicesFailed;
 
   /// No description provided for @lastSync.
   ///

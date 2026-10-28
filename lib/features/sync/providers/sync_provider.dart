@@ -36,6 +36,11 @@ final syncApiServiceProvider = Provider<SyncApiService>((ref) {
 /// Online/Offline: vedi [SyncNotifier._reachabilityMark].
 typedef _ReachabilityMark = ({int successes, DateTime? lastSync});
 
+/// Esito di un tentativo di rinnovo della sessione. Distinguere "token
+/// rifiutato" da "server non raggiungibile" evita di cancellare le credenziali
+/// quando il refresh fallisce per rete o per un 5xx temporaneo.
+enum _RefreshOutcome { success, invalid, blocked, unavailable }
+
 /// Motore di sincronizzazione Local-First: Delta Sync Push/Pull con
 /// risoluzione dei conflitti Last-Write-Wins, speculare 1:1 al protocollo
 /// implementato da `SyncHandler.Sync` nel backend Go.
@@ -192,6 +197,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// scattare un logout della nuova sessione con un 401 ormai vecchio).
   int _sessionGeneration = 0;
 
+  /// Refresh in corso (single-flight): più richieste che ricevono 401 quasi
+  /// insieme devono condividere un solo rinnovo, altrimenti la seconda
+  /// rotazione userebbe un refresh token già consumato e revocherebbe la
+  /// famiglia. La generazione evita di riusare il future di una sessione
+  /// precedente.
+  Future<_RefreshOutcome>? _refreshInFlight;
+  int? _refreshGeneration;
+
   /// Identifica il trigger di sync attualmente proprietario di `isSyncing`.
   /// Un trigger vecchio non deve azzerare il flag di uno nuovo partito dopo
   /// un login (che azzera `isSyncing` mentre una sync precedente è in volo).
@@ -321,21 +334,135 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
   }
 
+  /// Esegue il refresh una sola volta per sessione/generazione. Se più
+  /// richieste ricevono 401 insieme, la seconda attende lo stesso future
+  /// invece di consumare due volte il refresh token (la rotazione è monouso).
+  Future<_RefreshOutcome> _refreshSession(int generation) {
+    final existing = _refreshInFlight;
+    if (existing != null && _refreshGeneration == generation) {
+      return existing;
+    }
+    final future = _doRefresh(generation);
+    _refreshGeneration = generation;
+    _refreshInFlight = future;
+    future.whenComplete(() {
+      if (identical(_refreshInFlight, future)) {
+        _refreshInFlight = null;
+        _refreshGeneration = null;
+      }
+    });
+    return future;
+  }
+
+  Future<_RefreshOutcome> _doRefresh(int generation) async {
+    if (!_isCurrentSession(generation)) return _RefreshOutcome.invalid;
+    final serverUrl = state.serverUrl;
+    final refreshToken = await _secureStorage.getRefreshToken();
+    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+      return _RefreshOutcome.invalid;
+    }
+    if (refreshToken == null || refreshToken.isEmpty || serverUrl.isEmpty) {
+      return _RefreshOutcome.invalid;
+    }
+
+    try {
+      final response = await _apiService.refresh(
+        baseUrl: serverUrl,
+        refreshToken: refreshToken,
+      );
+      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+        return _RefreshOutcome.invalid;
+      }
+      final applied = await _withSessionWriteLock(() async {
+        if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+          return false;
+        }
+        // Prima il refresh token nuovo, poi l'access token: se il processo
+        // muore fra le due scritture, al riavvio il refresh nuovo è ancora
+        // utilizzabile (quello vecchio è già stato consumato dal server).
+        await _secureStorage.saveRefreshToken(response.refreshToken);
+        await _secureStorage.saveAuthToken(response.token);
+        await _saveTokenExpiry(response.expiresAt);
+        return true;
+      });
+      return applied ? _RefreshOutcome.success : _RefreshOutcome.invalid;
+    } on SyncApiException catch (e) {
+      if (!_isCurrentSession(generation)) return _RefreshOutcome.invalid;
+      if (e.statusCode == 401 || e.code == 'invalid_grant') {
+        return _RefreshOutcome.invalid;
+      }
+      if (_isAccountBlocked(e)) return _RefreshOutcome.blocked;
+      return _RefreshOutcome.unavailable;
+    } catch (_) {
+      return _RefreshOutcome.unavailable;
+    }
+  }
+
+  /// Esegue una richiesta autenticata e, su 401, rinnova la sessione una volta
+  /// e riprova. Un refresh rifiutato o un account bloccato lasciano al
+  /// chiamante il compito di chiudere la sessione; un errore di rete/5xx non
+  /// cancella le credenziali.
+  Future<T> _authorizedRequest<T>(
+      Future<T> Function(String token) request) async {
+    final generation = _sessionGeneration;
+    final token = await _secureStorage.getAuthToken();
+    if (!_isCurrentSession(generation) || token == null || token.isEmpty) {
+      throw const SyncApiException(
+          'Sessione scaduta o non autorizzata', 401, [], 'invalid_token');
+    }
+
+    try {
+      return await request(token);
+    } on SyncApiException catch (e) {
+      if (e.statusCode != 401) rethrow;
+      final outcome = await _refreshSession(generation);
+      if (!_isCurrentSession(generation)) rethrow;
+      switch (outcome) {
+        case _RefreshOutcome.success:
+          final nextToken = await _secureStorage.getAuthToken();
+          if (nextToken == null || nextToken.isEmpty) rethrow;
+          return await request(nextToken);
+        case _RefreshOutcome.blocked:
+          throw const SyncApiException(
+            'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+            403,
+            [],
+            'account_blocked',
+          );
+        case _RefreshOutcome.invalid:
+          rethrow;
+        case _RefreshOutcome.unavailable:
+          throw const SyncApiException(
+            'Impossibile rinnovare la sessione: server non raggiungibile',
+            503,
+            [],
+            'refresh_unavailable',
+          );
+      }
+    }
+  }
+
   /// Prima di un upload grosso con un token che sembra scaduto, verifica il
   /// token con una richiesta leggera (GET impostazioni) invece di spedire
   /// megabyte per ricevere un 401. Un 401 viene rilanciato (è la sessione
   /// scaduta, gestita dal chiamante); se il server risponde bene l'orologio del
   /// dispositivo è sfasato e si prosegue; ogni altro errore (rete) non decide
   /// nulla: si procede con la sync normale, che ha già i suoi ritentativi.
-  Future<void> _verifyTokenBeforeLargeUpload(
-      String token, List<NoteRow> dirtyNotes) async {
+  Future<void> _verifyTokenBeforeLargeUpload(List<NoteRow> dirtyNotes) async {
     var chars = 0;
     for (final n in dirtyNotes) {
       chars += n.content.length;
     }
     if (chars < _largeUploadChars || !await _tokenLooksExpired()) return;
     try {
-      await _apiService.getUserSettings(baseUrl: state.serverUrl, token: token);
+      await _authorizedRequest(
+        (token) => _withNetworkRetry(
+          () => _apiService.getUserSettings(
+            baseUrl: state.serverUrl,
+            token: token,
+          ),
+        ),
+      );
       // Il token è valido: l'orologio locale è sbagliato. Non si ripete il controllo.
       await _clearTokenExpiry();
     } on SyncApiException catch (e) {
@@ -752,6 +879,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         }
         if (!_isCurrentSession(generation)) return false;
 
+        // Prima il refresh token, poi l'access token: se il processo muore
+        // fra le due scritture, il refresh resta utilizzabile al riavvio.
+        await _secureStorage.saveRefreshToken(response.refreshToken);
         await _secureStorage.saveAuthToken(response.token);
         await _secureStorage.saveServerUrl(serverUrl);
         await _secureStorage.saveUsername(response.username);
@@ -805,12 +935,55 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
     // Revoca il token anche lato server (best effort, non lancia): senza
     // questo il JWT resterebbe valido fino a scadenza anche dopo il logout.
+    // Il refresh token permette al server di chiudere la famiglia anche se
+    // l'access token è già scaduto.
     final token = await _secureStorage.getAuthToken();
+    final refreshToken = await _secureStorage.getRefreshToken();
     final url = state.serverUrl;
     if (token != null && token.isNotEmpty && url.isNotEmpty) {
-      await _apiService.logout(baseUrl: url, token: token);
+      await _apiService.logout(
+        baseUrl: url,
+        token: token,
+        refreshToken: refreshToken,
+      );
     }
 
+    await _finishLogout(generation);
+  }
+
+  /// Chiude tutte le sessioni dell'utente, su ogni dispositivo. Prova prima
+  /// la revoca lato server (con refresh automatico se l'access token è
+  /// scaduto), poi chiude comunque la sessione locale.
+  Future<bool> logoutAllDevices() async {
+    final generation = _sessionGeneration;
+    _ref.read(settingsProvider.notifier).discardPendingPush();
+    _inactivityTimer?.cancel();
+    _noteSwitchDebounceTimer?.cancel();
+    _folderStructureDebounceTimer?.cancel();
+    _stopConnectivityWatchdog();
+
+    final url = state.serverUrl;
+    var revoked = false;
+    if (url.isNotEmpty) {
+      try {
+        revoked = await _authorizedRequest(
+          (token) => _apiService.logoutAll(baseUrl: url, token: token),
+        );
+      } catch (_) {
+        // La sessione locale viene chiusa comunque: l'utente ha chiesto di
+        // uscire. Il chiamante usa `revoked` per distinguere l'avviso.
+      }
+    }
+
+    // Un login partito durante la revoca ha la precedenza: non cancellare le
+    // sue credenziali.
+    if (!_isCurrentSession(generation)) return revoked;
+    final endedGeneration = ++_sessionGeneration;
+    await _finishLogout(endedGeneration);
+    return revoked;
+  }
+
+  Future<void> _finishLogout(int generation) async {
     // Se nel frattempo è partito un nuovo login, non cancellare le sue
     // credenziali appena scritte: la sessione nuova vince.
     await _withSessionWriteLock(() async {
@@ -1105,17 +1278,6 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       return false;
     }
 
-    final token = await _secureStorage.getAuthToken();
-    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
-      return false;
-    }
-    if (token == null || token.isEmpty) {
-      if (mounted) {
-        state = state.copyWith(isAuthenticated: false, isSyncing: false);
-      }
-      return false;
-    }
-
     try {
       // Vero se _repairRejected ha modificato righe nel DB locale: lo stato in
       // memoria non lo sa, quindi serve rileggere dal DB a fine giro.
@@ -1137,20 +1299,22 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
         // Y-13-A: con un upload grosso e un token che sembra scaduto, prima si
         // verifica il token (un 401 arriva dal catch esterno, come sempre).
-        await _verifyTokenBeforeLargeUpload(token, dirtyNotes);
+        await _verifyTokenBeforeLargeUpload(dirtyNotes);
         if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
           return false;
         }
 
         final SyncResponse response;
         try {
-          response = await _withNetworkRetry(
-            () => _apiService.sync(
-              baseUrl: serverUrl,
-              token: token,
-              lastSyncedAt: cursor,
-              folders: dirtyFolders.map(_toFolderDto).toList(),
-              notes: dirtyNotes.map(_toNoteDto).toList(),
+          response = await _authorizedRequest(
+            (token) => _withNetworkRetry(
+              () => _apiService.sync(
+                baseUrl: serverUrl,
+                token: token,
+                lastSyncedAt: cursor,
+                folders: dirtyFolders.map(_toFolderDto).toList(),
+                notes: dirtyNotes.map(_toNoteDto).toList(),
+              ),
             ),
           );
         } on SyncApiException catch (e) {
@@ -1410,17 +1574,16 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!state.isAuthenticated) return;
     final generation = _sessionGeneration;
     final serverUrl = state.serverUrl;
-    final token = await _secureStorage.getAuthToken();
-    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) return;
-    if (token == null) return;
 
     final mark = _reachabilityMark();
     final settingsRevision = _ref.read(settingsProvider.notifier).revision;
     try {
-      final remoteSettings = await _withNetworkRetry(
-        () => _apiService.getUserSettings(
-          baseUrl: serverUrl,
-          token: token,
+      final remoteSettings = await _authorizedRequest(
+        (token) => _withNetworkRetry(
+          () => _apiService.getUserSettings(
+            baseUrl: serverUrl,
+            token: token,
+          ),
         ),
       );
       if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
@@ -1472,18 +1635,15 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!state.isAuthenticated) return false;
     final generation = _sessionGeneration;
     final serverUrl = state.serverUrl;
-    final token = await _secureStorage.getAuthToken();
-    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
-      return false;
-    }
-    if (token == null) return false;
 
     try {
-      await _withNetworkRetry(
-        () => _apiService.updateUserSettings(
-          baseUrl: serverUrl,
-          token: token,
-          settings: settings,
+      await _authorizedRequest(
+        (token) => _withNetworkRetry(
+          () => _apiService.updateUserSettings(
+            baseUrl: serverUrl,
+            token: token,
+            settings: settings,
+          ),
         ),
       );
       return _isCurrentSession(generation) && serverUrl == state.serverUrl;

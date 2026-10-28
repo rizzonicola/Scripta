@@ -23,6 +23,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// degrado silenzioso della sicurezza.
 class SecureStorageService {
   static const _tokenKey = 'inkflow_jwt_token';
+  static const _refreshTokenKey = 'inkflow_refresh_token';
   static const _serverUrlKey = 'inkflow_server_url';
   static const _usernameKey = 'inkflow_username';
   static const _userIdKey = 'inkflow_user_id';
@@ -92,6 +93,10 @@ class SecureStorageService {
   /// scrittura (build non firmate). Mai persistito.
   static String? _memoryOnlyToken;
 
+  /// Stessa rete di sicurezza per il refresh token: senza Keychain resta
+  /// valido solo per la sessione corrente.
+  static String? _memoryOnlyRefreshToken;
+
   Future<void> saveAuthToken(String token) async {
     try {
       await _storage.write(key: _tokenKey, value: token);
@@ -132,6 +137,42 @@ class SecureStorageService {
     return _fallbackEnabled ? _memoryOnlyToken : null;
   }
 
+  Future<void> saveRefreshToken(String token) async {
+    if (token.isEmpty) {
+      await clearRefreshToken();
+      return;
+    }
+    try {
+      await _storage.write(key: _refreshTokenKey, value: token);
+      _memoryOnlyRefreshToken = null;
+    } catch (e) {
+      if (!_fallbackEnabled) rethrow;
+      debugPrint(
+          'SecureStorage: Keychain non disponibile ($e): refresh token solo in memoria.');
+      _memoryOnlyRefreshToken = token;
+      try {
+        await _storage.delete(key: _refreshTokenKey);
+      } catch (_) {}
+    }
+  }
+
+  Future<String?> getRefreshToken() async {
+    final memoryToken = _memoryOnlyRefreshToken;
+    if (memoryToken != null && memoryToken.isNotEmpty) return memoryToken;
+    try {
+      final value = await _storage.read(key: _refreshTokenKey);
+      if (value != null) return value;
+    } catch (e) {
+      if (!_fallbackEnabled) rethrow;
+    }
+    return _fallbackEnabled ? _memoryOnlyRefreshToken : null;
+  }
+
+  Future<void> clearRefreshToken() async {
+    _memoryOnlyRefreshToken = null;
+    await _delete(_refreshTokenKey);
+  }
+
   Future<void> saveServerUrl(String url) => _write(_serverUrlKey, url.trim());
 
   Future<String?> getServerUrl() => _read(_serverUrlKey);
@@ -147,7 +188,9 @@ class SecureStorageService {
 
   Future<void> clearAuth() async {
     _memoryOnlyToken = null;
+    _memoryOnlyRefreshToken = null;
     await _delete(_tokenKey);
+    await _delete(_refreshTokenKey);
     await _delete(_usernameKey);
     await _delete(_userIdKey);
     // Keep serverUrl for user convenience unless explicitly cleared

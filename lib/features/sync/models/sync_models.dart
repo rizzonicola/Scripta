@@ -25,7 +25,8 @@ class FolderChangeDto {
         'deleted_at': deletedAt,
       };
 
-  factory FolderChangeDto.fromJson(Map<String, dynamic> json) => FolderChangeDto(
+  factory FolderChangeDto.fromJson(Map<String, dynamic> json) =>
+      FolderChangeDto(
         id: json['id'] as String? ?? '',
         name: json['name'] as String? ?? '',
         parentId: json['parent_id'] as String?,
@@ -135,9 +136,11 @@ class SyncRejectedItem {
   final String id;
   final String reason; // es. "invalid_folder_id", "invalid_parent_id"
 
-  const SyncRejectedItem({required this.kind, required this.id, required this.reason});
+  const SyncRejectedItem(
+      {required this.kind, required this.id, required this.reason});
 
-  factory SyncRejectedItem.fromJson(Map<String, dynamic> json) => SyncRejectedItem(
+  factory SyncRejectedItem.fromJson(Map<String, dynamic> json) =>
+      SyncRejectedItem(
         kind: json['kind']?.toString() ?? '',
         id: json['id']?.toString() ?? '',
         reason: json['reason']?.toString() ?? '',
@@ -162,7 +165,8 @@ class ServerCaps {
     json.forEach((key, value) {
       if (value is bool) flags[key] = value;
     });
-    return ServerCaps(proto: (json['proto'] as num?)?.toInt() ?? 1, flags: flags);
+    return ServerCaps(
+        proto: (json['proto'] as num?)?.toInt() ?? 1, flags: flags);
   }
 
   /// true solo se il server dichiara esplicitamente la funzione.
@@ -242,7 +246,8 @@ class UserSettingsDto {
         if (updatedAt != null) 'updated_at': updatedAt,
       };
 
-  factory UserSettingsDto.fromJson(Map<String, dynamic> json) => UserSettingsDto(
+  factory UserSettingsDto.fromJson(Map<String, dynamic> json) =>
+      UserSettingsDto(
         theme: json['theme'] as String? ?? 'system',
         colorScheme: json['color_scheme'] as String? ?? 'dark_teal',
         language: json['language'] as String? ?? 'it',
@@ -259,23 +264,33 @@ class UserSettingsDto {
       UserSettingsDto.fromJson(json.decode(source) as Map<String, dynamic>);
 }
 
-/// DTO for POST /api/v1/auth/login response
+/// DTO for POST /api/v1/auth/login and POST /api/v1/auth/refresh.
+///
+/// [refreshToken]/[refreshExpiresAt] are additive: an older server that does
+/// not return them still produces a valid (access-token-only) response.
 class LoginResponseDto {
   final String token;
   final int expiresAt;
+  final String refreshToken;
+  final int refreshExpiresAt;
   final String userId;
   final String username;
 
   const LoginResponseDto({
     required this.token,
     required this.expiresAt,
+    this.refreshToken = '',
+    this.refreshExpiresAt = 0,
     required this.userId,
     required this.username,
   });
 
-  factory LoginResponseDto.fromJson(Map<String, dynamic> json) => LoginResponseDto(
+  factory LoginResponseDto.fromJson(Map<String, dynamic> json) =>
+      LoginResponseDto(
         token: json['token'] as String? ?? '',
         expiresAt: (json['expires_at'] as num?)?.toInt() ?? 0,
+        refreshToken: json['refresh_token'] as String? ?? '',
+        refreshExpiresAt: (json['refresh_expires_at'] as num?)?.toInt() ?? 0,
         userId: json['user_id'] as String? ?? '',
         username: json['username'] as String? ?? '',
       );
