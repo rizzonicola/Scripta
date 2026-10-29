@@ -469,6 +469,38 @@ void main() {
       },
     );
 
+    test(
+      'il resume durante una sync riattiva il watchdog di connettività',
+      () async {
+        final server = _FakeServer()..firstSyncGate = Completer<void>();
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
+
+        final login = loginFuture(notifier);
+        await server.firstSyncReceived.future.timeout(
+          const Duration(seconds: 10),
+        );
+        expect(container.read(syncProvider).isSyncing, isTrue);
+        expect(notifier.hasConnectivityWatchdog, isTrue);
+
+        notifier.onAppPaused();
+        expect(notifier.hasConnectivityWatchdog, isFalse);
+
+        notifier.onAppResumed();
+        expect(
+          notifier.hasConnectivityWatchdog,
+          isTrue,
+          reason:
+              'il resume deve riattivare il polling anche con sync in corso',
+        );
+
+        server.firstSyncGate!.complete();
+        expect(await login, isTrue);
+        expect(notifier.hasConnectivityWatchdog, isTrue);
+      },
+    );
+
     test('dopo una sync fallita non si insiste con giri di recupero', () async {
       final server = _FakeServer()
         ..firstSyncGate = Completer<void>()

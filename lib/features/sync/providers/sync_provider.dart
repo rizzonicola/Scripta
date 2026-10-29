@@ -593,6 +593,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _connectivityTimer = null;
   }
 
+  @visibleForTesting
+  bool get hasConnectivityWatchdog => _connectivityTimer != null;
+
   /// L'account è stato bloccato dall'amministratore. Il server risponde 403
   /// con un codice stabile: non va confuso con un 401 (sessione scaduta) né
   /// con un 429 (rate limit temporaneo).
@@ -1122,13 +1125,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// immediately so the status indicator doesn't show stale information
   /// after the device was asleep, on a different network, etc.
   void onAppResumed() {
-    if (state.isAuthenticated && !state.isSyncing) {
+    if (!state.isAuthenticated) return;
+    // Il watchdog va riattivato anche se una sync è ancora in corso: altrimenti
+    // il polling resterebbe fermo fino al prossimo login/resume. Il controllo
+    // immediato, invece, si salta per non sovrapporre un health check alla sync.
+    if (!state.isSyncing) {
       unawaited(checkConnection());
-      // Riavvia il poll periodico messo in pausa da onAppPaused (annulla
-      // internamente eventuali timer residui, quindi è sicuro anche se non
-      // era mai stato fermato).
-      _startConnectivityWatchdog();
     }
+    // Riavvia il poll periodico messo in pausa da onAppPaused (annulla
+    // internamente eventuali timer residui, quindi è sicuro anche se non
+    // era mai stato fermato).
+    _startConnectivityWatchdog();
   }
 
   FolderChangeDto _toFolderDto(FolderRow r) => FolderChangeDto(
