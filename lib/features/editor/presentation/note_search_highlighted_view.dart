@@ -53,6 +53,15 @@ class _NoteSearchHighlightedViewState
   final GlobalKey _activeMatchKey = GlobalKey();
   final ScrollController _scrollController = ScrollController();
   TextRange? _lastScrolledToMatch;
+  _SearchSpansCache? _spansCache;
+
+  String? _cachedTopText;
+  TextRange? _cachedTopRange;
+  TextStyle? _cachedTopStyle;
+  double? _cachedTopWidth;
+  TextDirection? _cachedTopDirection;
+  TextScaler? _cachedTopScaler;
+  double? _cachedTop;
 
   @override
   void dispose() {
@@ -97,18 +106,38 @@ class _NoteSearchHighlightedViewState
     required double maxWidth,
   }) {
     if (activeMatch == null || text.isEmpty || maxWidth <= 0) return null;
+
+    final textDirection = Directionality.of(context);
+    final textScaler = MediaQuery.textScalerOf(context);
+    if (identical(_cachedTopText, text) &&
+        _cachedTopRange == activeMatch &&
+        _cachedTopStyle == style &&
+        _cachedTopWidth == maxWidth &&
+        _cachedTopDirection == textDirection &&
+        _cachedTopScaler == textScaler) {
+      return _cachedTop;
+    }
+
     final start = activeMatch.start.clamp(0, text.length);
     final painter = TextPainter(
       text: TextSpan(text: text, style: style),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
+      textDirection: textDirection,
+      textScaler: textScaler,
     )..layout(maxWidth: maxWidth);
     final offset = painter.getOffsetForCaret(
       TextPosition(offset: start),
       Rect.zero,
     );
     painter.dispose();
-    return offset.dy;
+
+    _cachedTopText = text;
+    _cachedTopRange = activeMatch;
+    _cachedTopStyle = style;
+    _cachedTopWidth = maxWidth;
+    _cachedTopDirection = textDirection;
+    _cachedTopScaler = textScaler;
+    _cachedTop = offset.dy;
+    return _cachedTop;
   }
 
   @override
@@ -142,42 +171,28 @@ class _NoteSearchHighlightedViewState
     const activeHighlight = Color(0xFFFB923C); // Orange 400, alto contrasto
 
     final text = widget.content;
-    final spans = <InlineSpan>[];
-    var cursor = 0;
-
-    for (var i = 0; i < matches.length; i++) {
-      final range = matches[i];
-      final start = range.start.clamp(0, text.length);
-      final end = range.end.clamp(start, text.length);
-      if (start >= end) continue;
-
-      if (start > cursor) {
-        spans.add(
-          TextSpan(text: text.substring(cursor, start), style: baseStyle),
-        );
-      }
-
-      final matchText = text.substring(start, end);
-      // NIENTE WidgetSpan: Flutter lo appiattisce a U+FFFC quando il testo
-      // viene copiato. L'evidenziazione della occorrenza attiva è un normale
-      // TextSpan; la posizione per lo scroll è calcolata sotto col TextPainter
-      // e materializzata in un anchor invisibile fuori dalla selezione.
-      spans.add(
-        TextSpan(
-          text: matchText,
-          style: baseStyle.copyWith(
-            backgroundColor: i == activeIndex
-                ? activeHighlight
-                : normalHighlight,
-            color: i == activeIndex ? Colors.black : null,
-          ),
-        ),
+    final cache = _spansCache;
+    if (cache == null ||
+        !cache.canReuse(
+          text: text,
+          matches: matches,
+          baseStyle: baseStyle,
+          normalHighlight: normalHighlight,
+          activeHighlight: activeHighlight,
+        )) {
+      _spansCache = _SearchSpansCache(
+        text: text,
+        matches: matches,
+        baseStyle: baseStyle,
+        normalHighlight: normalHighlight,
+        activeHighlight: activeHighlight,
       );
-      cursor = end;
     }
-    if (cursor < text.length) {
-      spans.add(TextSpan(text: text.substring(cursor), style: baseStyle));
-    }
+    // NIENTE WidgetSpan: Flutter lo appiattisce a U+FFFC quando il testo
+    // viene copiato. L'evidenziazione della occorrenza attiva è un normale
+    // TextSpan; la posizione per lo scroll è calcolata sotto col TextPainter
+    // e materializzata in un anchor invisibile fuori dalla selezione.
+    final spans = _spansCache!.build(activeIndex);
 
     final hasTitle = widget.title.trim().isNotEmpty;
 
@@ -240,6 +255,114 @@ class _NoteSearchHighlightedViewState
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SearchSpansCache {
+  _SearchSpansCache({
+    required this.text,
+    required this.matches,
+    required this.baseStyle,
+    required this.normalHighlight,
+    required this.activeHighlight,
+  }) {
+    var cursor = 0;
+    for (var i = 0; i < matches.length; i++) {
+      final range = matches[i];
+      final start = range.start.clamp(0, text.length);
+      final end = range.end.clamp(start, text.length);
+      if (start >= end) continue;
+
+      if (start > cursor) {
+        _segments.add(
+          _SearchSegment.plain(text.substring(cursor, start), baseStyle),
+        );
+      }
+      _segments.add(
+        _SearchSegment.match(
+          text.substring(start, end),
+          baseStyle,
+          normalHighlight,
+          activeHighlight,
+          i,
+        ),
+      );
+      cursor = end;
+    }
+    if (cursor < text.length) {
+      _segments.add(_SearchSegment.plain(text.substring(cursor), baseStyle));
+    }
+  }
+
+  final String text;
+  final List<TextRange> matches;
+  final TextStyle baseStyle;
+  final Color normalHighlight;
+  final Color activeHighlight;
+  final List<_SearchSegment> _segments = <_SearchSegment>[];
+
+  bool canReuse({
+    required String text,
+    required List<TextRange> matches,
+    required TextStyle baseStyle,
+    required Color normalHighlight,
+    required Color activeHighlight,
+  }) {
+    return identical(this.text, text) &&
+        identical(this.matches, matches) &&
+        this.baseStyle == baseStyle &&
+        this.normalHighlight == normalHighlight &&
+        this.activeHighlight == activeHighlight;
+  }
+
+  List<InlineSpan> build(int activeIndex) {
+    final spans = <InlineSpan>[];
+    for (final segment in _segments) {
+      spans.add(segment.spanFor(activeIndex));
+    }
+    return spans;
+  }
+}
+
+class _SearchSegment {
+  _SearchSegment.plain(String text, TextStyle style)
+    : _text = text,
+      _style = style,
+      _matchIndex = -1,
+      _activeHighlight = null,
+      _normalSpan = TextSpan(text: text, style: style),
+      _activeSpan = null;
+
+  _SearchSegment.match(
+    String text,
+    TextStyle style,
+    Color normalHighlight,
+    this._activeHighlight,
+    this._matchIndex,
+  ) : _text = text,
+      _style = style,
+      _normalSpan = TextSpan(
+        text: text,
+        style: style.copyWith(backgroundColor: normalHighlight),
+      ),
+      _activeSpan = null;
+
+  final String _text;
+  final TextStyle _style;
+  final int _matchIndex;
+  final Color? _activeHighlight;
+  final TextSpan _normalSpan;
+  TextSpan? _activeSpan;
+
+  TextSpan spanFor(int activeIndex) {
+    if (_matchIndex < 0 || _matchIndex != activeIndex) return _normalSpan;
+    return _activeSpan ??= TextSpan(
+      text: _text,
+      style: _style.copyWith(
+        backgroundColor: _activeHighlight,
+        color: Colors.black,
       ),
     );
   }

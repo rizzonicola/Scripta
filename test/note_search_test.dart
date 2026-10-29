@@ -72,6 +72,18 @@ void main() {
     expect(container.read(activeNoteSearchMatchProvider), isNull);
   });
 
+  test('la nota in minuscolo non viene ricalcolata al cambio query', () {
+    final container = _container('Testo con TESTO');
+    final notifier = container.read(noteSearchProvider.notifier);
+
+    final before = container.read(noteSearchLowerContentProvider);
+    notifier.setQuery('testo');
+    final after = container.read(noteSearchLowerContentProvider);
+
+    expect(identical(before, after), isTrue);
+    expect(container.read(noteSearchMatchesProvider), hasLength(2));
+  });
+
   test('cambiare query riparte dalla prima occorrenza', () {
     final container = _container('alfa beta alfa beta');
     final notifier = container.read(noteSearchProvider.notifier);

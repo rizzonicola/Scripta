@@ -87,14 +87,24 @@ final noteSearchProvider =
 /// rispetto a qualunque reale utilità di navigazione.
 const int _maxNoteSearchMatches = 2000;
 
+/// Contenuto della nota attiva già normalizzato in minuscolo.
+///
+/// Separato da [noteSearchMatchesProvider] perché quest'ultimo dipende anche
+/// dalla query: senza questa cache intermedia ogni carattere digitato nel
+/// campo di ricerca riconvertirebbe in minuscolo l'intera nota, anche se il
+/// contenuto non è cambiato.
+final noteSearchLowerContentProvider = Provider<String>((ref) {
+  final content = ref.watch(activeNoteProvider.select((n) => n?.content ?? ''));
+  return content.isEmpty ? '' : content.toLowerCase();
+});
+
 final noteSearchMatchesProvider = Provider<List<TextRange>>((ref) {
   final query = ref.watch(noteSearchProvider.select((s) => s.query)).trim();
   if (query.isEmpty) return const [];
 
-  final content = ref.watch(activeNoteProvider.select((n) => n?.content ?? ''));
-  if (content.isEmpty) return const [];
+  final lowerContent = ref.watch(noteSearchLowerContentProvider);
+  if (lowerContent.isEmpty) return const [];
 
-  final lowerContent = content.toLowerCase();
   final lowerQuery = query.toLowerCase();
 
   final matches = <TextRange>[];
