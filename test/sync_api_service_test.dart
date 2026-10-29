@@ -70,6 +70,41 @@ void main() {
       );
     });
 
+    test(
+      'logout uses the shared headers and conditional refresh body',
+      () async {
+        final requests = <http.Request>[];
+        final client = MockClient((request) async {
+          requests.add(request);
+          return http.Response('', 200);
+        });
+        final service = SyncApiService(client);
+
+        await service.logout(
+          baseUrl: 'http://localhost:8080',
+          token: 'token123',
+          refreshToken: 'refresh-1',
+        );
+        await service.logout(
+          baseUrl: 'http://localhost:8080',
+          token: 'token123',
+        );
+
+        expect(requests, hasLength(2));
+        for (final request in requests) {
+          expect(request.headers['authorization'], 'Bearer token123');
+          expect(
+            request.headers['x-scripta-client'],
+            SyncApiService.clientHeaderValue,
+          );
+        }
+        expect(requests[0].headers['content-type'], 'application/json');
+        expect(json.decode(requests[0].body), {'refresh_token': 'refresh-1'});
+        expect(requests[1].headers.containsKey('content-type'), isFalse);
+        expect(requests[1].body, isEmpty);
+      },
+    );
+
     test('getUserSettings and updateUserSettings work properly', () async {
       final client = MockClient((request) async {
         if (request.url.path == '/api/v1/user/settings') {

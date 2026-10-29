@@ -130,6 +130,16 @@ class SyncApiService {
   static const Duration _settingsTimeout = Duration(seconds: 10);
   static const Duration _logoutTimeout = Duration(seconds: 5);
 
+  /// Header comuni a tutti gli endpoint, incluso `logout`: il client header è
+  /// solo diagnostica lato server, non un dato di autenticazione, quindi non
+  /// c'è motivo di ometterlo su un endpoint e inviarlo sugli altri.
+  static Map<String, String> _headers({String? token, String? contentType}) {
+    final headers = <String, String>{'X-Scripta-Client': clientHeaderValue};
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    if (contentType != null) headers['Content-Type'] = contentType;
+    return headers;
+  }
+
   static const String connectionErrorMessage =
       'Impossibile connettersi al server';
   static const String connectionErrorHintMessage =
@@ -266,10 +276,7 @@ class SyncApiService {
       response = await _client
           .post(
             uri,
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Scripta-Client': clientHeaderValue,
-            },
+            headers: _headers(contentType: 'application/json'),
             body: json.encode({'username': username, 'password': password}),
           )
           .timeout(_authTimeout);
@@ -353,10 +360,7 @@ class SyncApiService {
       response = await _client
           .post(
             uri,
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Scripta-Client': clientHeaderValue,
-            },
+            headers: _headers(contentType: 'application/json'),
             body: json.encode({'refresh_token': refreshToken}),
           )
           .timeout(_authTimeout);
@@ -394,10 +398,10 @@ class SyncApiService {
       await _client
           .post(
             Uri.parse('$clean/api/v1/auth/logout'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              if (hasRefresh) 'Content-Type': 'application/json',
-            },
+            headers: _headers(
+              token: token,
+              contentType: hasRefresh ? 'application/json' : null,
+            ),
             body: hasRefresh
                 ? json.encode({'refresh_token': refreshToken})
                 : null,
@@ -420,10 +424,7 @@ class SyncApiService {
       final response = await _client
           .post(
             Uri.parse('$clean/api/v1/auth/logout-all'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'X-Scripta-Client': clientHeaderValue,
-            },
+            headers: _headers(token: token),
           )
           .timeout(_authTimeout);
       return response.statusCode == 200;
@@ -443,10 +444,7 @@ class SyncApiService {
     final response = await _client
         .get(
           uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
+          headers: _headers(token: token, contentType: 'application/json'),
         )
         .timeout(_settingsTimeout);
 
@@ -469,10 +467,7 @@ class SyncApiService {
     final response = await _client
         .put(
           uri,
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
+          headers: _headers(token: token, contentType: 'application/json'),
           body: json.encode(settings.toJson()),
         )
         .timeout(_settingsTimeout);
@@ -507,12 +502,15 @@ class SyncApiService {
     );
     final requestBody = await _encodeSyncBody(payload);
 
-    final response = await _postWithProgressTimeout(uri, {
-      'Authorization': 'Bearer $token',
-      // charset esplicito: è ciò che `http.post(body: String)` inviava già.
-      'Content-Type': 'application/json; charset=utf-8',
-      'X-Scripta-Client': clientHeaderValue,
-    }, const Utf8Encoder().convert(requestBody));
+    final response = await _postWithProgressTimeout(
+      uri,
+      _headers(
+        token: token,
+        // charset esplicito: è ciò che `http.post(body: String)` inviava già.
+        contentType: 'application/json; charset=utf-8',
+      ),
+      const Utf8Encoder().convert(requestBody),
+    );
 
     if (response.statusCode == 200) {
       return _decodeSyncResponse(response);
