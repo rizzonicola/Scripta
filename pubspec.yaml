@@ -68,6 +68,11 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 dependency_overrides:
+  # Pin mantenuti finché le rispettive major/minor non sono verificate in una
+  # build RELEASE su dispositivo: path_provider_android 2.3.0 passa a JNI
+  # (stessa area del blocco shared_preferences_android sotto) e
+  # url_launcher_android 6.3.30 passa a Kotlin Pigeon. La compilazione da sola
+  # non basta a escludere il NoSuchMethodError su kotlin.coroutines.Continuation.
   path_provider_android: 2.2.15
   url_launcher_android: 6.3.14
 
