@@ -55,7 +55,8 @@ SingleActivator _primary(
 /// mentre si scrive nell'editor, e prima ricostruiva da zero tutti gli
 /// attivatori di tutti i comandi a ogni battitura. La piattaforma non cambia
 /// a runtime, quindi la cache non può diventare obsoleta.
-List<SingleActivator> activatorsFor(AppCommand command) => _activatorCache[command]!;
+List<SingleActivator> activatorsFor(AppCommand command) =>
+    _activatorCache[command]!;
 
 final Map<AppCommand, List<SingleActivator>> _activatorCache = {
   for (final command in AppCommand.values)

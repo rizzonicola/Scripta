@@ -88,12 +88,10 @@ final noteSearchProvider =
 const int _maxNoteSearchMatches = 2000;
 
 final noteSearchMatchesProvider = Provider<List<TextRange>>((ref) {
-  final query =
-      ref.watch(noteSearchProvider.select((s) => s.query)).trim();
+  final query = ref.watch(noteSearchProvider.select((s) => s.query)).trim();
   if (query.isEmpty) return const [];
 
-  final content =
-      ref.watch(activeNoteProvider.select((n) => n?.content ?? ''));
+  final content = ref.watch(activeNoteProvider.select((n) => n?.content ?? ''));
   if (content.isEmpty) return const [];
 
   final lowerContent = content.toLowerCase();
@@ -146,7 +144,8 @@ final activeNoteSearchMatchProvider = Provider<TextRange?>((ref) {
 /// essere applicati atomicamente insieme.
 typedef NoteSearchHighlightData = (List<TextRange>, int);
 
-final noteSearchHighlightDataProvider = Provider<NoteSearchHighlightData>((ref) {
+final noteSearchHighlightDataProvider =
+    Provider<NoteSearchHighlightData>((ref) {
   final matches = ref.watch(noteSearchMatchesProvider);
   final activeIndex = ref.watch(noteSearchActiveMatchIndexProvider);
   return (matches, activeIndex);

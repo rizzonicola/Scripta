@@ -42,5 +42,6 @@ class AppConstants {
   static const String prefSessionEditorMode = 'scripta_session_editor_mode';
   static const String prefSessionFolderId = 'scripta_session_folder_id';
   static const String prefSessionNoteId = 'scripta_session_note_id';
-  static const String prefSessionMobileEditorOpen = 'scripta_session_mobile_editor_open';
+  static const String prefSessionMobileEditorOpen =
+      'scripta_session_mobile_editor_open';
 }

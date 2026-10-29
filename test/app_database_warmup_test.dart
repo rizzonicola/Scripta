@@ -52,9 +52,12 @@ void main() {
     expect(identical(opened, await AppDatabase.instance.db), isTrue);
   });
 
-  test('warmUp avvia davvero l\'apertura: il file compare senza altre richieste di `db`', () async {
+  test(
+      'warmUp avvia davvero l\'apertura: il file compare senza altre richieste di `db`',
+      () async {
     final path = AppDatabase.debugDatabasePathOverride!;
-    expect(File(path).existsSync(), isFalse, reason: 'premessa: nessuno ha ancora aperto il database');
+    expect(File(path).existsSync(), isFalse,
+        reason: 'premessa: nessuno ha ancora aperto il database');
 
     await AppDatabase.instance.warmUp();
 
@@ -71,10 +74,13 @@ void main() {
     expect(tables.map((r) => r['name']).toSet(), {'notes', 'folders'});
   });
 
-  test('un errore di apertura anticipata non lancia e non blocca il tentativo successivo', () async {
+  test(
+      'un errore di apertura anticipata non lancia e non blocca il tentativo successivo',
+      () async {
     // Un file che NON è un database: l'apertura fallisce al primo PRAGMA
     // ("file is not a database"), su ogni piattaforma.
-    final broken = File(newDbPath('rotto.db'))..writeAsStringSync('questo non è un database sqlite' * 20);
+    final broken = File(newDbPath('rotto.db'))
+      ..writeAsStringSync('questo non è un database sqlite' * 20);
     AppDatabase.debugDatabasePathOverride = broken.path;
 
     // L'apertura anticipata NON deve lanciare.

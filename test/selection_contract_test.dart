@@ -333,13 +333,15 @@ void main() {
 
           // Molto spazio sopra l'ancora (rispetto allo schermo): la toolbar sta
           // SOPRA l'ancora primaria, anche se cosi' esce dal "viewport" (y<300).
-          final above = await place(const Offset(200, 310), const Offset(200, 360));
+          final above =
+              await place(const Offset(200, 310), const Offset(200, 360));
           expect(above.bottom, lessThanOrEqualTo(310.0));
           expect(above.top, lessThan(300.0));
 
           // Ancora vicina al bordo ALTO DELLO SCHERMO: non c'e' spazio sopra e
           // la toolbar passa SOTTO l'ancora secondaria.
-          final below = await place(const Offset(200, 20), const Offset(200, 70));
+          final below =
+              await place(const Offset(200, 20), const Offset(200, 70));
           expect(below.top, greaterThanOrEqualTo(70.0));
         });
       },

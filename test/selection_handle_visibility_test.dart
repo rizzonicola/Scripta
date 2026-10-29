@@ -116,7 +116,8 @@ Future<void> _withHandles(
 void main() {
   const viewport = Rect.fromLTWH(0, 0, 400, 800);
 
-  testWidgets('nessuna maniglia nel root overlay: elenco vuoto', (tester) async {
+  testWidgets('nessuna maniglia nel root overlay: elenco vuoto',
+      (tester) async {
     await _withHandles(
       tester,
       handles: const [],
@@ -209,7 +210,8 @@ void main() {
     );
   });
 
-  testWidgets('opacità parziale (dissolvenza in corso): dipinta', (tester) async {
+  testWidgets('opacità parziale (dissolvenza in corso): dipinta',
+      (tester) async {
     final link = LayerLink();
     await _withHandles(
       tester,

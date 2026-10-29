@@ -76,10 +76,8 @@ class AppTheme {
           ? palette.surfaceElevated
           : palette.surface,
       elevation: 4,
-      shadowColor:
-          Colors.black.withValues(alpha: palette.brightness == Brightness.dark
-              ? 0.24
-              : 0.08),
+      shadowColor: Colors.black.withValues(
+          alpha: palette.brightness == Brightness.dark ? 0.24 : 0.08),
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),

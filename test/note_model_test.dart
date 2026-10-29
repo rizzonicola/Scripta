@@ -22,7 +22,8 @@ void main() {
       expect(_note('  spazi ai bordi  ').wordCount, 3);
     });
 
-    test('riconosce gli stessi spazi di \\s (spazio non separabile incluso)', () {
+    test('riconosce gli stessi spazi di \\s (spazio non separabile incluso)',
+        () {
       expect(_note('a\u00a0b').wordCount, 2);
       expect(_note('a\u2003b\u3000c').wordCount, 3);
     });
@@ -35,7 +36,8 @@ void main() {
         '\n\nsolo a capo e una parola\n\n',
       ];
       for (final text in samples) {
-        final expected = text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\s+')).length;
+        final expected =
+            text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\s+')).length;
         expect(_note(text).wordCount, expected, reason: text);
       }
     });

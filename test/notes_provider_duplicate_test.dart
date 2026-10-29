@@ -12,7 +12,8 @@ void main() {
   });
 
   group('NotesNotifier.duplicateNote', () {
-    test('copies content and folder, appends suffix, activates the copy', () async {
+    test('copies content and folder, appends suffix, activates the copy',
+        () async {
       final notifier = NotesNotifier(dao: FakeNotesDao());
       await Future<void>.delayed(Duration.zero);
 

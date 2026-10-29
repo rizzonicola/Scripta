@@ -21,7 +21,9 @@ void main() {
       expect(value, 42);
     });
 
-    test('timeAsync esegue la funzione una sola volta e subito (in modo sincrono)', () async {
+    test(
+        'timeAsync esegue la funzione una sola volta e subito (in modo sincrono)',
+        () async {
       var calls = 0;
       final future = PerfMarks.timeAsync('test.una_volta', () async {
         calls++;
@@ -38,7 +40,8 @@ void main() {
       final gate = Completer<String>();
       var done = false;
 
-      final result = PerfMarks.timeAsync('test.attesa', () => gate.future).then((v) {
+      final result =
+          PerfMarks.timeAsync('test.attesa', () => gate.future).then((v) {
         done = true;
         return v;
       });
@@ -59,7 +62,8 @@ void main() {
       );
     });
 
-    test('timeAsync rilancia anche l\'errore di una funzione sincrona', () async {
+    test('timeAsync rilancia anche l\'errore di una funzione sincrona',
+        () async {
       final error = StateError('errore sincrono');
       await expectLater(
         PerfMarks.timeAsync<int>('test.errore_sync', () => throw error),

@@ -90,7 +90,8 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     with SingleTickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
-  final FocusNode _selectionFocusNode = FocusNode(debugLabel: 'markdown-selection');
+  final FocusNode _selectionFocusNode =
+      FocusNode(debugLabel: 'markdown-selection');
 
   // Il gruppo coordina la selezione "anchored al modello" del corpo
   // (`MarkdownSelectionController`, sotto) con la selezione nativa e
@@ -146,7 +147,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // long-press" (soglia di spostamento + soglia di durata), usando le stesse
   // costanti che userebbe Flutter internamente.
   static const double _tapTouchSlop = kTouchSlop; // ~18px
-  static const Duration _tapMaxDuration = Duration(milliseconds: 500); // ~kLongPressTimeout
+  static const Duration _tapMaxDuration =
+      Duration(milliseconds: 500); // ~kLongPressTimeout
   final Map<int, _PendingTap> _pendingTapPointers = <int, _PendingTap>{};
 
   // --- Richiamo: long-press DENTRO la selezione = maniglie e menù ----------
@@ -647,8 +649,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // è realmente visibile), o `null` se non ancora disponibile.
   Rect? _viewportGlobalRect() {
     if (!_scrollController.hasClients) return null;
-    final box = _scrollController.position.context.storageContext
-        .findRenderObject();
+    final box =
+        _scrollController.position.context.storageContext.findRenderObject();
     if (box is! RenderBox || !box.attached || !box.hasSize) return null;
     return box.localToGlobal(Offset.zero) & box.size;
   }
@@ -1159,7 +1161,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       _pendingTapPointers.remove(event.pointer);
       return;
     }
-    _pendingTapPointers[event.pointer] = _PendingTap(event.position, DateTime.now());
+    _pendingTapPointers[event.pointer] =
+        _PendingTap(event.position, DateTime.now());
   }
 
   void _handleBackgroundPointerMove(PointerMoveEvent event) {

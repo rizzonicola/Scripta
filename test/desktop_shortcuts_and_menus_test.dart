@@ -12,8 +12,10 @@ void main() {
         final activators = activatorsFor(command);
         expect(activators, isNotEmpty, reason: command.name);
         for (final a in activators) {
-          final id = '${a.trigger.keyId}-${a.control}-${a.meta}-${a.alt}-${a.shift}';
-          expect(seen.add(id), isTrue, reason: 'duplicate activator: ${command.name}');
+          final id =
+              '${a.trigger.keyId}-${a.control}-${a.meta}-${a.alt}-${a.shift}';
+          expect(seen.add(id), isTrue,
+              reason: 'duplicate activator: ${command.name}');
         }
       }
     });
@@ -26,7 +28,8 @@ void main() {
       };
       for (final c in EditorCommand.values) {
         final a = editorActivatorFor(c);
-        final id = '${a.trigger.keyId}-${a.control}-${a.meta}-${a.alt}-${a.shift}';
+        final id =
+            '${a.trigger.keyId}-${a.control}-${a.meta}-${a.alt}-${a.shift}';
         expect(global.contains(id), isFalse, reason: c.name);
       }
     });
@@ -39,7 +42,8 @@ void main() {
   });
 
   group('ContextMenuRegion', () {
-    testWidgets('right click opens menu and runs the selected action', (tester) async {
+    testWidgets('right click opens menu and runs the selected action',
+        (tester) async {
       var selected = 0;
       await tester.pumpWidget(
         MaterialApp(
@@ -52,7 +56,8 @@ void main() {
                   const ContextMenuEntry.divider(),
                   const ContextMenuEntry(label: 'Disabled'),
                 ],
-                child: const SizedBox(width: 200, height: 100, child: Text('target')),
+                child: const SizedBox(
+                    width: 200, height: 100, child: Text('target')),
               ),
             ),
           ),
@@ -91,7 +96,8 @@ void main() {
                   entriesBuilder: (_) => [
                     ContextMenuEntry(label: 'Inner', onSelected: () => inner++),
                   ],
-                  child: const SizedBox(width: 100, height: 50, child: Text('card')),
+                  child: const SizedBox(
+                      width: 100, height: 50, child: Text('card')),
                 ),
               ),
             ),

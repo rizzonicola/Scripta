@@ -8,7 +8,8 @@ const int sqlVariableChunkSize = 500;
 /// Suddivide [items] in blocchi di al massimo [size] elementi, nello stesso
 /// ordine. Usato per le clausole `IN (...)` su liste potenzialmente grandi
 /// (id di note/cartelle ricevuti da una sync completa).
-Iterable<List<T>> chunked<T>(List<T> items, [int size = sqlVariableChunkSize]) sync* {
+Iterable<List<T>> chunked<T>(List<T> items,
+    [int size = sqlVariableChunkSize]) sync* {
   for (var start = 0; start < items.length; start += size) {
     final end = start + size;
     yield items.sublist(start, end > items.length ? items.length : end);

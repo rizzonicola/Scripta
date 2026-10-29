@@ -131,7 +131,8 @@ void main() {
       },
     );
 
-    testWidgets('senza movimento oltre la soglia non arma l\'auto-scroll', (tester) async {
+    testWidgets('senza movimento oltre la soglia non arma l\'auto-scroll',
+        (tester) async {
       final controller = ScrollController();
       addTearDown(controller.dispose);
       final synthetic = <PointerEvent>[];
@@ -210,7 +211,8 @@ void main() {
   });
 
   group('SelectionRevealShield', () {
-    testWidgets('silenzia showOnScreen solo mentre isBlocking è true', (tester) async {
+    testWidgets('silenzia showOnScreen solo mentre isBlocking è true',
+        (tester) async {
       final controller = ScrollController();
       addTearDown(controller.dispose);
       var blocking = true;

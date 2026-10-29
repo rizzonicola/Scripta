@@ -2,25 +2,125 @@ import 'package:flutter/material.dart';
 
 class ScriptaCodeHighlighter {
   static const Set<String> _commonKeywords = {
-    'abstract', 'as', 'assert', 'async', 'await', 'break', 'case', 'catch',
-    'class', 'const', 'continue', 'default', 'defer', 'do', 'else', 'enum',
-    'export', 'extends', 'extension', 'external', 'factory', 'false', 'final',
-    'finally', 'fn', 'for', 'function', 'get', 'goto', 'if', 'implements',
-    'import', 'in', 'interface', 'is', 'late', 'let', 'match', 'mixin',
-    'new', 'null', 'operator', 'override', 'part', 'pub', 'required',
-    'rethrow', 'return', 'set', 'static', 'super', 'switch', 'sync', 'this',
-    'throw', 'true', 'try', 'type', 'typedef', 'var', 'void', 'while',
-    'with', 'yield', 'def', 'elif', 'from', 'lambda', 'not', 'pass',
-    'raise', 'struct', 'val', 'package', 'public', 'private', 'protected'
+    'abstract',
+    'as',
+    'assert',
+    'async',
+    'await',
+    'break',
+    'case',
+    'catch',
+    'class',
+    'const',
+    'continue',
+    'default',
+    'defer',
+    'do',
+    'else',
+    'enum',
+    'export',
+    'extends',
+    'extension',
+    'external',
+    'factory',
+    'false',
+    'final',
+    'finally',
+    'fn',
+    'for',
+    'function',
+    'get',
+    'goto',
+    'if',
+    'implements',
+    'import',
+    'in',
+    'interface',
+    'is',
+    'late',
+    'let',
+    'match',
+    'mixin',
+    'new',
+    'null',
+    'operator',
+    'override',
+    'part',
+    'pub',
+    'required',
+    'rethrow',
+    'return',
+    'set',
+    'static',
+    'super',
+    'switch',
+    'sync',
+    'this',
+    'throw',
+    'true',
+    'try',
+    'type',
+    'typedef',
+    'var',
+    'void',
+    'while',
+    'with',
+    'yield',
+    'def',
+    'elif',
+    'from',
+    'lambda',
+    'not',
+    'pass',
+    'raise',
+    'struct',
+    'val',
+    'package',
+    'public',
+    'private',
+    'protected'
   };
 
   static const Set<String> _commonTypes = {
-    'String', 'int', 'double', 'num', 'bool', 'List', 'Map', 'Set',
-    'Widget', 'BuildContext', 'State', 'Future', 'Stream', 'void',
-    'Object', 'dynamic', 'Iterable', 'DateTime', 'Duration', 'Uri',
-    'File', 'Directory', 'Color', 'TextStyle', 'Container', 'Text',
-    'Column', 'Row', 'Scaffold', 'AppBar', 'Icon', 'IconButton',
-    'Boolean', 'Integer', 'Float', 'Double', 'Array', 'Promise', 'Record'
+    'String',
+    'int',
+    'double',
+    'num',
+    'bool',
+    'List',
+    'Map',
+    'Set',
+    'Widget',
+    'BuildContext',
+    'State',
+    'Future',
+    'Stream',
+    'void',
+    'Object',
+    'dynamic',
+    'Iterable',
+    'DateTime',
+    'Duration',
+    'Uri',
+    'File',
+    'Directory',
+    'Color',
+    'TextStyle',
+    'Container',
+    'Text',
+    'Column',
+    'Row',
+    'Scaffold',
+    'AppBar',
+    'Icon',
+    'IconButton',
+    'Boolean',
+    'Integer',
+    'Float',
+    'Double',
+    'Array',
+    'Promise',
+    'Record'
   };
 
   static TextSpan highlight({
@@ -32,17 +132,32 @@ class ScriptaCodeHighlighter {
     final lang = language.trim().toLowerCase();
 
     // Color definitions based on dark / light mode
-    final Color keywordColor = isDark ? const Color(0xFFFF7B72) : const Color(0xFFD73A49);   // Coral / Red
-    final Color typeColor = isDark ? const Color(0xFF79C0FF) : const Color(0xFF005CC5);      // Cyan / Blue
-    final Color stringGreen = isDark ? const Color(0xFF7EE787) : const Color(0xFF22863A);    // Green (for strings in JSON/Dart)
-    final Color numberColor = isDark ? const Color(0xFFF2CC60) : const Color(0xFFB08800);    // Warm Gold / Amber
-    final Color commentColor = isDark ? const Color(0xFF8B949E) : const Color(0xFF6A737D);   // Muted Slate
-    final Color propertyColor = isDark ? const Color(0xFFD2A8FF) : const Color(0xFF6F42C1);  // Purple
-    final Color functionColor = isDark ? const Color(0xFFD2A8FF) : const Color(0xFF6F42C1);  // Lavender / Violet
-    final Color punctuationColor = isDark ? const Color(0xFFC9D1D9) : const Color(0xFF24292E);
+    final Color keywordColor = isDark
+        ? const Color(0xFFFF7B72)
+        : const Color(0xFFD73A49); // Coral / Red
+    final Color typeColor = isDark
+        ? const Color(0xFF79C0FF)
+        : const Color(0xFF005CC5); // Cyan / Blue
+    final Color stringGreen = isDark
+        ? const Color(0xFF7EE787)
+        : const Color(0xFF22863A); // Green (for strings in JSON/Dart)
+    final Color numberColor = isDark
+        ? const Color(0xFFF2CC60)
+        : const Color(0xFFB08800); // Warm Gold / Amber
+    final Color commentColor = isDark
+        ? const Color(0xFF8B949E)
+        : const Color(0xFF6A737D); // Muted Slate
+    final Color propertyColor =
+        isDark ? const Color(0xFFD2A8FF) : const Color(0xFF6F42C1); // Purple
+    final Color functionColor = isDark
+        ? const Color(0xFFD2A8FF)
+        : const Color(0xFF6F42C1); // Lavender / Violet
+    final Color punctuationColor =
+        isDark ? const Color(0xFFC9D1D9) : const Color(0xFF24292E);
 
     if (lang == 'json') {
-      return _highlightJson(code, baseStyle, propertyColor, stringGreen, numberColor, keywordColor, punctuationColor);
+      return _highlightJson(code, baseStyle, propertyColor, stringGreen,
+          numberColor, keywordColor, punctuationColor);
     }
 
     // Generic Lexer / Tokenizer for C-like, Dart, Python, JS, TS, Shell, etc.
@@ -55,14 +170,20 @@ class ScriptaCodeHighlighter {
 
       // 1. Single-line comment
       if ((char == '/' && i + 1 < length && code[i + 1] == '/') ||
-          (char == '#' && (lang == 'python' || lang == 'bash' || lang == 'sh' || lang == 'yaml' || lang == 'yml'))) {
+          (char == '#' &&
+              (lang == 'python' ||
+                  lang == 'bash' ||
+                  lang == 'sh' ||
+                  lang == 'yaml' ||
+                  lang == 'yml'))) {
         final start = i;
         while (i < length && code[i] != '\n') {
           i++;
         }
         spans.add(TextSpan(
           text: code.substring(start, i),
-          style: baseStyle.copyWith(color: commentColor, fontStyle: FontStyle.italic),
+          style: baseStyle.copyWith(
+              color: commentColor, fontStyle: FontStyle.italic),
         ));
         continue;
       }
@@ -80,7 +201,8 @@ class ScriptaCodeHighlighter {
         }
         spans.add(TextSpan(
           text: code.substring(start, i),
-          style: baseStyle.copyWith(color: commentColor, fontStyle: FontStyle.italic),
+          style: baseStyle.copyWith(
+              color: commentColor, fontStyle: FontStyle.italic),
         ));
         continue;
       }
@@ -112,10 +234,16 @@ class ScriptaCodeHighlighter {
       }
 
       // 4. Numbers
-      if (_isDigit(char) || (char == '-' && i + 1 < length && _isDigit(code[i + 1]))) {
+      if (_isDigit(char) ||
+          (char == '-' && i + 1 < length && _isDigit(code[i + 1]))) {
         final start = i;
         i++;
-        while (i < length && (_isDigit(code[i]) || code[i] == '.' || code[i] == 'x' || code[i] == 'X' || _isHex(code[i]))) {
+        while (i < length &&
+            (_isDigit(code[i]) ||
+                code[i] == '.' ||
+                code[i] == 'x' ||
+                code[i] == 'X' ||
+                _isHex(code[i]))) {
           i++;
         }
         spans.add(TextSpan(
@@ -128,7 +256,11 @@ class ScriptaCodeHighlighter {
       // 5. Identifiers / Keywords / Functions
       if (_isAlpha(char) || char == '_' || char == r'$') {
         final start = i;
-        while (i < length && (_isAlpha(code[i]) || _isDigit(code[i]) || code[i] == '_' || code[i] == r'$')) {
+        while (i < length &&
+            (_isAlpha(code[i]) ||
+                _isDigit(code[i]) ||
+                code[i] == '_' ||
+                code[i] == r'$')) {
           i++;
         }
         final token = code.substring(start, i);
@@ -143,12 +275,17 @@ class ScriptaCodeHighlighter {
         if (_commonKeywords.contains(token)) {
           spans.add(TextSpan(
             text: token,
-            style: baseStyle.copyWith(color: keywordColor, fontWeight: FontWeight.w600),
+            style: baseStyle.copyWith(
+                color: keywordColor, fontWeight: FontWeight.w600),
           ));
-        } else if (_commonTypes.contains(token) || (token.length > 1 && token[0] == token[0].toUpperCase() && token[1] == token[1].toLowerCase())) {
+        } else if (_commonTypes.contains(token) ||
+            (token.length > 1 &&
+                token[0] == token[0].toUpperCase() &&
+                token[1] == token[1].toLowerCase())) {
           spans.add(TextSpan(
             text: token,
-            style: baseStyle.copyWith(color: typeColor, fontWeight: FontWeight.w600),
+            style: baseStyle.copyWith(
+                color: typeColor, fontWeight: FontWeight.w600),
           ));
         } else if (isFunction) {
           spans.add(TextSpan(
@@ -210,7 +347,11 @@ class ScriptaCodeHighlighter {
 
         // Check if this string is a JSON key (followed by ':')
         int peek = i;
-        while (peek < length && (code[peek] == ' ' || code[peek] == '\t' || code[peek] == '\r' || code[peek] == '\n')) {
+        while (peek < length &&
+            (code[peek] == ' ' ||
+                code[peek] == '\t' ||
+                code[peek] == '\r' ||
+                code[peek] == '\n')) {
           peek++;
         }
         final isKey = peek < length && code[peek] == ':';
@@ -229,7 +370,11 @@ class ScriptaCodeHighlighter {
       if (_isDigit(char) || char == '-') {
         final start = i;
         i++;
-        while (i < length && (_isDigit(code[i]) || code[i] == '.' || code[i] == 'e' || code[i] == 'E')) {
+        while (i < length &&
+            (_isDigit(code[i]) ||
+                code[i] == '.' ||
+                code[i] == 'e' ||
+                code[i] == 'E')) {
           i++;
         }
         spans.add(TextSpan(
@@ -249,7 +394,8 @@ class ScriptaCodeHighlighter {
         if (word == 'true' || word == 'false' || word == 'null') {
           spans.add(TextSpan(
             text: word,
-            style: baseStyle.copyWith(color: boolColor, fontWeight: FontWeight.w600),
+            style: baseStyle.copyWith(
+                color: boolColor, fontWeight: FontWeight.w600),
           ));
         } else {
           spans.add(TextSpan(
@@ -281,8 +427,8 @@ class ScriptaCodeHighlighter {
     if (char.isEmpty) return false;
     final code = char.codeUnitAt(0);
     return (code >= 48 && code <= 57) ||
-           (code >= 65 && code <= 70) ||
-           (code >= 97 && code <= 102);
+        (code >= 65 && code <= 70) ||
+        (code >= 97 && code <= 102);
   }
 
   static bool _isAlpha(String char) {

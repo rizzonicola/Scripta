@@ -45,47 +45,48 @@ class FolderTreeView extends ConsumerWidget {
             behavior: HitTestBehavior.opaque,
             entriesBuilder: (ctx) => workspaceMenuEntries(ctx, ref),
             child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 8, 12),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.folder_copy_outlined,
-                  size: 20,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    l10n.folders,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
+              padding: const EdgeInsets.fromLTRB(16, 16, 8, 12),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder_copy_outlined,
+                    size: 20,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      l10n.folders,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.create_new_folder_outlined, size: 20),
-                  tooltip: l10n.newFolder,
-                  onPressed: () => showAddFolderDialog(context, ref),
-                ),
-                Builder(
-                  builder: (buttonContext) => IconButton(
-                    icon: const Icon(Icons.more_vert_rounded, size: 20),
-                    tooltip: 'Altro',
-                    onPressed: () {
-                      final box =
-                          buttonContext.findRenderObject() as RenderBox;
-                      showContextMenu(
-                        buttonContext,
-                        box.localToGlobal(Offset(0, box.size.height + 4)),
-                        workspaceOverflowEntries(buttonContext, ref),
-                      );
-                    },
+                  IconButton(
+                    icon:
+                        const Icon(Icons.create_new_folder_outlined, size: 20),
+                    tooltip: l10n.newFolder,
+                    onPressed: () => showAddFolderDialog(context, ref),
                   ),
-                ),
-              ],
+                  Builder(
+                    builder: (buttonContext) => IconButton(
+                      icon: const Icon(Icons.more_vert_rounded, size: 20),
+                      tooltip: 'Altro',
+                      onPressed: () {
+                        final box =
+                            buttonContext.findRenderObject() as RenderBox;
+                        showContextMenu(
+                          buttonContext,
+                          box.localToGlobal(Offset(0, box.size.height + 4)),
+                          workspaceOverflowEntries(buttonContext, ref),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
           ),
           const Divider(height: 1),
 
@@ -132,8 +133,7 @@ class FolderTreeView extends ConsumerWidget {
               // nemmeno istanziati (prima `ListView(children: ...map...)`
               // creava subito un widget per ogni cartella radice).
               child: ListView.builder(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 itemCount: rootFolders.length,
                 itemBuilder: (context, index) {
                   final node = rootFolders[index];

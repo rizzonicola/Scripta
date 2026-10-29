@@ -54,7 +54,8 @@ class MarkdownToolbarActions {
     final cursorPosition = selection.isValid ? selection.start : text.length;
 
     // Find the start of the current line
-    final lineStart = text.lastIndexOf('\n', cursorPosition > 0 ? cursorPosition - 1 : 0);
+    final lineStart =
+        text.lastIndexOf('\n', cursorPosition > 0 ? cursorPosition - 1 : 0);
     final actualStart = lineStart == -1 ? 0 : lineStart + 1;
 
     final before = text.substring(0, actualStart);
@@ -96,7 +97,8 @@ class MarkdownToolbarActions {
   }
 
   /// Inserts text at cursor position
-  static void insertAtCursor(TextEditingController controller, String insertText) {
+  static void insertAtCursor(
+      TextEditingController controller, String insertText) {
     final text = controller.text;
     final selection = controller.selection;
 

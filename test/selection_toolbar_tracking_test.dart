@@ -649,7 +649,8 @@ void main() {
           // partenza è nel margine destro: lontano da selezione, menù e
           // maniglie.
           await _scrollTo(tester, start);
-          _expectFollowing(tester, reference, 'ritorno alla posizione iniziale');
+          _expectFollowing(
+              tester, reference, 'ritorno alla posizione iniziale');
           final gesture = await tester.startGesture(const Offset(392, 700));
           for (var i = 0; i < 10; i++) {
             await gesture.moveBy(const Offset(0, -12));
@@ -879,7 +880,8 @@ void main() {
             when: 'selezione in cima che esce dall\'alto',
           );
           final scrolledOut = _toolbarRect(tester)!;
-          _expectPinnedTop(scrolledOut, viewport, 'selezione uscita dall\'alto');
+          _expectPinnedTop(
+              scrolledOut, viewport, 'selezione uscita dall\'alto');
           await _scrollTo(tester, 4000);
           final pinned = _toolbarRect(tester)!;
           _expectPinnedTop(pinned, viewport, 'selezione smontata, sopra');

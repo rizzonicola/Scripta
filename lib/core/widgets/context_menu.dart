@@ -196,12 +196,11 @@ class _ContextMenuActionState extends State<_ContextMenuAction> {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: enabled
-                ? () => Navigator.of(context).pop(widget.index)
-                : null,
+            onTap:
+                enabled ? () => Navigator.of(context).pop(widget.index) : null,
             borderRadius: radius,
-            hoverColor: theme.colorScheme.primary
-                .withValues(alpha: theme.brightness == Brightness.dark ? 0.1 : 0.06),
+            hoverColor: theme.colorScheme.primary.withValues(
+                alpha: theme.brightness == Brightness.dark ? 0.1 : 0.06),
             focusColor: theme.colorScheme.primary.withValues(alpha: 0.12),
             child: Container(
               height: entry.description == null ? 38 : 50,
@@ -281,8 +280,8 @@ class _ShortcutHint extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
-        color: theme.colorScheme.onSurface
-            .withValues(alpha: theme.brightness == Brightness.dark ? 0.06 : 0.045),
+        color: theme.colorScheme.onSurface.withValues(
+            alpha: theme.brightness == Brightness.dark ? 0.06 : 0.045),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: theme.colorScheme.outline.withValues(alpha: 0.28),

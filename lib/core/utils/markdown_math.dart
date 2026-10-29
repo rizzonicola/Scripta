@@ -154,7 +154,9 @@ List<NoteChunk> splitNoteChunks(String source) {
 
     if (t.isEmpty) {
       consecutiveEmpty++;
-      if (consecutiveEmpty >= 2) return null; // 2 righe vuote consecutive: $$ orfano
+      if (consecutiveEmpty >= 2) {
+        return null; // 2 righe vuote consecutive: $$ orfano
+      }
       parts.add(t);
       continue;
     }
@@ -202,7 +204,8 @@ final RegExp _textLikeCommand = RegExp(
   r'\\(?:text|textrm|textbf|textit|textsf|texttt|mathrm|mathbf|mathit|mathsf|'
   r'mathtt|mathbb|mathcal|operatorname|mbox)\s*\{([^{}]*)\}',
 );
-final RegExp _fracCommand = RegExp(r'\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}');
+final RegExp _fracCommand =
+    RegExp(r'\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}');
 final RegExp _sqrtCommand = RegExp(r'\\sqrt\s*\{([^{}]*)\}');
 final RegExp _leftRight = RegExp(r'\\(?:left|right)(?![a-zA-Z])');
 final RegExp _thinSpaces = RegExp(r'\\[,;:]');

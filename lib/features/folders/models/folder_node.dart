@@ -95,7 +95,8 @@ class FolderNode {
   /// cancellazione), restituisce un insieme con il solo [folderId]
   /// richiesto: il chiamante filtrerà semplicemente a zero risultati invece
   /// di andare in errore.
-  static Set<String> collectSubtreeIds(List<FolderNode> roots, String folderId) {
+  static Set<String> collectSubtreeIds(
+      List<FolderNode> roots, String folderId) {
     final result = <String>{folderId};
     final start = findNode(roots, folderId);
     if (start == null) return result;

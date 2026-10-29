@@ -567,7 +567,8 @@ void main() {
           expect(
             MarkdownRenderedView.debugSelectionRecallCount,
             0,
-            reason: 'fuori dalla selezione agisce il pacchetto, non il richiamo',
+            reason:
+                'fuori dalla selezione agisce il pacchetto, non il richiamo',
           );
 
           await _drainTimers(tester);
@@ -864,7 +865,8 @@ void main() {
           // La politica B' riscritta qui con le sole API pubbliche: si
           // ricostruisce solo se almeno un estremo è montato E non tutte le
           // maniglie esistenti sono dipinte.
-          final endpointsMounted = controller.selectionHandleEndpoints() != null;
+          final endpointsMounted =
+              controller.selectionHandleEndpoints() != null;
           final handlesBefore = _realHandles(tester);
           final expectRebuild = endpointsMounted &&
               (handlesBefore.isEmpty ||

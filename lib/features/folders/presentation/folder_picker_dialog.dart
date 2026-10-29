@@ -176,8 +176,9 @@ class _FolderPickerTile extends StatelessWidget {
           color: isCurrent ? primary : null,
         ),
       ),
-      trailing:
-          isCurrent ? Icon(Icons.check_rounded, color: primary, size: 18) : null,
+      trailing: isCurrent
+          ? Icon(Icons.check_rounded, color: primary, size: 18)
+          : null,
       selected: isCurrent,
       onTap: onTap,
     );

@@ -1,4 +1,3 @@
-
 class SyncConfig {
   final bool syncOnAppLaunch;
   final bool syncOnAppLifecycle;

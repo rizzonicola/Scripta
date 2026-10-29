@@ -160,7 +160,8 @@ class SelectionAutoScroller {
       final track = _pointers[event.pointer];
       if (track == null) return;
       track.registerMove(event);
-      if (!track.moved && (event.position - track.origin).distance > kTouchSlop) {
+      if (!track.moved &&
+          (event.position - track.origin).distance > kTouchSlop) {
         track.moved = true;
       }
       // La selezione può essere cambiata nello stesso dispatch di questo
@@ -250,16 +251,19 @@ class SelectionAutoScroller {
     }
 
     const epsilon = 0.5;
-    if (direction < 0 && position.pixels <= position.minScrollExtent + epsilon) {
+    if (direction < 0 &&
+        position.pixels <= position.minScrollExtent + epsilon) {
       return 0;
     }
-    if (direction > 0 && position.pixels >= position.maxScrollExtent - epsilon) {
+    if (direction > 0 &&
+        position.pixels >= position.maxScrollExtent - epsilon) {
       return 0;
     }
 
     // Rampa quadratica: dolce all'ingresso nella fascia, veloce oltre il
     // bordo, così l'utente modula la velocità spostando il dito.
-    final t = (depth / (zone + overshootForMaxSpeed)).clamp(0.0, 1.0).toDouble();
+    final t =
+        (depth / (zone + overshootForMaxSpeed)).clamp(0.0, 1.0).toDouble();
     return direction * (minSpeed + (maxSpeed - minSpeed) * t * t);
   }
 

@@ -13,8 +13,10 @@ import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart
 
 void main() {
   final benchmarkMarkdown = StringBuffer()
-    ..writeln('# Benchmark Document con Formule Matematiche e Markdown Complesso\n')
-    ..writeln('Questo documento serve a profilare le prestazioni di rendering di Scripta.\n')
+    ..writeln(
+        '# Benchmark Document con Formule Matematiche e Markdown Complesso\n')
+    ..writeln(
+        'Questo documento serve a profilare le prestazioni di rendering di Scripta.\n')
     ..writeln('## Sezione 1: Formule Inline Chimiche e Fisiche')
     ..writeln(
       r'La reazione fondamentale di combustione del glucosio e '
@@ -30,7 +32,8 @@ void main() {
     )
     ..writeln('\n## Sezione 2: Formule a Blocco Complesse\n')
     ..writeln(r'$$')
-    ..writeln(r'f(x) = \frac{1}{\sigma \sqrt{2\pi}} \exp\left( -\frac{1}{2}\left(\frac{x-\mu}{\sigma}\right)^2 \right)')
+    ..writeln(
+        r'f(x) = \frac{1}{\sigma \sqrt{2\pi}} \exp\left( -\frac{1}{2}\left(\frac{x-\mu}{\sigma}\right)^2 \right)')
     ..writeln(r'$$')
     ..writeln('\nUn\'altra formula a blocco di calcolo integrale:\n')
     ..writeln(r'$$')
@@ -41,11 +44,15 @@ void main() {
     ..writeln('| :--- | :---: | :--- | :--- |')
     ..writeln(r'| Velocita della luce | $c$ | $2.998 \times 10^8$ | m/s |')
     ..writeln(r'| Costante di Planck | $h$ | $6.626 \times 10^{-34}$ | J*s |')
-    ..writeln(r'| Costante gravitazionale | $G$ | $6.674 \times 10^{-11}$ | N*m2/kg2 |')
-    ..writeln(r'| Costante di Boltzmann | $k_B$ | $1.381 \times 10^{-23}$ | J/K |')
+    ..writeln(
+        r'| Costante gravitazionale | $G$ | $6.674 \times 10^{-11}$ | N*m2/kg2 |')
+    ..writeln(
+        r'| Costante di Boltzmann | $k_B$ | $1.381 \times 10^{-23}$ | J/K |')
     ..writeln('\n## Sezione 4: Blocchi di Codice\n')
-    ..writeln('```dart\nvoid main() {\n  final double h = 6.626e-34;\n  final double c = 3.0e8;\n  print(h * c);\n}\n```')
-    ..writeln('```python\ndef gaussian(x, mu, sigma):\n    return (1.0 / (sigma * (2 * 3.14159)**0.5)) * math.exp(-0.5 * ((x - mu)/sigma)**2)\n```');
+    ..writeln(
+        '```dart\nvoid main() {\n  final double h = 6.626e-34;\n  final double c = 3.0e8;\n  print(h * c);\n}\n```')
+    ..writeln(
+        '```python\ndef gaussian(x, mu, sigma):\n    return (1.0 / (sigma * (2 * 3.14159)**0.5)) * math.exp(-0.5 * ((x - mu)/sigma)**2)\n```');
 
   for (var i = 1; i <= 25; i++) {
     benchmarkMarkdown.writeln('\n### Paragrafo $i di approfondimento');
@@ -59,7 +66,8 @@ void main() {
     );
     if (i % 5 == 0) {
       benchmarkMarkdown.writeln(r'$$');
-      benchmarkMarkdown.writeln('S_{$i} = \\sum_{j=1}^{$i} \\frac{j^2 + 1}{\\sqrt{j + 3}}');
+      benchmarkMarkdown
+          .writeln('S_{$i} = \\sum_{j=1}^{$i} \\frac{j^2 + 1}{\\sqrt{j + 3}}');
       benchmarkMarkdown.writeln(r'$$');
     }
   }
@@ -67,7 +75,9 @@ void main() {
   final testNoteContent = benchmarkMarkdown.toString();
 
   group('Performance Baseline & Math Rendering Benchmarks', () {
-    test('1. Baseline Timing: splitNoteChunks + normalizeInlineMath + Markdown.fromString', () {
+    test(
+        '1. Baseline Timing: splitNoteChunks + normalizeInlineMath + Markdown.fromString',
+        () {
       final stopwatch = Stopwatch()..start();
       const iterations = 50;
       for (var iter = 0; iter < iterations; iter++) {
@@ -86,11 +96,14 @@ void main() {
       }
       stopwatch.stop();
       final avgMs = stopwatch.elapsedMilliseconds / iterations;
-      print('--> [BASELINE] Tempo medio parsing completo nota (${testNoteContent.length} char, 50 iterazioni): ${avgMs.toStringAsFixed(2)} ms');
+      print(
+          '--> [BASELINE] Tempo medio parsing completo nota (${testNoteContent.length} char, 50 iterazioni): ${avgMs.toStringAsFixed(2)} ms');
       expect(avgMs, lessThan(30.0));
     });
 
-    testWidgets('2. Baseline UI Lifecycle: apertura nota, initial build & layout', (tester) async {
+    testWidgets(
+        '2. Baseline UI Lifecycle: apertura nota, initial build & layout',
+        (tester) async {
       tester.view.physicalSize = const Size(1200, 1600);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(() {
@@ -116,7 +129,8 @@ void main() {
       await tester.pump();
       stopwatch.stop();
       final initialFrameMs = stopwatch.elapsedMilliseconds;
-      print('--> [BASELINE] Tempo apertura nota (pumpWidget + layout iniziale): $initialFrameMs ms');
+      print(
+          '--> [BASELINE] Tempo apertura nota (pumpWidget + layout iniziale): $initialFrameMs ms');
 
       final scrollWatch = Stopwatch()..start();
       // Finder legato alla chiave della lista del renderer, non al tipo:
@@ -141,7 +155,8 @@ void main() {
       final p99 = frameTimes[frameTimes.length - 1];
       final avgFrame = frameTimes.reduce((a, b) => a + b) / frameTimes.length;
 
-      print('--> [BASELINE] Scroll frame build times (ListView virtualizzata): Media=${avgFrame.toStringAsFixed(2)} ms, p50=${p50.toStringAsFixed(2)} ms, p99=${p99.toStringAsFixed(2)} ms');
+      print(
+          '--> [BASELINE] Scroll frame build times (ListView virtualizzata): Media=${avgFrame.toStringAsFixed(2)} ms, p50=${p50.toStringAsFixed(2)} ms, p99=${p99.toStringAsFixed(2)} ms');
       // Soglia larga: sui runner CI condivisi (senza GPU, CPU contesa) i
       // tempi di build in debug sono molto più alti e variabili che su un
       // dispositivo reale, e una soglia stretta rende il test intermittente.
@@ -152,15 +167,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
     });
 
-    testWidgets('3. Confronto Diretto: flutter_md nativo vs WidgetSpan(Math.tex) inline', (tester) async {
+    testWidgets(
+        '3. Confronto Diretto: flutter_md nativo vs WidgetSpan(Math.tex) inline',
+        (tester) async {
       // Misuriamo il costo di renderizzare 20 paragrafi con formule inline complesse:
       // Caso A: flutter_md (Canvas / TextPainter con Unicode convertito)
       // Caso B: RichText con WidgetSpan(Math.tex) per ogni formula
 
       const paragraphWithMath =
-        'Paragrafo con formula a frazione \$x = \\frac{a+b}{c+d}\$, radice \$\\sqrt{x^2+1}\$, '
-        'sommatoria \$\\sum_{i=0}^n i^2\$ ed energia \$E = mc^2\$. '
-        'Testo continuo per misurare il layout multi-riga.';
+          'Paragrafo con formula a frazione \$x = \\frac{a+b}{c+d}\$, radice \$\\sqrt{x^2+1}\$, '
+          'sommatoria \$\\sum_{i=0}^n i^2\$ ed energia \$E = mc^2\$. '
+          'Testo continuo per misurare il layout multi-riga.';
 
       // Caso A: flutter_md nativo
       final mdWatch = Stopwatch()..start();
@@ -193,6 +210,7 @@ void main() {
           countRenderObjectsA++;
           obj.visitChildren(visit);
         }
+
         visit(child);
       });
 
@@ -211,24 +229,30 @@ void main() {
                       children: [
                         WidgetSpan(
                           alignment: PlaceholderAlignment.middle,
-                          child: Math.tex(r'x = \frac{a+b}{c+d}', mathStyle: MathStyle.text),
+                          child: Math.tex(r'x = \frac{a+b}{c+d}',
+                              mathStyle: MathStyle.text),
                         ),
                         const TextSpan(text: ', radice '),
                         WidgetSpan(
                           alignment: PlaceholderAlignment.middle,
-                          child: Math.tex(r'\sqrt{x^2+1}', mathStyle: MathStyle.text),
+                          child: Math.tex(r'\sqrt{x^2+1}',
+                              mathStyle: MathStyle.text),
                         ),
                         const TextSpan(text: ', sommatoria '),
                         WidgetSpan(
                           alignment: PlaceholderAlignment.middle,
-                          child: Math.tex(r'\sum_{i=0}^n i^2', mathStyle: MathStyle.text),
+                          child: Math.tex(r'\sum_{i=0}^n i^2',
+                              mathStyle: MathStyle.text),
                         ),
                         const TextSpan(text: ' ed energia '),
                         WidgetSpan(
                           alignment: PlaceholderAlignment.middle,
-                          child: Math.tex(r'E = mc^2', mathStyle: MathStyle.text),
+                          child:
+                              Math.tex(r'E = mc^2', mathStyle: MathStyle.text),
                         ),
-                        const TextSpan(text: '. Testo continuo per misurare il layout multi-riga.'),
+                        const TextSpan(
+                            text:
+                                '. Testo continuo per misurare il layout multi-riga.'),
                       ],
                     ),
                   );
@@ -248,14 +272,20 @@ void main() {
           countRenderObjectsB++;
           obj.visitChildren(visit);
         }
+
         visit(child);
       });
 
-      print('--> [CONFRONTO RENDERING INLINE (20 paragrafi x 4 formule = 80 formule)]');
-      print('    - flutter_md Nativo (Canvas/Unicode): Tempo = ${mdMs.toStringAsFixed(2)} ms, RenderObjects = $countRenderObjectsA');
-      print('    - Ibrido WidgetSpan(Math.tex):        Tempo = ${spanMs.toStringAsFixed(2)} ms, RenderObjects = $countRenderObjectsB');
-      print('    - Overhead temporale: +${((spanMs - mdMs) / mdMs * 100).toStringAsFixed(1)}%');
-      print('    - Overhead RenderObjects: +${((countRenderObjectsB - countRenderObjectsA) / countRenderObjectsA * 100).toStringAsFixed(1)}% (+${countRenderObjectsB - countRenderObjectsA} nodi nel render tree)');
+      print(
+          '--> [CONFRONTO RENDERING INLINE (20 paragrafi x 4 formule = 80 formule)]');
+      print(
+          '    - flutter_md Nativo (Canvas/Unicode): Tempo = ${mdMs.toStringAsFixed(2)} ms, RenderObjects = $countRenderObjectsA');
+      print(
+          '    - Ibrido WidgetSpan(Math.tex):        Tempo = ${spanMs.toStringAsFixed(2)} ms, RenderObjects = $countRenderObjectsB');
+      print(
+          '    - Overhead temporale: +${((spanMs - mdMs) / mdMs * 100).toStringAsFixed(1)}%');
+      print(
+          '    - Overhead RenderObjects: +${((countRenderObjectsB - countRenderObjectsA) / countRenderObjectsA * 100).toStringAsFixed(1)}% (+${countRenderObjectsB - countRenderObjectsA} nodi nel render tree)');
     });
 
     testWidgets('4. Model-Anchored Selection Integrity Check', (tester) async {
@@ -267,7 +297,8 @@ void main() {
             body: ProviderScope(
               child: MarkdownRenderedView(
                 title: 'Verifica Selezione',
-                content: 'Paragrafo uno con formula \$E = mc^2\$.\n\nParagrafo due con \$H_2O\$.',
+                content:
+                    'Paragrafo uno con formula \$E = mc^2\$.\n\nParagrafo due con \$H_2O\$.',
               ),
             ),
           ),
@@ -277,7 +308,8 @@ void main() {
 
       final selectionScopeFinder = find.byType(MarkdownSelectionScope);
       expect(selectionScopeFinder, findsOneWidget);
-      final selectionScope = tester.state<MarkdownSelectionScopeState>(selectionScopeFinder);
+      final selectionScope =
+          tester.state<MarkdownSelectionScopeState>(selectionScopeFinder);
 
       selectionScope.selectAll();
       await tester.pumpAndSettle();
@@ -287,12 +319,15 @@ void main() {
       expect(selection!.isCollapsed, isFalse);
 
       final selectedText = selectionScope.controller.getText();
-      print('--> [SELECTION CHECK] Testo selezionato con SelectAll:\n"$selectedText"');
+      print(
+          '--> [SELECTION CHECK] Testo selezionato con SelectAll:\n"$selectedText"');
       expect(selectedText, contains('Paragrafo uno con formula'));
       expect(selectedText, contains('Paragrafo due con'));
     });
 
-    testWidgets('5. Benchmark Comparativo: Rebuild Scroll SENZA cache vs CON cache memoized', (tester) async {
+    testWidgets(
+        '5. Benchmark Comparativo: Rebuild Scroll SENZA cache vs CON cache memoized',
+        (tester) async {
       // 10 formule complesse realistiche
       final complexTexList = [
         r'f(x) = \frac{1}{\sigma \sqrt{2\pi}} \exp\left( -\frac{1}{2}\left(\frac{x-\mu}{\sigma}\right)^2 \right)',
@@ -337,7 +372,8 @@ void main() {
         // Simuliamo l'interfaccia di _MathItem (lazy memoized)
         SyntaxTree? ast;
         try {
-          ast = SyntaxTree(greenRoot: TexParser(tex, const TexParserSettings()).parse());
+          ast = SyntaxTree(
+              greenRoot: TexParser(tex, const TexParserSettings()).parse());
         } catch (_) {}
         return (tex: tex, ast: ast);
       }).toList();
@@ -367,21 +403,28 @@ void main() {
       withoutCacheTimes.sort();
       withCacheTimes.sort();
 
-      final avgWithout = withoutCacheTimes.reduce((a, b) => a + b) / withoutCacheTimes.length;
-      final p50Without = withoutCacheTimes[(withoutCacheTimes.length * 0.5).toInt()];
+      final avgWithout =
+          withoutCacheTimes.reduce((a, b) => a + b) / withoutCacheTimes.length;
+      final p50Without =
+          withoutCacheTimes[(withoutCacheTimes.length * 0.5).toInt()];
       final p99Without = withoutCacheTimes.last;
 
-      final avgWith = withCacheTimes.reduce((a, b) => a + b) / withCacheTimes.length;
+      final avgWith =
+          withCacheTimes.reduce((a, b) => a + b) / withCacheTimes.length;
       final p50With = withCacheTimes[(withCacheTimes.length * 0.5).toInt()];
       final p99With = withCacheTimes.last;
 
       final deltaMs = avgWithout - avgWith;
       final percentSaved = (deltaMs / avgWithout) * 100;
 
-      print('--> [BENCHMARK CACHE TEX: 10 formule complesse x 50 cicli di rebuild/scroll]');
-      print('    - SENZA CACHE (Math.tex rieseguito):   Media = ${avgWithout.toStringAsFixed(2)} ms, p50 = ${p50Without.toStringAsFixed(2)} ms, p99 = ${p99Without.toStringAsFixed(2)} ms');
-      print('    - CON CACHE MEMOIZED (SyntaxTree):      Media = ${avgWith.toStringAsFixed(2)} ms, p50 = ${p50With.toStringAsFixed(2)} ms, p99 = ${p99With.toStringAsFixed(2)} ms');
-      print('    - Risparmio CPU per frame di scroll:    -${deltaMs.toStringAsFixed(2)} ms (-${percentSaved.toStringAsFixed(1)}% di tempo di build/layout!)');
+      print(
+          '--> [BENCHMARK CACHE TEX: 10 formule complesse x 50 cicli di rebuild/scroll]');
+      print(
+          '    - SENZA CACHE (Math.tex rieseguito):   Media = ${avgWithout.toStringAsFixed(2)} ms, p50 = ${p50Without.toStringAsFixed(2)} ms, p99 = ${p99Without.toStringAsFixed(2)} ms');
+      print(
+          '    - CON CACHE MEMOIZED (SyntaxTree):      Media = ${avgWith.toStringAsFixed(2)} ms, p50 = ${p50With.toStringAsFixed(2)} ms, p99 = ${p99With.toStringAsFixed(2)} ms');
+      print(
+          '    - Risparmio CPU per frame di scroll:    -${deltaMs.toStringAsFixed(2)} ms (-${percentSaved.toStringAsFixed(1)}% di tempo di build/layout!)');
     });
   });
 }

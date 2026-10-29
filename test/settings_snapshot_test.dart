@@ -62,7 +62,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('readAppSettingsFromPrefs', () {
-    test('senza nulla di salvato restituisce i default di AppSettings', () async {
+    test('senza nulla di salvato restituisce i default di AppSettings',
+        () async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
 
@@ -76,7 +77,8 @@ void main() {
       expect(readAppSettingsFromPrefs(prefs), _saved);
     });
 
-    test('valori sconosciuti o vuoti ripiegano sui default, come prima', () async {
+    test('valori sconosciuti o vuoti ripiegano sui default, come prima',
+        () async {
       SharedPreferences.setMockInitialValues({
         AppConstants.prefThemeMode: 'altro',
         AppConstants.prefLocale: '',
@@ -127,7 +129,9 @@ void main() {
       expect(container.read(settingsProvider), _saved);
     });
 
-    test('con l\'istantanea non arriva un secondo stato (una sola costruzione dei temi)', () async {
+    test(
+        'con l\'istantanea non arriva un secondo stato (una sola costruzione dei temi)',
+        () async {
       _seedSavedSettings();
       final container = ProviderContainer(
         overrides: [settingsSnapshotProvider.overrideWithValue(_saved)],
@@ -135,7 +139,8 @@ void main() {
       addTearDown(container.dispose);
 
       var emissions = 0;
-      container.listen<AppSettings>(settingsProvider, (previous, next) => emissions++);
+      container.listen<AppSettings>(
+          settingsProvider, (previous, next) => emissions++);
       container.read(settingsProvider);
 
       // Margine ampio: un eventuale caricamento asincrono (che rileggerebbe
@@ -144,7 +149,9 @@ void main() {
       expect(emissions, 0);
     });
 
-    test('senza istantanea parte dai default e poi carica (comportamento di prima)', () async {
+    test(
+        'senza istantanea parte dai default e poi carica (comportamento di prima)',
+        () async {
       _seedSavedSettings();
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -156,7 +163,8 @@ void main() {
       );
     });
 
-    test('istantanea e caricamento asincrono producono LO STESSO stato', () async {
+    test('istantanea e caricamento asincrono producono LO STESSO stato',
+        () async {
       _seedSavedSettings();
       final snapshot = await loadSettingsSnapshot();
 
@@ -171,14 +179,17 @@ void main() {
       expect(asyncContainer.read(settingsProvider), snapshot);
     });
 
-    test('i setter continuano a funzionare partendo dall\'istantanea', () async {
+    test('i setter continuano a funzionare partendo dall\'istantanea',
+        () async {
       _seedSavedSettings();
       final container = ProviderContainer(
         overrides: [settingsSnapshotProvider.overrideWithValue(_saved)],
       );
       addTearDown(container.dispose);
 
-      await container.read(settingsProvider.notifier).setThemeMode(ThemeMode.light);
+      await container
+          .read(settingsProvider.notifier)
+          .setThemeMode(ThemeMode.light);
 
       expect(container.read(settingsProvider).themeMode, ThemeMode.light);
       // Il resto dello stato resta quello dell'istantanea.
@@ -210,7 +221,9 @@ void main() {
       AppDatabase.debugDatabasePathOverride = null;
     });
 
-    testWidgets('usa già tema, modalità e lingua salvati e non ricostruisce i temi dopo', (tester) async {
+    testWidgets(
+        'usa già tema, modalità e lingua salvati e non ricostruisce i temi dopo',
+        (tester) async {
       const savedLight = AppSettings(
         themeMode: ThemeMode.light,
         selectedThemeId: 'solarized_light',

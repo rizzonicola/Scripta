@@ -66,7 +66,8 @@ class _FakeFoldersDao implements FoldersDao {
   dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
 }
 
-NoteRow _noteRow(String id, {int updated = 1, String? folderId, int? deletedAt}) =>
+NoteRow _noteRow(String id,
+        {int updated = 1, String? folderId, int? deletedAt}) =>
     NoteRow(
       id: id,
       title: id,
@@ -127,7 +128,8 @@ void main() {
       expect(s.mobileEditorOpen, isFalse);
     });
 
-    test('salva e rilegge modalità, cartella, nota e pannello mobile', () async {
+    test('salva e rilegge modalità, cartella, nota e pannello mobile',
+        () async {
       await SessionStateService.saveEditorMode(EditorMode.readOnly);
       await SessionStateService.saveFolderId('cartella-1');
       await SessionStateService.saveNoteId('nota-1');
@@ -140,7 +142,8 @@ void main() {
       expect(s.mobileEditorOpen, isTrue);
     });
 
-    test('salvare null rimuove cartella e nota ("Tutte le note", nessuna nota)', () async {
+    test('salvare null rimuove cartella e nota ("Tutte le note", nessuna nota)',
+        () async {
       await SessionStateService.saveFolderId('cartella-1');
       await SessionStateService.saveNoteId('nota-1');
       await SessionStateService.saveFolderId(null);
@@ -228,7 +231,8 @@ void main() {
     });
 
     test('se la nota salvata non esiste più ripiega sulla prima', () async {
-      final n = NotesNotifier(dao: threeNotes(), initialActiveNoteId: 'cancellata');
+      final n =
+          NotesNotifier(dao: threeNotes(), initialActiveNoteId: 'cancellata');
       addTearDown(n.dispose);
       await Future<void>.delayed(_loadWait);
 
@@ -236,7 +240,8 @@ void main() {
     });
 
     test('una nota cancellata (tombstone) non viene riaperta', () async {
-      final dao = threeNotes()..rows['c'] = _noteRow('c', updated: 100, deletedAt: 5);
+      final dao = threeNotes()
+        ..rows['c'] = _noteRow('c', updated: 100, deletedAt: 5);
       final n = NotesNotifier(dao: dao, initialActiveNoteId: 'c');
       addTearDown(n.dispose);
       await Future<void>.delayed(_loadWait);
@@ -244,7 +249,8 @@ void main() {
       expect(n.state.activeNoteId, 'a');
     });
 
-    test('senza sessione salvata il comportamento resta quello di sempre', () async {
+    test('senza sessione salvata il comportamento resta quello di sempre',
+        () async {
       final n = NotesNotifier(dao: threeNotes());
       addTearDown(n.dispose);
       await Future<void>.delayed(_loadWait);
@@ -252,7 +258,8 @@ void main() {
       expect(n.state.activeNoteId, 'a');
     });
 
-    test('con il DB vuoto nessuna nota attiva, anche con una nota salvata', () async {
+    test('con il DB vuoto nessuna nota attiva, anche con una nota salvata',
+        () async {
       final n = NotesNotifier(dao: _FakeNotesDao(), initialActiveNoteId: 'a');
       addTearDown(n.dispose);
       await Future<void>.delayed(_loadWait);
@@ -272,7 +279,8 @@ void main() {
 
   // -------------------------------------------------------------------------
   group('FolderNotifier: ripresa della cartella selezionata', () {
-    test('mantiene la cartella dell\'ultima sessione se esiste ancora', () async {
+    test('mantiene la cartella dell\'ultima sessione se esiste ancora',
+        () async {
       final container = ProviderContainer();
       addTearDown(container.dispose);
       final folders = FolderNotifier(
@@ -308,7 +316,8 @@ void main() {
       expect(folders.state.rootFolders.map((f) => f.id), ['f1']);
     });
 
-    test('senza sessione salvata parte da "Tutte le note", come sempre', () async {
+    test('senza sessione salvata parte da "Tutte le note", come sempre',
+        () async {
       final container = ProviderContainer();
       addTearDown(container.dispose);
       final folders = FolderNotifier(
@@ -382,8 +391,10 @@ void main() {
       expect(second.read(editorProvider).mode, EditorMode.readOnly);
       expect(second.read(folderProvider).selectedFolderId, 'f1');
 
-      await waitUntil(() async => second.read(notesProvider).activeNoteId != null);
-      await waitUntil(() async => second.read(folderProvider).rootFolders.isNotEmpty);
+      await waitUntil(
+          () async => second.read(notesProvider).activeNoteId != null);
+      await waitUntil(
+          () async => second.read(folderProvider).rootFolders.isNotEmpty);
 
       expect(second.read(notesProvider).activeNoteId, 'n2');
       expect(second.read(folderProvider).selectedFolderId, 'f1');
@@ -397,7 +408,8 @@ void main() {
       expect(after.editorMode, EditorMode.readOnly);
     });
 
-    test('riferimenti non più validi: prima nota e "Tutte le note", e il disco si ripulisce',
+    test(
+        'riferimenti non più validi: prima nota e "Tutte le note", e il disco si ripulisce',
         () async {
       await FoldersDao().upsert(_folderRow('f1'));
       await NotesDao().upsert(_noteRow('n1', updated: 300));
@@ -416,8 +428,10 @@ void main() {
       addTearDown(container.dispose);
       container.read(sessionPersistenceProvider);
 
-      await waitUntil(() async => container.read(notesProvider).activeNoteId != null);
-      await waitUntil(() async => container.read(folderProvider).rootFolders.isNotEmpty);
+      await waitUntil(
+          () async => container.read(notesProvider).activeNoteId != null);
+      await waitUntil(
+          () async => container.read(folderProvider).rootFolders.isNotEmpty);
 
       expect(container.read(notesProvider).activeNoteId, 'n1');
       expect(container.read(folderProvider).selectedFolderId, isNull);

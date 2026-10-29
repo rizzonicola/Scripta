@@ -11,8 +11,11 @@ import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('Verifica Modifiche Precedenti (CodeBlockWithCopy & DisplayMathBlock)', () {
-    testWidgets('1. CodeBlockWithCopy: click copia il codice negli appunti e mostra feedback visivo', (tester) async {
+  group('Verifica Modifiche Precedenti (CodeBlockWithCopy & DisplayMathBlock)',
+      () {
+    testWidgets(
+        '1. CodeBlockWithCopy: click copia il codice negli appunti e mostra feedback visivo',
+        (tester) async {
       String? copiedText;
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -61,7 +64,9 @@ void main() {
       expect(find.byIcon(Icons.check_rounded), findsOneWidget);
     });
 
-    testWidgets('2. CodeBlockWithCopy dentro MarkdownRenderedView: il tap sul pulsante non viene intercettato dalla selezione', (tester) async {
+    testWidgets(
+        '2. CodeBlockWithCopy dentro MarkdownRenderedView: il tap sul pulsante non viene intercettato dalla selezione',
+        (tester) async {
       String? clipboardText;
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -119,7 +124,9 @@ void main() {
       expect(find.byIcon(Icons.check_rounded), findsOneWidget);
     });
 
-    testWidgets('3. DisplayMathBlock: rendering di TeX valido e fallback su TeX invalido', (tester) async {
+    testWidgets(
+        '3. DisplayMathBlock: rendering di TeX valido e fallback su TeX invalido',
+        (tester) async {
       // Test formula TeX valida
       await tester.pumpWidget(
         const MaterialApp(
@@ -150,7 +157,9 @@ void main() {
       expect(find.text(r'\frac{incompleta'), findsOneWidget);
     });
 
-    testWidgets('4. MarkdownRenderedView integra DisplayMathBlock con AST pre-parsato ed errore cachato', (tester) async {
+    testWidgets(
+        '4. MarkdownRenderedView integra DisplayMathBlock con AST pre-parsato ed errore cachato',
+        (tester) async {
       const note = '''
 # Note con Display Math
 Prima riga di testo.
