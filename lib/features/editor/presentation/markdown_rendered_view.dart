@@ -358,14 +358,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
           ).blocks;
           for (final block in blocks) {
             final id = 'block-${documents.length}';
-            items.add(_BlockItem(block, id));
+            final model = Markdown(
+              markdown: markdownBlockRenderedText(block),
+              blocks: [block],
+            );
+            items.add(_BlockItem(block, id, model));
             documents.add(
               MarkdownDocumentRef(
                 id: id,
-                model: Markdown(
-                  markdown: markdownBlockRenderedText(block),
-                  blocks: [block],
-                ),
+                model: model,
                 order: documents.length,
               ),
             );
@@ -1534,12 +1535,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
           ast: ast,
           parseError: parseError,
         );
-      case _BlockItem(:final block, :final documentId):
+      case _BlockItem(:final block, :final documentId, :final model):
         final markdownWidget = MarkdownWidget(
-          markdown: Markdown(
-            markdown: markdownBlockRenderedText(block),
-            blocks: [block],
-          ),
+          markdown: model,
           documentId: documentId,
         );
         if (block is MD$Table) {
@@ -1713,9 +1711,10 @@ sealed class _ViewItem {
 }
 
 final class _BlockItem extends _ViewItem {
-  const _BlockItem(this.block, this.documentId);
+  const _BlockItem(this.block, this.documentId, this.model);
   final MD$Block block;
   final String documentId;
+  final Markdown model;
 }
 
 final class _MathItem extends _ViewItem {
