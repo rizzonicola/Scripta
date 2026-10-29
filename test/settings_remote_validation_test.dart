@@ -105,6 +105,29 @@ void main() {
     );
   });
 
+  test('la lingua Sistema viene sincronizzata come valore dedicato', () async {
+    expect(encodeRemoteLanguage(null), AppConstants.remoteLanguageSystem);
+    expect(encodeRemoteLanguage(const Locale('fr')), 'fr');
+
+    final notifier = SettingsNotifier(
+      null,
+      const AppSettings(locale: Locale('it')),
+    );
+    addTearDown(notifier.dispose);
+
+    await notifier.applyRemoteSettings(
+      const UserSettingsDto(language: AppConstants.remoteLanguageSystem),
+    );
+    expect(notifier.state.locale, isNull);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(AppConstants.prefLocale), isNull);
+
+    await notifier.applyRemoteSettings(const UserSettingsDto(language: 'fr'));
+    expect(notifier.state.locale, const Locale('fr'));
+    expect(prefs.getString(AppConstants.prefLocale), 'fr');
+  });
+
   test('anche le preferenze locali corrotte vengono normalizzate', () async {
     SharedPreferences.setMockInitialValues({
       AppConstants.prefThemeMode: 'viola',

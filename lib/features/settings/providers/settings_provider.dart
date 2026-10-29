@@ -41,6 +41,17 @@ String _normalizeFontFamily(String value, String fallback) {
   return AppConstants.supportedFontFamilies.contains(value) ? value : fallback;
 }
 
+/// Serializza la lingua per il payload remoto: `null` (“Sistema”) diventa
+/// [AppConstants.remoteLanguageSystem], mai un codice lingua implicito.
+String encodeRemoteLanguage(Locale? locale) {
+  return locale?.languageCode ?? AppConstants.remoteLanguageSystem;
+}
+
+Locale? _decodeRemoteLanguage(String value) {
+  if (value.isEmpty || value == AppConstants.remoteLanguageSystem) return null;
+  return Locale(value);
+}
+
 double _clampFontSize(double value, double fallback) {
   return value.isFinite
       ? value
@@ -233,7 +244,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     _queuedPayload = UserSettingsDto(
       theme: themeStr,
       colorScheme: state.selectedThemeId,
-      language: state.locale?.languageCode ?? 'it',
+      language: encodeRemoteLanguage(state.locale),
       fontFamily: state.fontFamily,
       fontSize: state.fontSize.toInt(),
       lineSpacing: state.lineHeight,
@@ -328,7 +339,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final fontSize = _clampFontSize(remote.fontSize.toDouble(), state.fontSize);
     final lineHeight = _clampLineHeight(remote.lineSpacing, state.lineHeight);
 
-    final locale = remote.language.isNotEmpty ? Locale(remote.language) : null;
+    final locale = _decodeRemoteLanguage(remote.language);
 
     state = state.copyWith(
       themeMode: themeMode,

@@ -47,6 +47,9 @@ class AppConstants {
   static const String prefOnboardingCompleted = 'scripta_onboarding_completed';
   static const String prefHapticIntensity = 'scripta_haptic_intensity';
 
+  /// Valore sincronizzato per la lingua “Sistema” (locale locale `null`).
+  static const String remoteLanguageSystem = 'system';
+
   // Preferenze della sincronizzazione.
   static const String prefSyncOnLaunch = 'scripta_sync_on_launch';
   static const String prefSyncOnLifecycle = 'scripta_sync_on_lifecycle';
