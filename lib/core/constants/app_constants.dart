@@ -9,6 +9,19 @@ class AppConstants {
   // example.com, RFC 2606) mostrato come suggerimento di formato.
   static const String serverUrlPlaceholder = 'https://notes.example.com';
 
+  // Tipografia: stessi limiti usati da Slider e dropdown in Impostazioni,
+  // così la normalizzazione dei valori remoti non può divergere dalla UI.
+  static const List<String> supportedFontFamilies = [
+    'Inter',
+    'JetBrains Mono',
+    'Merriweather',
+    'Roboto',
+  ];
+  static const double minFontSize = 13.0;
+  static const double maxFontSize = 24.0;
+  static const double minLineHeight = 1.2;
+  static const double maxLineHeight = 2.2;
+
   // Breakpoints
   static const double mobileBreakpoint = 600.0;
   static const double tabletBreakpoint = 1024.0;

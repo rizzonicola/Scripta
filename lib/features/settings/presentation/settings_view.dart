@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/l10n/desktop_strings.dart';
 import '../../../core/utils/app_commands.dart';
@@ -10,6 +11,13 @@ import '../../../core/utils/haptics_helper.dart';
 import '../providers/settings_provider.dart';
 import 'about_credits_dialog.dart';
 import 'account_sync_section.dart';
+
+const Map<String, String> _fontFamilyLabels = {
+  'Inter': 'Inter (Clean Modern Sans)',
+  'JetBrains Mono': 'JetBrains Mono (Monospace)',
+  'Merriweather': 'Merriweather (Classic Serif)',
+  'Roboto': 'Roboto (Standard Sans)',
+};
 
 class SettingsView extends ConsumerWidget {
   const SettingsView({super.key});
@@ -292,23 +300,12 @@ class SettingsView extends ConsumerWidget {
                         vertical: 8,
                       ),
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'Inter',
-                        child: Text('Inter (Clean Modern Sans)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'JetBrains Mono',
-                        child: Text('JetBrains Mono (Monospace)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Merriweather',
-                        child: Text('Merriweather (Classic Serif)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Roboto',
-                        child: Text('Roboto (Standard Sans)'),
-                      ),
+                    items: [
+                      for (final family in AppConstants.supportedFontFamilies)
+                        DropdownMenuItem(
+                          value: family,
+                          child: Text(_fontFamilyLabels[family] ?? family),
+                        ),
                     ],
                     onChanged: (family) {
                       if (family != null) {
@@ -336,8 +333,8 @@ class SettingsView extends ConsumerWidget {
                   ),
                   Slider(
                     value: settings.fontSize,
-                    min: 13,
-                    max: 24,
+                    min: AppConstants.minFontSize,
+                    max: AppConstants.maxFontSize,
                     divisions: 11,
                     onChanged: (val) {
                       ref.read(settingsProvider.notifier).setFontSize(val);
@@ -361,8 +358,8 @@ class SettingsView extends ConsumerWidget {
                   ),
                   Slider(
                     value: settings.lineHeight,
-                    min: 1.2,
-                    max: 2.2,
+                    min: AppConstants.minLineHeight,
+                    max: AppConstants.maxLineHeight,
                     divisions: 10,
                     onChanged: (val) {
                       ref.read(settingsProvider.notifier).setLineHeight(val);

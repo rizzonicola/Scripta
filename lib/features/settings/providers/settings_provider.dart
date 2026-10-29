@@ -12,33 +12,82 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/theme/color_schemes.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../sync/models/sync_models.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/app_settings.dart';
+
+ThemeMode _parseThemeMode(String? value) => value == 'dark'
+    ? ThemeMode.dark
+    : value == 'light'
+    ? ThemeMode.light
+    : ThemeMode.system;
+
+String _themeModeToStorage(ThemeMode mode) => mode == ThemeMode.dark
+    ? 'dark'
+    : mode == ThemeMode.light
+    ? 'light'
+    : 'system';
+
+String _normalizeThemeId(String? value, String fallback) {
+  if (value != null && AppThemePalettes.all.any((p) => p.id == value)) {
+    return value;
+  }
+  return fallback;
+}
+
+String _normalizeFontFamily(String value, String fallback) {
+  return AppConstants.supportedFontFamilies.contains(value) ? value : fallback;
+}
+
+double _clampFontSize(double value, double fallback) {
+  return value.isFinite
+      ? value
+            .clamp(AppConstants.minFontSize, AppConstants.maxFontSize)
+            .toDouble()
+      : fallback;
+}
+
+double _clampLineHeight(double value, double fallback) {
+  return value.isFinite
+      ? value
+            .clamp(AppConstants.minLineHeight, AppConstants.maxLineHeight)
+            .toDouble()
+      : fallback;
+}
 
 /// Legge le impostazioni di aspetto da SharedPreferences. Funzione PURA e unica
 /// fonte di chiavi e valori di default: la usano sia il caricamento prima del
 /// primo frame ([loadSettingsSnapshot]) sia quello asincrono di
 /// [SettingsNotifier], così i due non possono divergere.
 AppSettings readAppSettingsFromPrefs(SharedPreferences prefs) {
-  final themeStr = prefs.getString(AppConstants.prefThemeMode);
-  final themeMode = themeStr == 'dark'
-      ? ThemeMode.dark
-      : themeStr == 'light'
-      ? ThemeMode.light
-      : ThemeMode.system;
+  final themeMode = _parseThemeMode(
+    prefs.getString(AppConstants.prefThemeMode),
+  );
 
-  final themeId = prefs.getString(AppConstants.prefThemeId) ?? 'dark_teal';
+  final themeId = _normalizeThemeId(
+    prefs.getString(AppConstants.prefThemeId),
+    AppThemePalettes.darkTeal.id,
+  );
 
   final langCode = prefs.getString(AppConstants.prefLocale);
   final locale = (langCode != null && langCode.isNotEmpty)
       ? Locale(langCode)
       : null;
 
-  final fontFamily = prefs.getString(AppConstants.prefFontFamily) ?? 'Inter';
-  final fontSize = prefs.getDouble(AppConstants.prefFontSize) ?? 16.0;
-  final lineHeight = prefs.getDouble(AppConstants.prefLineHeight) ?? 1.6;
+  final fontFamily = _normalizeFontFamily(
+    prefs.getString(AppConstants.prefFontFamily) ?? 'Inter',
+    'Inter',
+  );
+  final fontSize = _clampFontSize(
+    prefs.getDouble(AppConstants.prefFontSize) ?? 16.0,
+    16.0,
+  );
+  final lineHeight = _clampLineHeight(
+    prefs.getDouble(AppConstants.prefLineHeight) ?? 1.6,
+    1.6,
+  );
 
   final hapticStr = prefs.getString(AppConstants.prefHapticIntensity);
   final hapticIntensity = HapticIntensity.values.firstWhere(
@@ -267,33 +316,34 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     }
     if (!mounted) return;
 
-    final themeMode = remote.theme == 'dark'
-        ? ThemeMode.dark
-        : remote.theme == 'light'
-        ? ThemeMode.light
-        : ThemeMode.system;
+    final themeMode = _parseThemeMode(remote.theme);
+    final selectedThemeId = _normalizeThemeId(
+      remote.colorScheme,
+      state.selectedThemeId,
+    );
+    final fontFamily = _normalizeFontFamily(
+      remote.fontFamily,
+      state.fontFamily,
+    );
+    final fontSize = _clampFontSize(remote.fontSize.toDouble(), state.fontSize);
+    final lineHeight = _clampLineHeight(remote.lineSpacing, state.lineHeight);
 
     final locale = remote.language.isNotEmpty ? Locale(remote.language) : null;
 
     state = state.copyWith(
       themeMode: themeMode,
-      selectedThemeId: remote.colorScheme.isNotEmpty
-          ? remote.colorScheme
-          : state.selectedThemeId,
+      selectedThemeId: selectedThemeId,
       locale: () => locale,
-      fontFamily: remote.fontFamily.isNotEmpty
-          ? remote.fontFamily
-          : state.fontFamily,
-      fontSize: remote.fontSize > 0
-          ? remote.fontSize.toDouble()
-          : state.fontSize,
-      lineHeight: remote.lineSpacing > 0
-          ? remote.lineSpacing
-          : state.lineHeight,
+      fontFamily: fontFamily,
+      fontSize: fontSize,
+      lineHeight: lineHeight,
     );
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(AppConstants.prefThemeMode, remote.theme);
+    await prefs.setString(
+      AppConstants.prefThemeMode,
+      _themeModeToStorage(themeMode),
+    );
     await prefs.setString(AppConstants.prefThemeId, state.selectedThemeId);
     if (locale != null) {
       await prefs.setString(AppConstants.prefLocale, locale.languageCode);
