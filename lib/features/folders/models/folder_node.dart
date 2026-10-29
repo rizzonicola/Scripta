@@ -24,22 +24,6 @@ class FolderNode {
     this.isExpanded = true,
   });
 
-  FolderNode copyWith({
-    String? id,
-    String? name,
-    String? parentId,
-    List<FolderNode>? children,
-    bool? isExpanded,
-  }) {
-    return FolderNode(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      parentId: parentId ?? this.parentId,
-      children: children ?? this.children,
-      isExpanded: isExpanded ?? this.isExpanded,
-    );
-  }
-
   /// Costruisce la foresta di alberi (le cartelle radice, ciascuna con i
   /// propri figli annidati ricorsivamente) a partire dall'elenco piatto delle
   /// righe attive del database locale. Puramente ID-based: usa solo

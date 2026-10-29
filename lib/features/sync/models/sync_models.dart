@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 /// Speculare a `models.FolderDTO` nel backend Go: nessun campo di percorso,
 /// solo id/parent_id.
 class FolderChangeDto {
@@ -275,11 +273,6 @@ class UserSettingsDto {
         layout: json['layout'] as String? ?? 'split',
         updatedAt: (json['updated_at'] as num?)?.toInt(),
       );
-
-  String toJsonString() => json.encode(toJson());
-
-  factory UserSettingsDto.fromJsonString(String source) =>
-      UserSettingsDto.fromJson(json.decode(source) as Map<String, dynamic>);
 }
 
 /// DTO for POST /api/v1/auth/login and POST /api/v1/auth/refresh.

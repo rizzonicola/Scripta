@@ -1,7 +1,6 @@
 class AppConstants {
   static const String appName = 'Scripta';
   static const String appVersion = '1.0.5';
-  static const String appTagline = 'Minimal & Markdown-First Note Taking';
   static const String githubUrl = 'https://github.com/rizzonicola/Scripta';
 
   // NESSUN server di default: l'app non deve mai inviare credenziali o dati
@@ -34,6 +33,20 @@ class AppConstants {
   static const String prefCustomOrderByScope = 'scripta_custom_order_by_scope';
   static const String prefOnboardingCompleted = 'scripta_onboarding_completed';
   static const String prefHapticIntensity = 'scripta_haptic_intensity';
+
+  // Preferenze della sincronizzazione.
+  static const String prefSyncOnLaunch = 'scripta_sync_on_launch';
+  static const String prefSyncOnLifecycle = 'scripta_sync_on_lifecycle';
+  static const String prefSyncOnNoteSwitch = 'scripta_sync_on_note_switch';
+  static const String prefSyncOnInactivity = 'scripta_sync_on_inactivity';
+  static const String prefSyncInactivitySeconds =
+      'scripta_sync_inactivity_seconds';
+  static const String prefLastSyncTime = 'scripta_last_sync_timestamp';
+  static const String prefLastOnline = 'scripta_last_online';
+  static const String prefTokenExpiresAt = 'scripta_token_expires_at_ms';
+
+  /// Prefisso delle chiavi usate dal fallback iOS/macOS di SecureStorageService.
+  static const String prefSecureFallbackPrefix = 'scripta_secure_fallback_';
 
   // Ripresa della sessione: l'ultima posizione dell'utente (modalità
   // Modifica/Visualizza, cartella, nota aperta, pannello editor su mobile).

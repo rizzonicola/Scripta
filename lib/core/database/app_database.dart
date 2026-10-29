@@ -1,5 +1,3 @@
-import 'dart:io' show Platform;
-
 import 'package:flutter/foundation.dart'
     show debugPrint, kIsWeb, visibleForTesting;
 import 'package:path/path.dart' as p;
@@ -7,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../utils/perf_marks.dart';
+import '../utils/platform_utils.dart';
 
 /// Punto di accesso unico al database locale SQLite: la SINGOLA fonte di
 /// verità che la UI legge tramite i provider Riverpod (mai direttamente).
@@ -66,7 +65,7 @@ class AppDatabase {
       // web/ nel progetto): nessuna inizializzazione necessaria qui.
       return;
     }
-    if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    if (isDesktopPlatform) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }

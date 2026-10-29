@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
 import '../../features/sync/models/sync_models.dart';
+import '../constants/app_constants.dart';
 
 class SyncApiException implements Exception {
   final int? statusCode;
@@ -123,7 +124,20 @@ class SyncApiService {
   /// Identificativo dell'app inviato nell'header `X-Scripta-Client`. Il server
   /// lo usa SOLO nei log (non cambia nessun comportamento). Tenere allineato
   /// alla versione in pubspec.yaml.
-  static const String clientHeaderValue = 'scripta/1.0.5';
+  static const String clientHeaderValue = 'scripta/${AppConstants.appVersion}';
+
+  static const Duration _authTimeout = Duration(seconds: 10);
+  static const Duration _settingsTimeout = Duration(seconds: 10);
+  static const Duration _logoutTimeout = Duration(seconds: 5);
+
+  static const String connectionErrorMessage =
+      'Impossibile connettersi al server';
+  static const String connectionErrorHintMessage =
+      'Impossibile connettersi al server. Controlla la connessione e riprova.';
+  static const String invalidServerResponseMessage =
+      'Risposta del server non valida (JSON malformato)';
+  static const String invalidServerResponseShortMessage =
+      'Risposta del server non valida';
 
   /// Legge `Retry-After` espresso in secondi. Altri formati (data HTTP) o
   /// valori non validi/negativi: nessuna indicazione (null).
@@ -175,10 +189,7 @@ class SyncApiService {
       // Un 200 con JSON malformato non è un problema di rete: ritentare la
       // stessa richiesta non può migliorare nulla. 502 = risposta del server
       // non valida (e NON transitoria, vedi SyncNotifier).
-      throw const SyncApiException(
-        'Risposta del server non valida (JSON malformato)',
-        502,
-      );
+      throw const SyncApiException(invalidServerResponseMessage, 502);
     }
   }
 
@@ -261,7 +272,7 @@ class SyncApiService {
             },
             body: json.encode({'username': username, 'password': password}),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(_authTimeout);
     } on TimeoutException {
       // Il chiamante distingue un timeout da una risposta HTTP: senza status
       // code il login può ritentare dentro il proprio budget.
@@ -271,7 +282,7 @@ class SyncApiService {
     } on Exception {
       // SocketException, ClientException, TLS...: la richiesta non ha prodotto
       // una risposta HTTP. Non esporre dettagli potenzialmente sensibili.
-      throw const SyncApiException('Impossibile connettersi al server');
+      throw const SyncApiException(connectionErrorMessage);
     }
 
     if (response.statusCode == 200) {
@@ -281,10 +292,7 @@ class SyncApiService {
       } catch (_) {
         // 502 = risposta non valida, non transitoria: ritentare la stessa
         // richiesta non può migliorare il JSON.
-        throw const SyncApiException(
-          'Risposta del server non valida (JSON malformato)',
-          502,
-        );
+        throw const SyncApiException(invalidServerResponseMessage, 502);
       }
     } else {
       final body = bodyText(response);
@@ -351,13 +359,13 @@ class SyncApiService {
             },
             body: json.encode({'refresh_token': refreshToken}),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(_authTimeout);
     } on TimeoutException {
       throw const SyncApiException(
         'Tempo scaduto durante il rinnovo della sessione',
       );
     } on Exception {
-      throw const SyncApiException('Impossibile connettersi al server');
+      throw const SyncApiException(connectionErrorMessage);
     }
 
     if (response.statusCode == 200) {
@@ -365,10 +373,7 @@ class SyncApiService {
         final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
         return LoginResponseDto.fromJson(decoded);
       } catch (_) {
-        throw const SyncApiException(
-          'Risposta del server non valida (JSON malformato)',
-          502,
-        );
+        throw const SyncApiException(invalidServerResponseMessage, 502);
       }
     }
     throw _apiError(response, 'Impossibile rinnovare la sessione');
@@ -397,7 +402,7 @@ class SyncApiService {
                 ? json.encode({'refresh_token': refreshToken})
                 : null,
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(_logoutTimeout);
     } catch (_) {
       // Ignorato: il token verrà comunque scartato localmente.
     }
@@ -420,7 +425,7 @@ class SyncApiService {
               'X-Scripta-Client': clientHeaderValue,
             },
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(_authTimeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -443,7 +448,7 @@ class SyncApiService {
             'Content-Type': 'application/json',
           },
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(_settingsTimeout);
 
     if (response.statusCode == 200) {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
@@ -470,7 +475,7 @@ class SyncApiService {
           },
           body: json.encode(settings.toJson()),
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(_settingsTimeout);
 
     if (response.statusCode == 200) {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;

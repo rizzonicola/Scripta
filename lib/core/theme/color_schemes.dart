@@ -9,7 +9,6 @@ class AppThemePalette {
   final Color surfaceElevated;
   final Color border;
   final Color primary;
-  final Color primaryHover;
   final Color accent;
   final Color textPrimary;
   final Color textSecondary;
@@ -24,7 +23,6 @@ class AppThemePalette {
     required this.surfaceElevated,
     required this.border,
     required this.primary,
-    required this.primaryHover,
     required this.accent,
     required this.textPrimary,
     required this.textSecondary,
@@ -43,7 +41,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFF282D35),
     border: Color(0xFF323842),
     primary: Color(0xFF2DD4BF), // Verde Acqua / Teal
-    primaryHover: Color(0xFF5EEAD4),
     accent: Color(0xFF0D9488),
     textPrimary: Color(0xFFF1F5F9),
     textSecondary: Color(0xFF94A3B8),
@@ -60,7 +57,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFF16181D),
     border: Color(0xFF252A32),
     primary: Color(0xFF2DD4BF), // Neon Teal
-    primaryHover: Color(0xFF5EEAD4),
     accent: Color(0xFF14B8A6),
     textPrimary: Color(0xFFFFFFFF),
     textSecondary: Color(0xFF9CA3AF),
@@ -77,7 +73,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFF3B4252),
     border: Color(0xFF434C5E),
     primary: Color(0xFF88C0D0), // Frost Blue
-    primaryHover: Color(0xFF81A1C1),
     accent: Color(0xFF8FBCBB),
     textPrimary: Color(0xFFECEFF4),
     textSecondary: Color(0xFFD8DEE9),
@@ -94,7 +89,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFF242034),
     border: Color(0xFF352F4B),
     primary: Color(0xFFA78BFA), // Iris Purple
-    primaryHover: Color(0xFFC4B5FD),
     accent: Color(0xFF818CF8),
     textPrimary: Color(0xFFF5F3FF),
     textSecondary: Color(0xFFA79EC4),
@@ -111,7 +105,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFF232D28),
     border: Color(0xFF2E3B34),
     primary: Color(0xFF34D399), // Emerald Sage
-    primaryHover: Color(0xFF6EE7B7),
     accent: Color(0xFF10B981),
     textPrimary: Color(0xFFECFDF5),
     textSecondary: Color(0xFF86A597),
@@ -128,7 +121,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFF2C2622),
     border: Color(0xFF3B342E),
     primary: Color(0xFFF59E0B), // Amber
-    primaryHover: Color(0xFFFBBF24),
     accent: Color(0xFFD97706),
     textPrimary: Color(0xFFFFFBEB),
     textSecondary: Color(0xFFA89F91),
@@ -145,7 +137,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFFF1F5F9),
     border: Color(0xFFE2E8F0),
     primary: Color(0xFF0D9488), // Deep Teal
-    primaryHover: Color(0xFF0F766E),
     accent: Color(0xFF14B8A6),
     textPrimary: Color(0xFF0F172A),
     textSecondary: Color(0xFF475569),
@@ -162,7 +153,6 @@ class AppThemePalettes {
     surfaceElevated: Color(0xFFE4DEC9),
     border: Color(0xFFD3C7AE),
     primary: Color(0xFF2AA198), // Solarized Teal
-    primaryHover: Color(0xFF268BD2),
     accent: Color(0xFFB58900),
     textPrimary: Color(0xFF073642),
     textSecondary: Color(0xFF586E75),

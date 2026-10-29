@@ -73,7 +73,7 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
 
     // Ctrl+F con la barra già aperta: riporta il focus qui e seleziona il
     // termine, come nei "Trova" di ogni editor.
-    ref.listen<int>(noteSearchFocusRequestProvider, (_, __) {
+    ref.listen<int>(noteSearchFocusRequestProvider, (_, _) {
       _focusNode.requestFocus();
       _queryController.selection = TextSelection(
         baseOffset: 0,

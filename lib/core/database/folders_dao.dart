@@ -340,17 +340,6 @@ class FoldersDao {
     });
   }
 
-  Future<List<String>> listActiveChildIds(String parentId) async {
-    final db = await _db;
-    final rows = await db.query(
-      'folders',
-      columns: ['id'],
-      where: 'parent_id = ? AND deleted_at IS NULL',
-      whereArgs: [parentId],
-    );
-    return rows.map((r) => r['id'] as String).toList();
-  }
-
   /// Propaga la cancellazione di una cartella a tutte le sottocartelle e
   /// note ancora attive al suo interno, usando lo stesso timestamp per
   /// l'intero sottoalbero. Speculare alla cascade server-side in

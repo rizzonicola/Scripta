@@ -88,19 +88,55 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     widget.onNoteSelected?.call(note);
   }
 
+  List<({String label, NoteSortOrder order})> _sortEntries(
+    AppLocalizations l10n,
+  ) {
+    return [
+      (label: l10n.sortUpdatedDesc, order: NoteSortOrder.updatedDesc),
+      (label: l10n.sortUpdatedAsc, order: NoteSortOrder.updatedAsc),
+      (label: l10n.sortCreatedDesc, order: NoteSortOrder.createdDesc),
+      (label: l10n.sortCreatedAsc, order: NoteSortOrder.createdAsc),
+      (label: l10n.sortTitleAsc, order: NoteSortOrder.titleAsc),
+      (label: l10n.sortTitleDesc, order: NoteSortOrder.titleDesc),
+      (label: l10n.sortCustom, order: NoteSortOrder.custom),
+    ];
+  }
+
+  IconData _sortIcon(NoteSortOrder order) {
+    switch (order) {
+      case NoteSortOrder.updatedDesc:
+        return Icons.history_rounded;
+      case NoteSortOrder.updatedAsc:
+        return Icons.update_rounded;
+      case NoteSortOrder.createdDesc:
+        return Icons.calendar_today_rounded;
+      case NoteSortOrder.createdAsc:
+        return Icons.event_note_rounded;
+      case NoteSortOrder.titleAsc:
+      case NoteSortOrder.titleDesc:
+        return Icons.sort_by_alpha_rounded;
+      case NoteSortOrder.custom:
+        return Icons.drag_indicator_rounded;
+    }
+  }
+
   Widget _buildSortMenu(
     AppLocalizations l10n,
     ThemeData theme,
     NoteSortOrder activeSort,
   ) {
+    final entries = _sortEntries(l10n);
+
     ContextMenuEntry sortEntry(
       String label,
       IconData icon,
-      NoteSortOrder order,
-    ) {
+      NoteSortOrder order, {
+      String? description,
+    }) {
       return ContextMenuEntry(
         label: label,
         icon: icon,
+        description: description,
         isChecked: activeSort == order,
         onSelected: () => ref.read(notesProvider.notifier).setSortOrder(order),
       );
@@ -121,45 +157,21 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
             buttonContext,
             box.localToGlobal(Offset(0, box.size.height + 4)),
             [
-              sortEntry(
-                l10n.sortUpdatedDesc,
-                Icons.history_rounded,
-                NoteSortOrder.updatedDesc,
-              ),
-              sortEntry(
-                l10n.sortUpdatedAsc,
-                Icons.update_rounded,
-                NoteSortOrder.updatedAsc,
-              ),
-              sortEntry(
-                l10n.sortCreatedDesc,
-                Icons.calendar_today_rounded,
-                NoteSortOrder.createdDesc,
-              ),
-              sortEntry(
-                l10n.sortCreatedAsc,
-                Icons.event_note_rounded,
-                NoteSortOrder.createdAsc,
-              ),
-              sortEntry(
-                l10n.sortTitleAsc,
-                Icons.sort_by_alpha_rounded,
-                NoteSortOrder.titleAsc,
-              ),
-              sortEntry(
-                l10n.sortTitleDesc,
-                Icons.sort_by_alpha_rounded,
-                NoteSortOrder.titleDesc,
-              ),
+              ...entries
+                  .where((entry) => entry.order != NoteSortOrder.custom)
+                  .map(
+                    (entry) => sortEntry(
+                      entry.label,
+                      _sortIcon(entry.order),
+                      entry.order,
+                    ),
+                  ),
               const ContextMenuEntry.divider(),
-              ContextMenuEntry(
-                label: l10n.sortCustom,
-                icon: Icons.drag_indicator_rounded,
+              sortEntry(
+                l10n.sortCustom,
+                Icons.drag_indicator_rounded,
+                NoteSortOrder.custom,
                 description: 'Trascina le note per riordinarle',
-                isChecked: activeSort == NoteSortOrder.custom,
-                onSelected: () => ref
-                    .read(notesProvider.notifier)
-                    .setSortOrder(NoteSortOrder.custom),
               ),
             ],
           );
@@ -186,7 +198,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
 
     // Ctrl+Shift+F: porta il focus sul campo di ricerca e seleziona il testo
     // già presente, così si può riscrivere subito.
-    ref.listen<int>(globalSearchFocusRequestProvider, (_, __) {
+    ref.listen<int>(globalSearchFocusRequestProvider, (_, _) {
       _searchFocusNode.requestFocus();
       _searchController.selection = TextSelection(
         baseOffset: 0,
@@ -421,6 +433,8 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
       );
     }
 
+    final entries = _sortEntries(l10n);
+
     return [
       ContextMenuEntry(
         label: l10n.newNote,
@@ -447,13 +461,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
       ),
       const ContextMenuEntry.divider(),
       ContextMenuEntry.header(l10n.sortBy),
-      sortEntry(l10n.sortUpdatedDesc, NoteSortOrder.updatedDesc),
-      sortEntry(l10n.sortUpdatedAsc, NoteSortOrder.updatedAsc),
-      sortEntry(l10n.sortCreatedDesc, NoteSortOrder.createdDesc),
-      sortEntry(l10n.sortCreatedAsc, NoteSortOrder.createdAsc),
-      sortEntry(l10n.sortTitleAsc, NoteSortOrder.titleAsc),
-      sortEntry(l10n.sortTitleDesc, NoteSortOrder.titleDesc),
-      sortEntry(l10n.sortCustom, NoteSortOrder.custom),
+      ...entries.map((entry) => sortEntry(entry.label, entry.order)),
     ];
   }
 

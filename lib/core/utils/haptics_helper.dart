@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
-import 'dart:io' show Platform;
+
+import 'platform_utils.dart';
 
 /// Livelli di intensità del feedback tattile configurabili dall'utente
 /// nelle Impostazioni (vedi `settings_view.dart` / `AppSettings.hapticIntensity`).
@@ -86,7 +87,7 @@ class HapticsHelper {
   static bool get _isDesktop {
     if (kIsWeb) return true;
     try {
-      return Platform.isLinux || Platform.isWindows || Platform.isMacOS;
+      return isDesktopPlatform;
     } catch (_) {
       return true;
     }

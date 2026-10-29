@@ -1,5 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:scripta/core/constants/app_constants.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -64,7 +65,7 @@ class _TestSecureStorage extends FlutterSecureStorage {
   }
 }
 
-const _fallbackPrefix = 'scripta_secure_fallback_';
+const _fallbackPrefix = AppConstants.prefSecureFallbackPrefix;
 const _tokenKey = '${_fallbackPrefix}inkflow_jwt_token';
 const _refreshTokenKey = '${_fallbackPrefix}inkflow_refresh_token';
 const _serverUrlKey = '${_fallbackPrefix}inkflow_server_url';

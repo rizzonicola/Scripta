@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' show DatabaseException;
 import 'package:uuid/uuid.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
@@ -53,17 +54,17 @@ enum _RefreshOutcome { success, invalid, blocked, unavailable }
 /// [SyncMetaDao], usato solo per la pull) e al flag locale `dirty` (cosa
 /// inviare). `updated_at` (orologio del client) serve solo alla risoluzione LWW.
 class SyncNotifier extends StateNotifier<SyncConfig> {
-  static const _prefLaunchSync = 'scripta_sync_on_launch';
-  static const _prefLifecycleSync = 'scripta_sync_on_lifecycle';
-  static const _prefNoteSwitchSync = 'scripta_sync_on_note_switch';
-  static const _prefInactivitySync = 'scripta_sync_on_inactivity';
-  static const _prefInactivitySeconds = 'scripta_sync_inactivity_seconds';
-  static const _prefLastSyncTime = 'scripta_last_sync_timestamp';
-  static const _prefLastOnline = 'scripta_last_online';
+  static const _prefLaunchSync = AppConstants.prefSyncOnLaunch;
+  static const _prefLifecycleSync = AppConstants.prefSyncOnLifecycle;
+  static const _prefNoteSwitchSync = AppConstants.prefSyncOnNoteSwitch;
+  static const _prefInactivitySync = AppConstants.prefSyncOnInactivity;
+  static const _prefInactivitySeconds = AppConstants.prefSyncInactivitySeconds;
+  static const _prefLastSyncTime = AppConstants.prefLastSyncTime;
+  static const _prefLastOnline = AppConstants.prefLastOnline;
 
   /// Scadenza del token (millisecondi Unix), calcolata dall'`expires_at` della
   /// login (Y-13-A). Non è un segreto: sta fra le preferenze.
-  static const _prefTokenExpiresAt = 'scripta_token_expires_at_ms';
+  static const _prefTokenExpiresAt = AppConstants.prefTokenExpiresAt;
 
   /// Margine con cui un token si considera «in scadenza» rispetto all'orologio
   /// locale.
@@ -185,7 +186,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   final Random _random;
 
   /// Limite complessivo del login interattivo (vedi [_defaultLoginBudget]).
-  final Duration _loginBudget;
+  final Duration loginBudget;
 
   /// Capability annunciate dal server, per URL (Y-14). Si aggiornano a ogni
   /// risposta 200 di sync; una risposta senza `caps` cancella la voce.
@@ -239,13 +240,12 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     SyncMetaDao? syncMetaDao,
     Future<void> Function(Duration)? retryWait,
     Random? random,
-    Duration loginBudget = _defaultLoginBudget,
+    this.loginBudget = _defaultLoginBudget,
   }) : _foldersDao = foldersDao ?? FoldersDao(),
        _notesDao = notesDao ?? NotesDao(),
        _syncMetaDao = syncMetaDao ?? SyncMetaDao(),
        _retryWait = retryWait ?? Future<void>.delayed,
        _random = random ?? Random(),
-       _loginBudget = loginBudget,
        super(const SyncConfig()) {
     initialized = _init();
   }
@@ -714,7 +714,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     required String username,
     required String password,
   }) async {
-    final deadline = DateTime.now().add(_loginBudget);
+    final deadline = DateTime.now().add(loginBudget);
     Object lastError = const SyncApiException(
       'Errore di connessione sconosciuto',
     );
@@ -822,8 +822,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (error is TimeoutException) {
       return 'Tempo scaduto durante la connessione al server';
     }
-    if (error is FormatException) return 'Risposta del server non valida';
-    return 'Impossibile connettersi al server. Controlla la connessione e riprova.';
+    if (error is FormatException) {
+      return SyncApiService.invalidServerResponseShortMessage;
+    }
+    return SyncApiService.connectionErrorHintMessage;
   }
 
   Future<bool> login({
@@ -1190,7 +1192,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   ///  5. Salva `server_time` come nuovo cursore SOLO a sync completata: su
   ///     qualunque errore (incluso il 422 con record rifiutati) il cursore
   ///     resta invariato.
-  Future<bool> triggerSync({bool force = false}) async {
+  Future<bool> triggerSync() async {
     // GUARDIA ATOMICA: controllo e impostazione di `isSyncing` avvengono nello
     // stesso blocco sincrono, PRIMA di qualunque `await`. Prima il flag veniva
     // impostato dopo flush + letture DB + lettura del token: due trigger quasi

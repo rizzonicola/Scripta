@@ -20,19 +20,4 @@ class ResponsiveBreakpoints {
       return DeviceScreenType.mobile;
     }
   }
-
-  static bool isMobile(BuildContext context) =>
-      getScreenType(context) == DeviceScreenType.mobile;
-
-  static bool isTablet(BuildContext context) =>
-      getScreenType(context) == DeviceScreenType.tablet;
-
-  static bool isDesktop(BuildContext context) =>
-      getScreenType(context) == DeviceScreenType.desktop;
-
-  static bool isLandscape(BuildContext context) =>
-      MediaQuery.orientationOf(context) == Orientation.landscape;
-
-  static bool isPortrait(BuildContext context) =>
-      MediaQuery.orientationOf(context) == Orientation.portrait;
 }

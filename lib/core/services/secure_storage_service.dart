@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../constants/app_constants.dart';
+
 /// Service providing encrypted local storage for sensitive authentication tokens and credentials.
 /// Uses Android Keystore + EncryptedSharedPreferences on Android,
 /// Keychain on iOS/macOS, and Secret Service on Linux.
@@ -51,7 +53,7 @@ class SecureStorageService {
        _fallbackEnabledOverride = fallbackEnabled;
 
   /// Prefisso delle chiavi usate SOLO dal fallback su SharedPreferences.
-  static const _fallbackPrefix = 'scripta_secure_fallback_';
+  static const _fallbackPrefix = AppConstants.prefSecureFallbackPrefix;
 
   /// Il fallback è attivo solo su iOS/macOS (vedi commento di classe).
   bool get _fallbackEnabled {

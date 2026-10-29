@@ -94,7 +94,7 @@ class _Reply {
         'full_resync': false,
         'folders': <Object>[],
         'notes': <Object>[],
-        if (caps != null) 'caps': caps,
+        'caps': ?caps,
       });
 
   final int status;
