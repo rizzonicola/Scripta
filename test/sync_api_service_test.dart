@@ -183,6 +183,7 @@ void main() {
             isFavorite: false,
             isPinned: false,
             orderIndex: 0,
+            createdAt: 1200,
             updatedAt: 1200,
             deletedAt: null,
           ),

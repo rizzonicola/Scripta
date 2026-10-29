@@ -11,11 +11,14 @@ import 'package:http/testing.dart';
 import 'package:scripta/core/services/sync_api_service.dart';
 import 'package:scripta/features/sync/models/sync_models.dart';
 
-List<int> _bytes(String name) => File('test/fixtures/contract/$name').readAsBytesSync();
+List<int> _bytes(String name) =>
+    File('test/fixtures/contract/$name').readAsBytesSync();
 
-Map<String, dynamic> _json(String name) => json.decode(utf8.decode(_bytes(name))) as Map<String, dynamic>;
+Map<String, dynamic> _json(String name) =>
+    json.decode(utf8.decode(_bytes(name))) as Map<String, dynamic>;
 
-Future<SyncResponse> _syncAgainst(MockClient client) => SyncApiService(client).sync(
+Future<SyncResponse> _syncAgainst(MockClient client) =>
+    SyncApiService(client).sync(
       baseUrl: 'http://localhost:8080',
       token: 't',
       lastSyncedAt: 0,
@@ -24,17 +27,29 @@ Future<SyncResponse> _syncAgainst(MockClient client) => SyncApiService(client).s
     );
 
 void main() {
-  test('la richiesta di fixture: i DTO dell\'app la riproducono campo per campo', () {
+  test(
+      'la richiesta di fixture: i DTO dell\'app la riproducono campo per campo',
+      () {
     final fixture = _json('sync_request.json');
-    final folders = (fixture['folders'] as List).map((e) => FolderChangeDto.fromJson(e as Map<String, dynamic>)).toList();
-    final notes = (fixture['notes'] as List).map((e) => NoteChangeDto.fromJson(e as Map<String, dynamic>)).toList();
-    final rebuilt = SyncRequest(lastSyncedAt: fixture['last_synced_at'] as int, folders: folders, notes: notes).toJson();
+    final folders = (fixture['folders'] as List)
+        .map((e) => FolderChangeDto.fromJson(e as Map<String, dynamic>))
+        .toList();
+    final notes = (fixture['notes'] as List)
+        .map((e) => NoteChangeDto.fromJson(e as Map<String, dynamic>))
+        .toList();
+    final rebuilt = SyncRequest(
+            lastSyncedAt: fixture['last_synced_at'] as int,
+            folders: folders,
+            notes: notes)
+        .toJson();
 
     // Stesse chiavi, stessi valori: l'app produce ciò che il server si aspetta.
     expect(json.decode(json.encode(rebuilt)), fixture);
   });
 
-  test('la risposta 200 di fixture si legge, testo UTF-8 compreso, anche senza charset', () async {
+  test(
+      'la risposta 200 di fixture si legge, testo UTF-8 compreso, anche senza charset',
+      () async {
     final client = MockClient((r) async => http.Response.bytes(
           _bytes('sync_response_200.json'),
           200,
@@ -45,12 +60,15 @@ void main() {
     expect(resp.fullResync, isFalse);
     expect(resp.caps?.proto, 2);
     expect(resp.folders.map((f) => f.id), ['f-figlia', 'f-radice']);
-    expect(resp.folders.firstWhere((f) => f.id == 'f-figlia').parentId, 'f-radice');
-    expect(resp.folders.firstWhere((f) => f.id == 'f-radice').name, 'Lavoro è → 😀');
+    expect(resp.folders.firstWhere((f) => f.id == 'f-figlia').parentId,
+        'f-radice');
+    expect(resp.folders.firstWhere((f) => f.id == 'f-radice').name,
+        'Lavoro è → 😀');
     expect(resp.notes.single.title, 'Perché → già 😀');
     expect(resp.notes.single.content, '# Titolo\n\nTesto con «accenti» e 😀\n');
     expect(resp.notes.single.isFavorite, isTrue);
     expect(resp.notes.single.orderIndex, 3);
+    expect(resp.notes.single.createdAt, 1700000000000);
   });
 
   test('la risposta full_resync di fixture è riconosciuta', () async {
@@ -64,7 +82,8 @@ void main() {
     expect(resp.notes, hasLength(1));
   });
 
-  test('il 422 di fixture porta i due elementi rifiutati e non un cursore', () async {
+  test('il 422 di fixture porta i due elementi rifiutati e non un cursore',
+      () async {
     final client = MockClient((r) async => http.Response.bytes(
           _bytes('sync_response_422.json'),
           422,
@@ -84,15 +103,22 @@ void main() {
     );
   });
 
-  test('il 503 di fixture, con il suo Retry-After, diventa un\'attesa', () async {
+  test('il 503 di fixture, con il suo Retry-After, diventa un\'attesa',
+      () async {
     final headers = {
       'content-type': 'application/json',
-      ...(_json('sync_response_503.headers.json').map((k, v) => MapEntry(k.toLowerCase(), v.toString()))),
+      ...(_json('sync_response_503.headers.json')
+          .map((k, v) => MapEntry(k.toLowerCase(), v.toString()))),
     };
-    final client = MockClient((r) async => http.Response.bytes(_bytes('sync_response_503.json'), 503, headers: headers));
+    final client = MockClient((r) async => http.Response.bytes(
+        _bytes('sync_response_503.json'), 503,
+        headers: headers));
     await expectLater(
       _syncAgainst(client),
-      throwsA(predicate((e) => e is SyncApiException && e.statusCode == 503 && e.retryAfter == const Duration(seconds: 1))),
+      throwsA(predicate((e) =>
+          e is SyncApiException &&
+          e.statusCode == 503 &&
+          e.retryAfter == const Duration(seconds: 1))),
     );
   });
 }

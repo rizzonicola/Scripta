@@ -1137,6 +1137,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         isFavorite: r.isFavorite,
         isPinned: r.isPinned,
         orderIndex: r.orderIndex,
+        createdAt: r.createdAt,
         updatedAt: r.updatedAt,
         deletedAt: r.deletedAt,
       );
@@ -1159,8 +1160,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         isFavorite: d.isFavorite,
         isPinned: d.isPinned,
         orderIndex: d.orderIndex,
-        createdAt: d
-            .updatedAt, // valore di fallback: applyRemoteLWW preserva quello locale se già presente
+        createdAt: d.createdAt > 0 ? d.createdAt : d.updatedAt,
         updatedAt: d.updatedAt,
         deletedAt: d.deletedAt,
       );

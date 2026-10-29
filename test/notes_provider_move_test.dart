@@ -86,24 +86,6 @@ class FakeNotesDao implements NotesDao {
   }
 
   @override
-  Future<void> updateCreatedAt(String id, DateTime createdAt) async {
-    final row = _rows[id];
-    if (row == null) return;
-    _rows[id] = NoteRow(
-      id: row.id,
-      title: row.title,
-      content: row.content,
-      folderId: row.folderId,
-      isFavorite: row.isFavorite,
-      isPinned: row.isPinned,
-      orderIndex: row.orderIndex,
-      createdAt: createdAt.toUtc().millisecondsSinceEpoch,
-      updatedAt: row.updatedAt,
-      deletedAt: row.deletedAt,
-    );
-  }
-
-  @override
   Future<void> hardDeleteAll() async => _rows.clear();
 }
 

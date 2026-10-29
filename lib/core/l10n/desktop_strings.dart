@@ -42,6 +42,9 @@ class DesktopStrings {
   String get metadataFavorite => _t('metadataFavorite');
   String get metadataPinned => _t('metadataPinned');
   String get metadataCreatedAt => _t('metadataCreatedAt');
+  String get metadataUpdatedAt => _t('metadataUpdatedAt');
+  String get noteCreatedLabel => _t('noteCreatedLabel');
+  String get noteUpdatedLabel => _t('noteUpdatedLabel');
   String get metadataOrder => _t('metadataOrder');
   String get metadataOrderHint => _t('metadataOrderHint');
   String get metadataInvalidOrder => _t('metadataInvalidOrder');
@@ -77,6 +80,9 @@ class DesktopStrings {
       'metadataFavorite': 'Preferita',
       'metadataPinned': 'Fissata in alto',
       'metadataCreatedAt': 'Data di creazione',
+      'metadataUpdatedAt': 'Ultima modifica',
+      'noteCreatedLabel': 'Creata',
+      'noteUpdatedLabel': 'Modificata',
       'metadataOrder': 'Ordine manuale',
       'metadataOrderHint': 'Numero intero: valori più bassi compaiono prima',
       'metadataInvalidOrder': 'Inserisci un numero intero valido',
@@ -132,6 +138,9 @@ class DesktopStrings {
       'metadataFavorite': 'Favorite',
       'metadataPinned': 'Pinned to top',
       'metadataCreatedAt': 'Creation date',
+      'metadataUpdatedAt': 'Last modified',
+      'noteCreatedLabel': 'Created',
+      'noteUpdatedLabel': 'Updated',
       'metadataOrder': 'Manual order',
       'metadataOrderHint': 'Integer: lower values appear first',
       'metadataInvalidOrder': 'Enter a valid integer',
@@ -187,6 +196,9 @@ class DesktopStrings {
       'metadataFavorite': 'Favorite',
       'metadataPinned': 'Épinglée en haut',
       'metadataCreatedAt': 'Date de création',
+      'metadataUpdatedAt': 'Dernière modification',
+      'noteCreatedLabel': 'Créée',
+      'noteUpdatedLabel': 'Modifiée',
       'metadataOrder': 'Ordre manuel',
       'metadataOrderHint':
           'Entier : les valeurs basses apparaissent en premier',

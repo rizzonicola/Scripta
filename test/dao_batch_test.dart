@@ -172,7 +172,8 @@ void main() {
       expect((await dao.getById('other'))!.title, 'nuova');
     });
 
-    test('una pull preserva la data di creazione locale', () async {
+    test('una pull applica la data di creazione remota quando il remoto vince',
+        () async {
       final dao = NotesDao();
       await dao.upsert(_note('a', createdAt: 50, updatedAt: 1000));
       await dao.markSynced({'a': 1000});
@@ -183,17 +184,28 @@ void main() {
 
       final row = await dao.getById('a');
       expect(row!.title, 'dal server');
-      expect(row.createdAt, 50);
+      expect(row.createdAt, 999);
     });
 
-    test('la data di creazione non supera l\'ultima modifica conosciuta',
+    test('la data di creazione remota non supera la sua ultima modifica',
         () async {
       final dao = NotesDao();
       await dao.upsert(_note('a', createdAt: 9000, updatedAt: 9500));
       await dao.markSynced({'a': 9500});
 
       await dao
-          .applyRemoteLWWBatch([_note('a', createdAt: 1, updatedAt: 3000)]);
+          .applyRemoteLWWBatch([_note('a', createdAt: 5000, updatedAt: 3000)]);
+
+      expect((await dao.getById('a'))!.createdAt, 3000);
+    });
+
+    test('una data di creazione remota assente usa updated_at', () async {
+      final dao = NotesDao();
+      await dao.upsert(_note('a', createdAt: 50, updatedAt: 1000));
+      await dao.markSynced({'a': 1000});
+
+      await dao
+          .applyRemoteLWWBatch([_note('a', createdAt: 0, updatedAt: 3000)]);
 
       expect((await dao.getById('a'))!.createdAt, 3000);
     });

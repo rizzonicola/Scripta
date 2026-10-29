@@ -6,7 +6,7 @@ import '../../../core/l10n/desktop_strings.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
 
-/// Editor dei metadati locali/sincronizzati di una nota. Le etichette stanno
+/// Editor dei metadati sincronizzati di una nota. Le etichette stanno
 /// in `DesktopStrings` (it/en/fr): sono testi di una funzione desktop e non
 /// vale la pena forzare una rigenerazione l10n per ogni nuova voce.
 Future<void> showNoteMetadataDialog(
@@ -41,7 +41,8 @@ class _NoteMetadataDialog extends ConsumerStatefulWidget {
 class _NoteMetadataDialogState extends ConsumerState<_NoteMetadataDialog> {
   late bool _favorite = widget.note.isFavorite;
   late bool _pinned = widget.note.isPinned;
-  late DateTime _createdAt = widget.note.createdAt;
+  late DateTime _createdAt = widget.note.createdAt.toLocal();
+  late final DateTime _updatedAt = widget.note.updatedAt.toLocal();
   late final TextEditingController _orderController =
       TextEditingController(text: widget.note.orderIndex.toString());
   String? _orderError;
@@ -54,7 +55,9 @@ class _NoteMetadataDialogState extends ConsumerState<_NoteMetadataDialog> {
 
   Future<void> _pickDate() async {
     final firstDate = DateTime(2000);
-    final lastDate = DateTime.now().add(const Duration(days: 3650));
+    // La creazione non può essere nel futuro: updatedAt viene aggiornato al
+    // salvataggio, quindi il limite superiore corretto è "adesso".
+    final lastDate = DateTime.now();
     // Una data importata da un backup legacy può stare fuori dall'intervallo
     // consentito dal picker: senza clamp `showDatePicker` fallirebbe.
     final initialDate = _createdAt.isBefore(firstDate)
@@ -139,13 +142,23 @@ class _NoteMetadataDialogState extends ConsumerState<_NoteMetadataDialog> {
                 subtitle: Text(
                   DateFormat.yMMMd(
                     Localizations.localeOf(context).toString(),
-                  ).format(_createdAt),
+                  ).add_Hm().format(_createdAt),
                 ),
                 trailing: IconButton(
                   icon: const Icon(Icons.edit_calendar_outlined),
                   onPressed: _pickDate,
                 ),
                 onTap: _pickDate,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.update_rounded),
+                title: Text(ds.metadataUpdatedAt),
+                subtitle: Text(
+                  DateFormat.yMMMd(
+                    Localizations.localeOf(context).toString(),
+                  ).add_Hm().format(_updatedAt),
+                ),
               ),
               TextField(
                 controller: _orderController,

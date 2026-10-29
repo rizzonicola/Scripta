@@ -27,6 +27,7 @@ NoteChangeDto _bigNote() => NoteChangeDto(
       isFavorite: false,
       isPinned: false,
       orderIndex: 0,
+      createdAt: 1,
       updatedAt: 1,
       deletedAt: null,
     );
@@ -40,7 +41,8 @@ Future<SyncResponse> _call(SyncApiService s, {bool big = false}) => s.sync(
     );
 
 http.StreamedResponse _ok() =>
-    http.StreamedResponse(Stream.value(utf8.encode(_okBody)), 200, headers: _headers);
+    http.StreamedResponse(Stream.value(utf8.encode(_okBody)), 200,
+        headers: _headers);
 
 Stream<List<int>> _slowBody(Duration gap, {int pieces = 6}) async* {
   final bytes = utf8.encode(_okBody);
@@ -53,10 +55,13 @@ Stream<List<int>> _slowBody(Duration gap, {int pieces = 6}) async* {
 
 void main() {
   group('Y-05: timeout a progressi', () {
-    test('una risposta lenta ma viva non scade (durata totale > idle)', () async {
+    test('una risposta lenta ma viva non scade (durata totale > idle)',
+        () async {
       final client = MockClient.streaming((request, body) async {
         await body.drain<void>();
-        return http.StreamedResponse(_slowBody(const Duration(milliseconds: 60)), 200, headers: _headers);
+        return http.StreamedResponse(
+            _slowBody(const Duration(milliseconds: 60)), 200,
+            headers: _headers);
       });
       final service = SyncApiService(
         client,
@@ -127,12 +132,15 @@ void main() {
           total: Duration(seconds: 10),
         ),
       );
-      await expectLater(_call(service, big: true), throwsA(isA<TimeoutException>()));
+      await expectLater(
+          _call(service, big: true), throwsA(isA<TimeoutException>()));
     });
 
-    test('se la connessione non parte mai scade il timeout di connessione', () async {
+    test('se la connessione non parte mai scade il timeout di connessione',
+        () async {
       final client = MockClient.streaming((request, body) async {
-        return Completer<http.StreamedResponse>().future; // non legge il corpo, non risponde
+        return Completer<http.StreamedResponse>()
+            .future; // non legge il corpo, non risponde
       });
       final service = SyncApiService(
         client,
@@ -146,8 +154,11 @@ void main() {
       await expectLater(_call(service), throwsA(isA<TimeoutException>()));
     });
 
-    test('l\'attesa del server dopo l\'invio ha il suo limite, più largo dell\'idle', () async {
-      Future<http.StreamedResponse> slowServer(http.BaseRequest request, http.ByteStream body) async {
+    test(
+        'l\'attesa del server dopo l\'invio ha il suo limite, più largo dell\'idle',
+        () async {
+      Future<http.StreamedResponse> slowServer(
+          http.BaseRequest request, http.ByteStream body) async {
         await body.drain<void>();
         await Future<void>.delayed(const Duration(milliseconds: 300));
         return _ok();
@@ -176,7 +187,8 @@ void main() {
       await expectLater(_call(impatient), throwsA(isA<TimeoutException>()));
     });
 
-    test('il tetto assoluto ferma anche una risposta che non finisce mai', () async {
+    test('il tetto assoluto ferma anche una risposta che non finisce mai',
+        () async {
       final client = MockClient.streaming((request, body) async {
         await body.drain<void>();
         Stream<List<int>> endless() async* {
@@ -201,7 +213,8 @@ void main() {
     });
 
     test('gli errori HTTP restano quelli di prima (401, 422)', () async {
-      final unauthorized = SyncApiService(MockClient((r) async => http.Response('{"error":"x"}', 401)));
+      final unauthorized = SyncApiService(
+          MockClient((r) async => http.Response('{"error":"x"}', 401)));
       await expectLater(
         _call(unauthorized),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
@@ -220,7 +233,10 @@ void main() {
       await expectLater(
         _call(rejected),
         throwsA(predicate((e) =>
-            e is SyncApiException && e.statusCode == 422 && e.rejected.length == 1 && e.rejected.single.id == 'n1')),
+            e is SyncApiException &&
+            e.statusCode == 422 &&
+            e.rejected.length == 1 &&
+            e.rejected.single.id == 'n1')),
       );
     });
   });

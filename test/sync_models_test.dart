@@ -27,7 +27,9 @@ void main() {
       expect(fromJson.deletedAt, change.deletedAt);
     });
 
-    test('FolderChangeDto round-trips a non-null parentId and deletedAt (tombstone)', () {
+    test(
+        'FolderChangeDto round-trips a non-null parentId and deletedAt (tombstone)',
+        () {
       const change = FolderChangeDto(
         id: 'folder-2',
         name: 'Sottocartella',
@@ -45,7 +47,8 @@ void main() {
       expect(fromJson.deletedAt, 1756999999000);
     });
 
-    test('NoteChangeDto serializes and deserializes properly, content included', () {
+    test('NoteChangeDto serializes and deserializes properly, content included',
+        () {
       const change = NoteChangeDto(
         id: 'note-1',
         title: 'Titolo',
@@ -54,6 +57,7 @@ void main() {
         isFavorite: false,
         isPinned: false,
         orderIndex: 0,
+        createdAt: 1756900000000,
         updatedAt: 1756900000000,
         deletedAt: null,
       );
@@ -66,6 +70,7 @@ void main() {
       expect(jsonMap['is_favorite'], false);
       expect(jsonMap['is_pinned'], false);
       expect(jsonMap['order_index'], 0);
+      expect(jsonMap['created_at'], 1756900000000);
       expect(jsonMap['updated_at'], 1756900000000);
       expect(jsonMap['deleted_at'], isNull);
 
@@ -77,10 +82,30 @@ void main() {
       expect(fromJson.isFavorite, change.isFavorite);
       expect(fromJson.isPinned, change.isPinned);
       expect(fromJson.orderIndex, change.orderIndex);
+      expect(fromJson.createdAt, change.createdAt);
       expect(fromJson.updatedAt, change.updatedAt);
     });
 
-    test('NoteChangeDto round-trips isPinned=true through toJson/fromJson (regressione bug pin)', () {
+    test('NoteChangeDto senza created_at usa updated_at (server vecchio)', () {
+      final dto = NoteChangeDto.fromJson({
+        'id': 'note-old-server',
+        'title': 'T',
+        'content': 'C',
+        'folder_id': null,
+        'is_favorite': false,
+        'is_pinned': false,
+        'order_index': 0,
+        'updated_at': 1234,
+        'deleted_at': null,
+      });
+
+      expect(dto.createdAt, 1234);
+      expect(dto.updatedAt, 1234);
+    });
+
+    test(
+        'NoteChangeDto round-trips isPinned=true through toJson/fromJson (regressione bug pin)',
+        () {
       const pinned = NoteChangeDto(
         id: 'note-pinned',
         title: 'Nota fissata',
@@ -89,6 +114,7 @@ void main() {
         isFavorite: true,
         isPinned: true,
         orderIndex: 2,
+        createdAt: 1756900000000,
         updatedAt: 1756900000000,
         deletedAt: null,
       );
@@ -108,7 +134,12 @@ void main() {
       const request = SyncRequest(
         lastSyncedAt: 1000,
         folders: [
-          FolderChangeDto(id: 'f1', name: 'F1', parentId: null, updatedAt: 1200, deletedAt: null),
+          FolderChangeDto(
+              id: 'f1',
+              name: 'F1',
+              parentId: null,
+              updatedAt: 1200,
+              deletedAt: null),
         ],
         notes: [
           NoteChangeDto(
@@ -119,6 +150,7 @@ void main() {
             isFavorite: false,
             isPinned: false,
             orderIndex: 0,
+            createdAt: 1300,
             updatedAt: 1300,
             deletedAt: null,
           ),

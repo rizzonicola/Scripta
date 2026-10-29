@@ -209,9 +209,18 @@ class NoteCard extends ConsumerWidget {
 
   Widget _buildCard(BuildContext context, WidgetRef ref) {
     final l10n = AppLocalizations.of(context);
+    final ds = DesktopStrings.of(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
+    final isCreatedSort = sortOrder == NoteSortOrder.createdDesc ||
+        sortOrder == NoteSortOrder.createdAsc;
+    final dateLabel =
+        '${isCreatedSort ? ds.noteCreatedLabel : ds.noteUpdatedLabel} '
+        '${_formatDate(
+      isCreatedSort ? note.createdAt : note.updatedAt,
+      Localizations.localeOf(context).toString(),
+    )}';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -277,17 +286,7 @@ class NoteCard extends ConsumerWidget {
                             ),
                           ),
                           Text(
-                            _formatDate(
-                              // La data mostrata è quella per cui la lista è
-                              // ordinata: prima con "data creazione" si vedeva
-                              // sempre la data di modifica, quindi l'ordine
-                              // sembrava sbagliato.
-                              (sortOrder == NoteSortOrder.createdDesc ||
-                                      sortOrder == NoteSortOrder.createdAsc)
-                                  ? note.createdAt
-                                  : note.updatedAt,
-                              Localizations.localeOf(context).toString(),
-                            ),
+                            dateLabel,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: theme.mutedTextColor,
                               fontSize: 12,

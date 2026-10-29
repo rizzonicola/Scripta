@@ -879,27 +879,34 @@ class NotesNotifier extends StateNotifier<NotesState> {
         ? 0
         : state.notes.map((n) => n.orderIndex).reduce((a, b) => a > b ? a : b) +
             1;
-    final newNotes = <NoteModel>[
-      for (var i = 0; i < items.length; i++)
-        NoteModel(
-          id: _uuid.v4(),
-          title: items[i].title,
-          content: items[i].content,
-          folderId: items[i].folderId,
-          // Senza manifest, istanti DISTINTI (1 ms l'uno dall'altro,
-          // l'ultimo = now): con un unico `now` tutte le note importate
-          // avevano la stessa data di creazione/modifica e il loro ordine
-          // reciproco era deciso dall'UUID casuale, diverso a ogni avvio.
-          createdAt: items[i].createdAt ??
-              now.subtract(Duration(milliseconds: items.length - 1 - i)),
-          updatedAt: items[i].updatedAt ??
-              items[i].createdAt ??
-              now.subtract(Duration(milliseconds: items.length - 1 - i)),
-          isFavorite: items[i].isFavorite,
-          isPinned: items[i].isPinned,
-          orderIndex: items[i].orderIndex ?? baseIndex + i,
-        ),
-    ];
+    final newNotes = <NoteModel>[];
+    for (var i = 0; i < items.length; i++) {
+      // Senza manifest, istanti DISTINTI (1 ms l'uno dall'altro, l'ultimo =
+      // now): con un unico `now` tutte le note importate avevano la stessa
+      // data di creazione/modifica e il loro ordine reciproco era deciso
+      // dall'UUID casuale, diverso a ogni avvio.
+      final fallback =
+          now.subtract(Duration(milliseconds: items.length - 1 - i));
+      // Il manifest è in UTC; il modello di dominio usa sempre DateTime
+      // locali (come NoteModel.fromRow). Se manca createdAt si usa updatedAt
+      // e, in ogni caso, la creazione non può superare l'ultima modifica.
+      final updatedAt =
+          (items[i].updatedAt ?? items[i].createdAt ?? fallback).toLocal();
+      var createdAt = (items[i].createdAt ?? updatedAt).toLocal();
+      if (createdAt.isAfter(updatedAt)) createdAt = updatedAt;
+
+      newNotes.add(NoteModel(
+        id: _uuid.v4(),
+        title: items[i].title,
+        content: items[i].content,
+        folderId: items[i].folderId,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        isFavorite: items[i].isFavorite,
+        isPinned: items[i].isPinned,
+        orderIndex: items[i].orderIndex ?? baseIndex + i,
+      ));
+    }
 
     final previousNotes = state.notes;
     state = state.copyWith(
@@ -1097,10 +1104,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
     await _persist(() => _dao.upsert(updatedNote.toRow()));
   }
 
-  /// Aggiorna i metadati modificabili dal dialog della nota. `createdAt` è
-  /// solo locale (il server non lo conosce e non deve ricevere un push per
-  /// una modifica che non cambia contenuto); preferito/pin/ordine viaggiano
-  /// nella sync e quindi passano dal normale upsert dirty.
+  /// Aggiorna i metadati modificabili dal dialog della nota. Anche
+  /// `createdAt` è sincronizzato: una modifica bumpa `updatedAt` e passa dal
+  /// normale upsert dirty, così il server applica la stessa risoluzione LWW
+  /// degli altri campi.
   Future<void> updateMetadata(
     String id, {
     bool? isFavorite,
@@ -1116,33 +1123,30 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final nextFavorite = isFavorite ?? existing.isFavorite;
     final nextPinned = isPinned ?? existing.isPinned;
     final nextOrder = orderIndex ?? existing.orderIndex;
-    final nextCreatedAt = createdAt ?? existing.createdAt;
+    final nextCreatedAt = (createdAt ?? existing.createdAt).toLocal();
 
     final syncChanged = nextFavorite != existing.isFavorite ||
         nextPinned != existing.isPinned ||
-        nextOrder != existing.orderIndex;
-    final localChanged = nextCreatedAt != existing.createdAt;
-    if (!syncChanged && !localChanged) return;
+        nextOrder != existing.orderIndex ||
+        nextCreatedAt != existing.createdAt;
+    if (!syncChanged) return;
 
+    final now = DateTime.now();
+    final normalizedCreatedAt =
+        nextCreatedAt.isAfter(now) ? now : nextCreatedAt;
     final updatedNote = existing.copyWith(
       isFavorite: nextFavorite,
       isPinned: nextPinned,
       orderIndex: nextOrder,
-      createdAt: nextCreatedAt,
-      updatedAt: syncChanged ? DateTime.now() : existing.updatedAt,
+      createdAt: normalizedCreatedAt,
+      updatedAt: now,
     );
 
     final updatedList = List<NoteModel>.from(state.notes);
     updatedList[index] = updatedNote;
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
 
-    if (syncChanged) {
-      await _persist(() => _dao.upsert(updatedNote.toRow()));
-    } else if (localChanged) {
-      await _persist(
-        () => _dao.updateCreatedAt(id, updatedNote.createdAt),
-      );
-    }
+    await _persist(() => _dao.upsert(updatedNote.toRow()));
   }
 }
 

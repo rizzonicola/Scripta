@@ -38,7 +38,7 @@ class FolderChangeDto {
 /// Speculare a `models.NoteDTO` nel backend Go: il contenuto Markdown
 /// viaggia per intero nel campo `content`, non più come file separato.
 ///
-/// [isFavorite]/[isPinned]/[orderIndex] sono metadati mutabili della nota
+/// [isFavorite]/[isPinned]/[orderIndex]/[createdAt] sono metadati della nota
 /// esattamente come [title]/[content]/[folderId]: viaggiano nel protocollo
 /// di sync e sono soggetti alla stessa risoluzione LWW basata su
 /// [updatedAt]. In precedenza questo DTO non li includeva affatto, quindi
@@ -47,7 +47,8 @@ class FolderChangeDto {
 /// comunque localmente la nota appena echeggiata dal server (con
 /// updated_at >= a quello locale), sovrascrivendo silenziosamente isPinned
 /// con un default false — questa era la causa del bug "il pin non
-/// persiste dopo la sync".
+/// persiste dopo la sync". Stessa storia per [createdAt], che prima era
+/// solo locale e quindi non seguiva l'utente sugli altri dispositivi.
 class NoteChangeDto {
   final String id;
   final String title;
@@ -56,6 +57,7 @@ class NoteChangeDto {
   final bool isFavorite;
   final bool isPinned;
   final int orderIndex;
+  final int createdAt; // unix millis UTC
   final int updatedAt; // unix millis UTC
   final int? deletedAt; // unix millis UTC, null = attiva
 
@@ -67,6 +69,7 @@ class NoteChangeDto {
     required this.isFavorite,
     required this.isPinned,
     required this.orderIndex,
+    required this.createdAt,
     required this.updatedAt,
     required this.deletedAt,
   });
@@ -79,21 +82,29 @@ class NoteChangeDto {
         'is_favorite': isFavorite,
         'is_pinned': isPinned,
         'order_index': orderIndex,
+        'created_at': createdAt,
         'updated_at': updatedAt,
         'deleted_at': deletedAt,
       };
 
-  factory NoteChangeDto.fromJson(Map<String, dynamic> json) => NoteChangeDto(
-        id: json['id'] as String? ?? '',
-        title: json['title'] as String? ?? '',
-        content: json['content'] as String? ?? '',
-        folderId: json['folder_id'] as String?,
-        isFavorite: json['is_favorite'] as bool? ?? false,
-        isPinned: json['is_pinned'] as bool? ?? false,
-        orderIndex: (json['order_index'] as num?)?.toInt() ?? 0,
-        updatedAt: (json['updated_at'] as num?)?.toInt() ?? 0,
-        deletedAt: (json['deleted_at'] as num?)?.toInt(),
-      );
+  factory NoteChangeDto.fromJson(Map<String, dynamic> json) {
+    final updatedAt = (json['updated_at'] as num?)?.toInt() ?? 0;
+    final rawCreatedAt = (json['created_at'] as num?)?.toInt();
+    return NoteChangeDto(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      content: json['content'] as String? ?? '',
+      folderId: json['folder_id'] as String?,
+      isFavorite: json['is_favorite'] as bool? ?? false,
+      isPinned: json['is_pinned'] as bool? ?? false,
+      orderIndex: (json['order_index'] as num?)?.toInt() ?? 0,
+      createdAt: (rawCreatedAt == null || rawCreatedAt <= 0)
+          ? updatedAt
+          : rawCreatedAt,
+      updatedAt: updatedAt,
+      deletedAt: (json['deleted_at'] as num?)?.toInt(),
+    );
+  }
 }
 
 /// Request body per POST /api/v1/sync — speculare a `models.SyncRequest`.

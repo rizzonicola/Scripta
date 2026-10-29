@@ -3,10 +3,9 @@ import 'package:sqflite/sqflite.dart';
 import 'app_database.dart';
 import 'sql_helpers.dart';
 
-/// Riga grezza della tabella `notes`. `createdAt` esiste solo localmente
-/// (serve per l'ordinamento "data di creazione" in UI): non viene mai
-/// inviato al server, che non ha una colonna corrispondente nel proprio
-/// schema (vedi `models.NoteDTO` nel backend).
+/// Riga grezza della tabella `notes`. `createdAt` è un metadato sincronizzato
+/// come gli altri campi (serve anche per l'ordinamento "data di creazione" in
+/// UI) ed è presente nello schema del server (vedi `models.NoteDTO`).
 class NoteRow {
   final String id;
   final String title;
@@ -131,6 +130,11 @@ class NotesDao {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  static int _normalizeCreatedAt(int createdAt, int updatedAt) {
+    if (createdAt <= 0 || createdAt > updatedAt) return updatedAt;
+    return createdAt;
+  }
+
   /// Applica una riga ricevuta dal server (vedi [applyRemoteLWWBatch]).
   Future<void> applyRemoteLWW(NoteRow remote) => applyRemoteLWWBatch([remote]);
 
@@ -146,8 +150,9 @@ class NotesDao {
   /// modifica non ancora inviata non viene mai cancellata da una pull.
   /// Le righe applicate diventano pulite (`dirty = 0`).
   ///
-  /// `createdAt` è puramente locale (il server non lo conosce): viene
-  /// preservato dalla copia locale.
+  /// `createdAt` è sincronizzato come gli altri metadati: quando la versione
+  /// remota vince il confronto LWW, si applica il suo valore (normalizzato per
+  /// rispettare `created_at <= updated_at`).
   ///
   /// Costo: una SELECT per blocco di 500 id (solo i metadati, non il
   /// contenuto) più UN batch di scritture, invece di due round-trip verso il
@@ -179,21 +184,16 @@ class NotesDao {
       final batch = txn.batch();
       for (final remote in remotes) {
         final existing = local[remote.id];
-        final int createdAt;
-        if (existing == null) {
-          createdAt = remote.createdAt;
-        } else if (existing.dirty && remote.updatedAt < existing.updatedAt) {
+        if (existing != null &&
+            existing.dirty &&
+            remote.updatedAt < existing.updatedAt) {
           continue; // modifica locale non ancora inviata e più recente: resta
-        } else {
-          // La creazione non può essere posteriore a una modifica
-          // conosciuta: se la copia remota è più vecchia della data di
-          // creazione locale (clock skew, o data di ripiego), si usa la
-          // stima migliore invece di mostrare una nota "creata dopo
-          // l'ultima modifica".
-          createdAt = existing.createdAt <= remote.updatedAt
-              ? existing.createdAt
-              : remote.updatedAt;
         }
+        // La creazione non può essere posteriore a una modifica conosciuta:
+        // se il remoto manca del campo (server vecchio) o ha una data
+        // incoerente, si usa updated_at come stima migliore.
+        final createdAt =
+            _normalizeCreatedAt(remote.createdAt, remote.updatedAt);
         batch.insert(
           'notes',
           {...remote.toMap(), 'created_at': createdAt, 'dirty': 0},
@@ -303,18 +303,6 @@ class NotesDao {
           conflictAlgorithm: ConflictAlgorithm.replace);
       await txn.delete('notes', where: 'id = ?', whereArgs: [oldId]);
     });
-  }
-
-  /// Aggiorna SOLO `created_at` (metadato locale): non tocca `dirty` né
-  /// `updated_at`, quindi non genera un push inutile al server.
-  Future<void> updateCreatedAt(String id, DateTime createdAt) async {
-    final db = await _db;
-    await db.update(
-      'notes',
-      {'created_at': createdAt.toUtc().millisecondsSinceEpoch},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
   }
 
   Future<void> hardDeleteAll() async {
