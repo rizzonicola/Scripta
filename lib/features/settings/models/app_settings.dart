@@ -6,6 +6,7 @@ class AppSettings {
   final String selectedThemeId;
   final Locale? locale; // null = System default
   final String fontFamily;
+  final bool applyFontGlobally;
   final double fontSize;
   final double lineHeight;
   final HapticIntensity hapticIntensity;
@@ -15,6 +16,7 @@ class AppSettings {
     this.selectedThemeId = 'dark_teal',
     this.locale,
     this.fontFamily = 'Inter',
+    this.applyFontGlobally = true,
     this.fontSize = 16.0,
     this.lineHeight = 1.6,
     this.hapticIntensity = HapticIntensity.light,
@@ -25,6 +27,7 @@ class AppSettings {
     String? selectedThemeId,
     Locale? Function()? locale,
     String? fontFamily,
+    bool? applyFontGlobally,
     double? fontSize,
     double? lineHeight,
     HapticIntensity? hapticIntensity,
@@ -34,6 +37,7 @@ class AppSettings {
       selectedThemeId: selectedThemeId ?? this.selectedThemeId,
       locale: locale != null ? locale() : this.locale,
       fontFamily: fontFamily ?? this.fontFamily,
+      applyFontGlobally: applyFontGlobally ?? this.applyFontGlobally,
       fontSize: fontSize ?? this.fontSize,
       lineHeight: lineHeight ?? this.lineHeight,
       hapticIntensity: hapticIntensity ?? this.hapticIntensity,
@@ -50,6 +54,7 @@ class AppSettings {
         other.selectedThemeId == selectedThemeId &&
         other.locale == locale &&
         other.fontFamily == fontFamily &&
+        other.applyFontGlobally == applyFontGlobally &&
         other.fontSize == fontSize &&
         other.lineHeight == lineHeight &&
         other.hapticIntensity == hapticIntensity;
@@ -61,6 +66,7 @@ class AppSettings {
     selectedThemeId,
     locale,
     fontFamily,
+    applyFontGlobally,
     fontSize,
     lineHeight,
     hapticIntensity,

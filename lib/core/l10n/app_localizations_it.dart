@@ -197,6 +197,13 @@ class AppLocalizationsIt extends AppLocalizations {
   String get fontFamily => 'Famiglia di Font';
 
   @override
+  String get applyFontToInterface => 'Applica a tutta l’interfaccia';
+
+  @override
+  String get applyFontToInterfaceDescription =>
+      'Se disattivato, solo l’editor usa il font scelto; l’interfaccia resta in Inter.';
+
+  @override
   String get fontSize => 'Dimensione Testo';
 
   @override

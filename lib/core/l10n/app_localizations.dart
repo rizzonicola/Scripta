@@ -472,6 +472,18 @@ abstract class AppLocalizations {
   /// **'Font Family'**
   String get fontFamily;
 
+  /// No description provided for @applyFontToInterface.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply to the entire interface'**
+  String get applyFontToInterface;
+
+  /// No description provided for @applyFontToInterfaceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'When off, only the editor uses the selected font; the interface stays in Inter.'**
+  String get applyFontToInterfaceDescription;
+
   /// No description provided for @fontSize.
   ///
   /// In en, this message translates to:

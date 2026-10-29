@@ -62,6 +62,8 @@
   "languageFr": "Français",
   "typography": "Tipografia",
   "fontFamily": "Famiglia di Font",
+  "applyFontToInterface": "Applica a tutta l’interfaccia",
+  "applyFontToInterfaceDescription": "Se disattivato, solo l’editor usa il font scelto; l’interfaccia resta in Inter.",
   "fontSize": "Dimensione Testo",
   "lineHeight": "Interlinea",
   "about": "Info & Crediti",

@@ -196,7 +196,7 @@ L'unico endpoint di sincronizzazione: **delta sync** basato su ID. Il client inv
 - `server_time`: il **nuovo cursore**. Il client lo salva **solo dopo** aver applicato la risposta; su qualunque errore il cursore resta invariato.
 - La risposta comprende l'**eco** di ciò che il client ha appena inviato e, se il push ha perso il confronto LWW, la versione vincente del server. Per questo si applica con la regola LWW locale (§5).
 - `full_resync`: il cursore era più vecchio della retention dei tombstone (30 giorni), negativo o nel futuro. La risposta è lo stato **completo** (solo righe attive): il client elimina le righe locali **pulite** che non compaiono.
-- `caps` (opzionale, additivo): capability del server. Chiave assente = «non supportato»; chiave sconosciuta = ignorata; risposta senza `caps` (server 2.1.0 e precedenti) = nessuna funzione opzionale, comportamento invariato. Il client ricorda le capability **per URL** dall'ultima risposta 200 (`SyncNotifier.serverCaps`) e non le usa prima della prima risposta.
+- `caps` (opzionale, additivo): capability del server. Chiave assente = «non supportato»; chiave sconosciuta = ignorata; risposta senza `caps` (server 2.1.0 e precedenti) = nessuna funzione opzionale, comportamento invariato. Il client ricorda le capability **per URL** dall'ultima risposta 200 (`SyncNotifier.serverCaps`) e non le usa prima della prima risposta. Oggi `caps` è **informativo**: nessuna funzione del client è ancora attivata o disattivata in base ad esso; serve a negoziare estensioni future senza rompere i server precedenti.
 - **Non esistono** `accepted`, `server_wins`, `relative_path` né `deleted` (contratto precedente).
 
 **Errori**
@@ -255,6 +255,11 @@ Invia l'aggiornamento completo delle preferenze non appena l'utente modifica tem
   "layout": "split"
 }
 ```
+
+- `layout`: campo **riservato**. Il client supporta solo la modalità a due pannelli e invia sempre `"split"`; il server deve conservarlo senza interpretarlo. Un valore diverso ricevuto dal server non cambia la UI.
+- `font_family`: il client accetta solo `"Inter"` e `"JetBrains Mono"`; altri valori vengono normalizzati a `"Inter"`.
+- `font_size`, `line_spacing`: valori numerici validati e clampati dal client prima dell'applicazione.
+- L'ambito del font (interfaccia intera o solo editor) è una preferenza locale del dispositivo e non fa parte di questo payload.
 
 ---
 

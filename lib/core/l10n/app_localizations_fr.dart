@@ -194,7 +194,14 @@ class AppLocalizationsFr extends AppLocalizations {
   String get typography => 'Typographie';
 
   @override
-  String get fontFamily => 'Police d\'écriture';
+  String get fontFamily => 'Police d’écriture';
+
+  @override
+  String get applyFontToInterface => 'Appliquer à toute l’interface';
+
+  @override
+  String get applyFontToInterfaceDescription =>
+      'Désactivé, seul l’éditeur utilise la police choisie ; l’interface reste en Inter.';
 
   @override
   String get fontSize => 'Taille de Police';

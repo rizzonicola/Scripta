@@ -30,6 +30,7 @@ class AppConstants {
   static const String prefThemeMode = 'scripta_theme_mode';
   static const String prefThemeId = 'scripta_theme_id';
   static const String prefFontFamily = 'scripta_font_family';
+  static const String prefApplyFontGlobally = 'scripta_apply_font_globally';
   static const String prefFontSize = 'scripta_font_size';
   static const String prefLineHeight = 'scripta_line_height';
   static const String prefSortMode = 'scripta_sort_mode';

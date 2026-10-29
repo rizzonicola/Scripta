@@ -27,6 +27,7 @@ const _saved = AppSettings(
   selectedThemeId: 'nord',
   locale: Locale('en'),
   fontFamily: 'JetBrains Mono',
+  applyFontGlobally: false,
   fontSize: 19.0,
   lineHeight: 1.9,
   hapticIntensity: HapticIntensity.off,
@@ -40,6 +41,7 @@ void _seedSavedSettings() {
     AppConstants.prefThemeId: 'nord',
     AppConstants.prefLocale: 'en',
     AppConstants.prefFontFamily: 'JetBrains Mono',
+    AppConstants.prefApplyFontGlobally: false,
     AppConstants.prefFontSize: 19.0,
     AppConstants.prefLineHeight: 1.9,
     AppConstants.prefHapticIntensity: 'off',
@@ -72,7 +74,7 @@ void main() {
       },
     );
 
-    test('legge tutti e 7 i campi dalle chiavi dei setter', () async {
+    test('legge tutti e 8 i campi dalle chiavi dei setter', () async {
       _seedSavedSettings();
       final prefs = await SharedPreferences.getInstance();
 
@@ -205,10 +207,28 @@ void main() {
         expect(container.read(settingsProvider).themeMode, ThemeMode.light);
         // Il resto dello stato resta quello dell'istantanea.
         expect(container.read(settingsProvider).selectedThemeId, 'nord');
+        expect(container.read(settingsProvider).applyFontGlobally, isFalse);
         final prefs = await SharedPreferences.getInstance();
         expect(prefs.getString(AppConstants.prefThemeMode), 'light');
       },
     );
+
+    test('il toggle del font globale persiste solo in locale', () async {
+      _seedSavedSettings();
+      final container = ProviderContainer(
+        overrides: [settingsSnapshotProvider.overrideWithValue(_saved)],
+      );
+      addTearDown(container.dispose);
+
+      expect(container.read(settingsProvider).applyFontGlobally, isFalse);
+      await container
+          .read(settingsProvider.notifier)
+          .setApplyFontGlobally(true);
+
+      expect(container.read(settingsProvider).applyFontGlobally, isTrue);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool(AppConstants.prefApplyFontGlobally), isTrue);
+    });
   });
 
   // Il test più "esposto" del file: pompa l'app intera come `widget_test.dart`

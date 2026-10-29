@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="assets/icons/app_icon.png" alt="Scripta Logo" width="112" height="112" />
+  <img src="icons/icon.svg" alt="Scripta Logo" width="112" height="112" />
 
   # Scripta
 

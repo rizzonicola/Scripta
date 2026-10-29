@@ -91,6 +91,8 @@ AppSettings readAppSettingsFromPrefs(SharedPreferences prefs) {
     prefs.getString(AppConstants.prefFontFamily) ?? 'Inter',
     'Inter',
   );
+  final applyFontGlobally =
+      prefs.getBool(AppConstants.prefApplyFontGlobally) ?? true;
   final fontSize = _clampFontSize(
     prefs.getDouble(AppConstants.prefFontSize) ?? 16.0,
     16.0,
@@ -111,6 +113,7 @@ AppSettings readAppSettingsFromPrefs(SharedPreferences prefs) {
     selectedThemeId: themeId,
     locale: locale,
     fontFamily: fontFamily,
+    applyFontGlobally: applyFontGlobally,
     fontSize: fontSize,
     lineHeight: lineHeight,
     hapticIntensity: hapticIntensity,
@@ -147,7 +150,7 @@ Future<AppSettings?> loadSettingsSnapshot() async {
 /// setter e da `applyRemoteSettings`. Se il dato è "vecchio" l'utente vede, al
 /// più, per qualche istante le impostazioni locali precedenti, finché le
 /// remote (che arrivano dopo ≥ 500 ms) le aggiornano, come già accadeva. Non
-/// può causare perdite né sovrascritture: sono 7 preferenze di aspetto (non
+/// può causare perdite né sovrascritture: sono 8 preferenze di aspetto (non
 /// note né cartelle), la lettura non scrive nulla e il push al server parte
 /// solo dai setter, mai dalla costruzione dello stato.
 final settingsSnapshotProvider = Provider<AppSettings?>((ref) => null);
@@ -403,6 +406,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(AppConstants.prefFontFamily, family);
     _pushRemoteSettings();
+  }
+
+  Future<void> setApplyFontGlobally(bool value) async {
+    state = state.copyWith(applyFontGlobally: value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(AppConstants.prefApplyFontGlobally, value);
   }
 
   Future<void> setFontSize(double size) async {

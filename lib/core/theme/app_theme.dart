@@ -5,6 +5,12 @@ class AppTheme {
   static const String defaultFontFamily = 'Inter';
   static const String monospaceFontFamily = 'JetBrains Mono';
 
+  static String _resolveFontFamily(String fontFamily) {
+    return fontFamily.toLowerCase() == 'jetbrains mono'
+        ? monospaceFontFamily
+        : defaultFontFamily;
+  }
+
   static TextStyle getTextStyleForFont(
     String fontFamily, {
     double? fontSize,
@@ -12,11 +18,8 @@ class AppTheme {
     Color? color,
     double? height,
   }) {
-    final family = fontFamily.toLowerCase() == 'jetbrains mono'
-        ? monospaceFontFamily
-        : defaultFontFamily;
     return TextStyle(
-      fontFamily: family,
+      fontFamily: _resolveFontFamily(fontFamily),
       fontSize: fontSize,
       fontWeight: fontWeight,
       color: color,
@@ -58,11 +61,16 @@ class AppTheme {
   static ThemeData fromPalette(
     AppThemePalette palette, {
     String fontFamily = 'Inter',
+    bool applyFontGlobally = true,
   }) {
     final baseTheme = palette.brightness == Brightness.dark
         ? ThemeData.dark()
         : ThemeData.light();
-    final textTheme = baseTheme.textTheme.apply(fontFamily: defaultFontFamily);
+    final textTheme = baseTheme.textTheme.apply(
+      fontFamily: applyFontGlobally
+          ? _resolveFontFamily(fontFamily)
+          : defaultFontFamily,
+    );
 
     return ThemeData(
       useMaterial3: true,
@@ -126,19 +134,35 @@ class AppTheme {
     );
   }
 
-  static ThemeData lightTheme({String? themeId, String fontFamily = 'Inter'}) {
+  static ThemeData lightTheme({
+    String? themeId,
+    String fontFamily = 'Inter',
+    bool applyFontGlobally = true,
+  }) {
     final palette = AppThemePalettes.getById(
       themeId,
       fallbackBrightness: Brightness.light,
     );
-    return fromPalette(palette, fontFamily: fontFamily);
+    return fromPalette(
+      palette,
+      fontFamily: fontFamily,
+      applyFontGlobally: applyFontGlobally,
+    );
   }
 
-  static ThemeData darkTheme({String? themeId, String fontFamily = 'Inter'}) {
+  static ThemeData darkTheme({
+    String? themeId,
+    String fontFamily = 'Inter',
+    bool applyFontGlobally = true,
+  }) {
     final palette = AppThemePalettes.getById(
       themeId,
       fallbackBrightness: Brightness.dark,
     );
-    return fromPalette(palette, fontFamily: fontFamily);
+    return fromPalette(
+      palette,
+      fontFamily: fontFamily,
+      applyFontGlobally: applyFontGlobally,
+    );
   }
 }

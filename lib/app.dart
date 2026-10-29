@@ -15,14 +15,25 @@ import 'shell/session_persistence.dart';
 ///
 /// Costruire un `ThemeData` (con i `TextTheme` dei font inclusi) è costoso.
 /// Tenerli in un provider significa ricalcolarli solo quando cambia uno di
-/// questi due valori, e non a ogni ricostruzione di [ScriptaApp] (cambio di
+/// questi tre valori, e non a ogni ricostruzione di [ScriptaApp] (cambio di
 /// luminosità del sistema, lingua, intensità aptica...).
 final _appThemesProvider = Provider<({ThemeData light, ThemeData dark})>((ref) {
   final themeId = ref.watch(settingsProvider.select((s) => s.selectedThemeId));
   final fontFamily = ref.watch(settingsProvider.select((s) => s.fontFamily));
+  final applyFontGlobally = ref.watch(
+    settingsProvider.select((s) => s.applyFontGlobally),
+  );
   return (
-    light: AppTheme.lightTheme(themeId: themeId, fontFamily: fontFamily),
-    dark: AppTheme.darkTheme(themeId: themeId, fontFamily: fontFamily),
+    light: AppTheme.lightTheme(
+      themeId: themeId,
+      fontFamily: fontFamily,
+      applyFontGlobally: applyFontGlobally,
+    ),
+    dark: AppTheme.darkTheme(
+      themeId: themeId,
+      fontFamily: fontFamily,
+      applyFontGlobally: applyFontGlobally,
+    ),
   );
 });
 

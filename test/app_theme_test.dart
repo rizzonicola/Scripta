@@ -22,13 +22,41 @@ void main() {
     );
   });
 
-  test('il tema globale usa Inter', () {
+  test('senza font globale il tema usa Inter', () {
     expect(
       AppTheme.lightTheme().textTheme.bodyMedium?.fontFamily,
       AppTheme.defaultFontFamily,
     );
     expect(
       AppTheme.darkTheme().textTheme.bodyMedium?.fontFamily,
+      AppTheme.defaultFontFamily,
+    );
+    expect(
+      AppTheme.lightTheme(
+        fontFamily: AppTheme.monospaceFontFamily,
+        applyFontGlobally: false,
+      ).textTheme.bodyMedium?.fontFamily,
+      AppTheme.defaultFontFamily,
+    );
+  });
+
+  test('con il font globale attivo il tema usa la famiglia scelta', () {
+    expect(
+      AppTheme.lightTheme(
+        fontFamily: AppTheme.monospaceFontFamily,
+      ).textTheme.bodyMedium?.fontFamily,
+      AppTheme.monospaceFontFamily,
+    );
+    expect(
+      AppTheme.darkTheme(
+        fontFamily: AppTheme.monospaceFontFamily,
+      ).textTheme.bodyMedium?.fontFamily,
+      AppTheme.monospaceFontFamily,
+    );
+    expect(
+      AppTheme.lightTheme(
+        fontFamily: 'Famiglia Sconosciuta',
+      ).textTheme.bodyMedium?.fontFamily,
       AppTheme.defaultFontFamily,
     );
   });

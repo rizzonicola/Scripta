@@ -35,6 +35,7 @@ void main() {
         themeMode: ThemeMode.dark,
         selectedThemeId: 'nord',
         fontFamily: 'JetBrains Mono',
+        applyFontGlobally: false,
         fontSize: 18,
         lineHeight: 1.8,
       ),
@@ -54,6 +55,7 @@ void main() {
 
     expect(notifier.state.themeMode, ThemeMode.light);
     expect(notifier.state.fontFamily, 'JetBrains Mono');
+    expect(notifier.state.applyFontGlobally, isFalse);
     expect(notifier.state.fontSize, AppConstants.maxFontSize);
     expect(notifier.state.lineHeight, AppConstants.maxLineHeight);
 

@@ -314,7 +314,21 @@ class SettingsView extends ConsumerWidget {
                     },
                   ),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 8),
+
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(l10n.applyFontToInterface),
+                    subtitle: Text(l10n.applyFontToInterfaceDescription),
+                    value: settings.applyFontGlobally,
+                    onChanged: (value) {
+                      ref
+                          .read(settingsProvider.notifier)
+                          .setApplyFontGlobally(value);
+                    },
+                  ),
+
+                  const SizedBox(height: 12),
 
                   // Font size slider
                   Row(

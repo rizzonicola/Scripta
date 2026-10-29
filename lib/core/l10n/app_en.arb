@@ -62,6 +62,8 @@
   "languageFr": "Français",
   "typography": "Typography",
   "fontFamily": "Font Family",
+  "applyFontToInterface": "Apply to the entire interface",
+  "applyFontToInterfaceDescription": "When off, only the editor uses the selected font; the interface stays in Inter.",
   "fontSize": "Font Size",
   "lineHeight": "Line Spacing",
   "about": "About & Credits",
