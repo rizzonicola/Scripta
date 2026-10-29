@@ -42,14 +42,6 @@ void main() {
   });
 
   tearDown(() async {
-    // I notifier avviano letture/scritture SQLite "fire and forget" (e il
-    // pump del widget non le attende: l'I/O dell'isolate FFI non avanza con
-    // il clock finto). Chiudere subito il DB le farebbe fallire con
-    // "database has already been closed": si lascia prima smaltire l'I/O
-    // in volo, poi si chiude. 300 ms non bastavano su un runner Ubuntu con
-    // altri file di test in parallelo (CI, test `moveNote`, "failed after
-    // test completion"): 1000 ms. Resta un'attesa a tempo, non una garanzia.
-    await Future<void>.delayed(const Duration(milliseconds: 1000));
     await AppDatabase.instance.close();
     AppDatabase.debugDatabasePathOverride = null;
   });
@@ -87,6 +79,11 @@ void main() {
   testWidgets(
     'Scripta app initial widget pump test — no fake welcome note/folders',
     (WidgetTester tester) async {
+      // Solo il pump dell'app intera avvia letture SQLite non attese dal clock
+      // finto: si lascia smaltire l'I/O prima del tearDown che chiude il DB.
+      addTearDown(
+        () => Future<void>.delayed(const Duration(milliseconds: 1000)),
+      );
       await tester.pumpWidget(const ProviderScope(child: ScriptaApp()));
       await tester.pumpAndSettle();
 
@@ -127,9 +124,13 @@ void main() {
     'moveNote updates folderId and moves note between folders and root',
     () async {
       final container = ProviderContainer();
-      addTearDown(container.dispose);
-
       final notesNotifier = container.read(notesProvider.notifier);
+      addTearDown(() async {
+        await notesNotifier.flushPendingSaves();
+        container.dispose();
+      });
+      await waitUntil(() async => notesNotifier.initialLoadComplete);
+
       final note = notesNotifier.createNote(folderId: 'folder_a');
       expect(note.folderId, 'folder_a');
 
@@ -151,9 +152,13 @@ void main() {
 
   test('moveFolder moves folder and prevents cyclic moves', () async {
     final container = ProviderContainer();
-    addTearDown(container.dispose);
-
     final folderNotifier = container.read(folderProvider.notifier);
+    addTearDown(() async {
+      await folderNotifier.flushPendingWrites();
+      container.dispose();
+    });
+    await waitUntil(() async => folderNotifier.initialLoadComplete);
+
     folderNotifier.addFolder('ParentFolder');
     final parent = container
         .read(folderProvider)
@@ -182,10 +187,18 @@ void main() {
 
   test('deleteFolder cascades to subfolders and notes inside them', () async {
     final container = ProviderContainer();
-    addTearDown(container.dispose);
-
     final folderNotifier = container.read(folderProvider.notifier);
     final notesNotifier = container.read(notesProvider.notifier);
+    addTearDown(() async {
+      await notesNotifier.flushPendingSaves();
+      await folderNotifier.flushPendingWrites();
+      container.dispose();
+    });
+    await waitUntil(
+      () async =>
+          folderNotifier.initialLoadComplete &&
+          notesNotifier.initialLoadComplete,
+    );
 
     final parent = folderNotifier.addFolder('Progetti');
     final child = folderNotifier.addFolder(

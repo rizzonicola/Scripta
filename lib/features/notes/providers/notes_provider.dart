@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
 // in questo import separato, non rimossi). NotesNotifier resta
@@ -249,6 +249,12 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// indietro" la nota appena spostata.
   final Set<Future<void>> _inflightWrites = <Future<void>>{};
 
+  bool _initialLoadComplete = false;
+
+  /// Vero quando il primo caricamento dal DB è terminato.
+  @visibleForTesting
+  bool get initialLoadComplete => _initialLoadComplete;
+
   /// Esegue [op] tracciandola in [_inflightWrites]. Il Future restituito non
   /// fallisce mai: un errore di I/O viene loggato invece di diventare
   /// un'eccezione asincrona non gestita.
@@ -287,7 +293,15 @@ class NotesNotifier extends StateNotifier<NotesState> {
     : _dao = dao ?? NotesDao(),
       _restoreActiveNoteId = initialActiveNoteId,
       super(const NotesState()) {
-    PerfMarks.timeAsync('notes.load', _loadFromDb);
+    _runInitialLoad();
+  }
+
+  Future<void> _runInitialLoad() async {
+    try {
+      await PerfMarks.timeAsync('notes.load', _loadFromDb);
+    } finally {
+      _initialLoadComplete = true;
+    }
   }
 
   @override

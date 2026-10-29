@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
 // in questo import separato, non rimossi). La classe resta una
@@ -106,6 +106,12 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// loggati ma non bloccano le scritture successive.
   Future<void> _writeQueue = Future<void>.value();
 
+  bool _initialLoadComplete = false;
+
+  /// Vero quando il primo caricamento (inclusa `repairCycles`) è terminato.
+  @visibleForTesting
+  bool get initialLoadComplete => _initialLoadComplete;
+
   Future<void> _enqueueWrite(Future<void> Function() op) {
     final next = _writeQueue.then((_) => op());
     _writeQueue = next.catchError((Object e, StackTrace st) {
@@ -130,12 +136,20 @@ class FolderNotifier extends StateNotifier<FolderState> {
   }) : _foldersDao = foldersDao ?? FoldersDao(),
        _notesDao = notesDao ?? NotesDao(),
        super(FolderState(selectedFolderId: initialSelectedFolderId)) {
-    _loadFromDb(validateSelection: true);
+    _runInitialLoad();
     // Non si può notificare un altro provider durante il build di questo:
     // lo scope iniziale viene pubblicato appena il microtask lo consente.
     Future.microtask(() {
       if (mounted) _publishScope(state.selectedFolderId);
     });
+  }
+
+  Future<void> _runInitialLoad() async {
+    try {
+      await _loadFromDb(validateSelection: true);
+    } finally {
+      _initialLoadComplete = true;
+    }
   }
 
   /// Carica le cartelle attive dal DB e ricostruisce l'albero.
