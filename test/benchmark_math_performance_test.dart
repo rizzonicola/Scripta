@@ -82,6 +82,34 @@ void main() {
 
   final testNoteContent = benchmarkMarkdown.toString();
 
+  String repeatToSize(String source, int targetChars) {
+    final buffer = StringBuffer();
+    while (buffer.length < targetChars) {
+      buffer.write(source);
+    }
+    return buffer.toString();
+  }
+
+  int parseMarkdownMicros(String content) {
+    final stopwatch = Stopwatch()..start();
+    final chunks = splitNoteChunks(content);
+    var blocks = 0;
+    for (final chunk in chunks) {
+      if (chunk is MarkdownChunk) {
+        final normalized = normalizeInlineMath(chunk.source);
+        if (normalized.trim().isNotEmpty) {
+          blocks += Markdown.fromString(
+            normalized,
+            inlineMath: true,
+          ).blocks.length;
+        }
+      }
+    }
+    stopwatch.stop();
+    expect(blocks, greaterThan(0));
+    return stopwatch.elapsedMicroseconds;
+  }
+
   group('Performance Baseline & Math Rendering Benchmarks', () {
     test(
       '1. Baseline Timing: splitNoteChunks + normalizeInlineMath + Markdown.fromString',
@@ -110,6 +138,20 @@ void main() {
         expect(avgMs, lessThan(30.0));
       },
     );
+
+    test('1b. Parsing su note lunghe: 100 KB e 1 MB', () {
+      const cases = [(100000, 100000), (1000000, 700000)];
+      for (final (targetChars, budgetMicros) in cases) {
+        final content = repeatToSize(testNoteContent, targetChars);
+        parseMarkdownMicros(content);
+        final elapsedMicros = parseMarkdownMicros(content);
+        final elapsedMs = elapsedMicros / 1000.0;
+        print(
+          '--> [LONG NOTE] Parsing ${content.length} char: ${elapsedMs.toStringAsFixed(2)} ms',
+        );
+        expect(elapsedMicros, lessThan(budgetMicros));
+      }
+    });
 
     testWidgets('2. Baseline UI Lifecycle: apertura nota, initial build & layout', (
       tester,
