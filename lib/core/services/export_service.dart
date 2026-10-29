@@ -57,7 +57,6 @@ class ExportService {
     required Uint8List bytes,
     required String mimeType,
     required String dialogTitle,
-    required List<String> allowedExtensions,
   }) async {
     try {
       final uri = await FilePicker.saveFile(
@@ -65,8 +64,6 @@ class ExportService {
         fileName: fileName,
         bytes: bytes,
         mimeType: mimeType,
-        type: FileType.custom,
-        allowedExtensions: allowedExtensions,
       );
       return (saved: uri != null, fallbackPath: null);
     } catch (_) {
@@ -124,7 +121,6 @@ class ExportService {
         bytes: bytes,
         mimeType: 'text/markdown',
         dialogTitle: 'Esporta nota come Markdown',
-        allowedExtensions: ['md'],
       );
 
       if (saveResult.saved && context.mounted) {
@@ -189,7 +185,6 @@ class ExportService {
         bytes: result.bytes,
         mimeType: 'application/zip',
         dialogTitle: 'Esporta cartella come ZIP',
-        allowedExtensions: ['zip'],
       );
 
       if (saveResult.saved && context.mounted) {
@@ -244,7 +239,6 @@ class ExportService {
         bytes: result.bytes,
         mimeType: 'application/zip',
         dialogTitle: 'Esporta tutte le note come ZIP',
-        allowedExtensions: ['zip'],
       );
 
       if (saveResult.saved && context.mounted) {
