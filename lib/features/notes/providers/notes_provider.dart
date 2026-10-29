@@ -531,6 +531,60 @@ class NotesNotifier extends StateNotifier<NotesState> {
     );
   }
 
+  /// Rilegge dal database solo le note toccate da una sync, sostituendole o
+  /// rimuovendole dallo stato in memoria senza ricaricare l'intero archivio.
+  Future<void> applyRemoteChanges(Iterable<String> changedIds) async {
+    final ids = changedIds.toSet();
+    if (ids.isEmpty) return;
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (_inflightWrites.isNotEmpty) {
+        await Future.wait(List<Future<void>>.of(_inflightWrites));
+      }
+      if (!mounted) return;
+
+      final before = state.notes;
+      final rows = await Future.wait(ids.map(_dao.getById));
+      if (!mounted) return;
+      if (!identical(state.notes, before)) continue; // stato cambiato: rileggi
+
+      final replacements = <String, NoteModel>{
+        for (final row in rows)
+          if (row != null && !row.isDeleted) row.id: NoteModel.fromRow(row),
+      };
+      final pending = _pendingNote;
+      NoteModel preferPending(NoteModel fresh) =>
+          pending != null &&
+              pending.id == fresh.id &&
+              !pending.updatedAt.isBefore(fresh.updatedAt)
+          ? pending
+          : fresh;
+
+      final notes = <NoteModel>[];
+      for (final note in state.notes) {
+        if (!ids.contains(note.id)) {
+          notes.add(note);
+          continue;
+        }
+        final fresh = replacements.remove(note.id);
+        if (fresh != null) notes.add(preferPending(fresh));
+      }
+      for (final fresh in replacements.values) {
+        notes.add(preferPending(fresh));
+      }
+
+      final sorted = _sort(notes, state.sortOrder);
+      final activeStillExists = sorted.any((n) => n.id == state.activeNoteId);
+      state = state.copyWith(
+        notes: sorted,
+        activeNoteId: () => activeStillExists
+            ? state.activeNoteId
+            : (sorted.isNotEmpty ? sorted.first.id : null),
+      );
+      return;
+    }
+  }
+
   /// Ricarica l'elenco note dal database locale, preservando la nota
   /// attualmente attiva se ancora presente. Usato dopo una sync (per
   /// riflettere le modifiche remote appena applicate al DB) e dopo una

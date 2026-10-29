@@ -15,6 +15,7 @@ import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/core/services/sync_api_service.dart';
+import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -213,7 +214,7 @@ class _Harness {
   }
 }
 
-NoteRow _note(String id, String content) => NoteRow(
+NoteRow _note(String id, String content, {int updatedAt = 1000}) => NoteRow(
   id: id,
   title: 't',
   content: content,
@@ -222,9 +223,38 @@ NoteRow _note(String id, String content) => NoteRow(
   isPinned: false,
   orderIndex: 0,
   createdAt: 1,
-  updatedAt: 1000,
+  updatedAt: updatedAt,
   deletedAt: null,
 );
+
+Map<String, Object?> _remoteNote(
+  String id,
+  String content, {
+  required int updatedAt,
+  int? deletedAt,
+}) => {
+  'id': id,
+  'title': 't',
+  'content': content,
+  'folder_id': null,
+  'is_favorite': false,
+  'is_pinned': false,
+  'order_index': 0,
+  'created_at': 1,
+  'updated_at': updatedAt,
+  'deleted_at': deletedAt,
+};
+
+Future<void> _waitUntil(
+  Future<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (await condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -417,6 +447,81 @@ void main() {
       expect(repaired.id, isNot('bad-id'));
       expect(repaired.content, 'contenuto');
       expect(await dao.listDirty(), isEmpty);
+    });
+  });
+
+  group('PERF-04: aggiornamento incrementale dopo la sync', () {
+    test(
+      'una risposta parziale aggiorna e rimuove solo le note ricevute',
+      () async {
+        final dao = NotesDao();
+        await dao.upsert(_note('a', 'A', updatedAt: 1000));
+        await dao.upsert(_note('b', 'B', updatedAt: 1100));
+        await dao.upsert(_note('c', 'C', updatedAt: 1200));
+
+        final server = _Server();
+        final h = harness(server);
+        expect(await h.login(), isTrue);
+        final notes = h.container.read(notesProvider.notifier);
+        await _waitUntil(
+          () async =>
+              notes.initialLoadComplete && notes.state.notes.length == 3,
+        );
+
+        server.syncScript.add(
+          _Reply(
+            200,
+            body: json.encode({
+              'server_time': 2000,
+              'full_resync': false,
+              'folders': <Object>[],
+              'notes': [
+                _remoteNote('b', 'B remoto', updatedAt: 2000),
+                _remoteNote('c', 'C', updatedAt: 2000, deletedAt: 2000),
+              ],
+            }),
+          ),
+        );
+
+        expect(await h.notifier.triggerSync(), isTrue);
+
+        final byId = {for (final n in notes.state.notes) n.id: n};
+        expect(byId.keys, unorderedEquals(['a', 'b']));
+        expect(byId['a']!.content, 'A');
+        expect(byId['b']!.content, 'B remoto');
+        expect(notes.state.activeNoteId, isNot('c'));
+      },
+    );
+
+    test('full_resync elimina le note pulite non più presenti', () async {
+      final dao = NotesDao();
+      await dao.upsert(_note('a', 'A', updatedAt: 1000));
+      await dao.upsert(_note('b', 'B', updatedAt: 1100));
+
+      final server = _Server();
+      final h = harness(server);
+      expect(await h.login(), isTrue);
+      final notes = h.container.read(notesProvider.notifier);
+      await _waitUntil(
+        () async => notes.initialLoadComplete && notes.state.notes.length == 2,
+      );
+
+      server.syncScript.add(
+        _Reply(
+          200,
+          body: json.encode({
+            'server_time': 2000,
+            'full_resync': true,
+            'folders': <Object>[],
+            'notes': [_remoteNote('a', 'A', updatedAt: 2000)],
+          }),
+        ),
+      );
+
+      expect(await h.notifier.triggerSync(), isTrue);
+
+      expect(notes.state.notes.map((n) => n.id), ['a']);
+      expect(await dao.getById('b'), isNull);
     });
   });
 

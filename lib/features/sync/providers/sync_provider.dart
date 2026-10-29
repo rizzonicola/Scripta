@@ -1442,22 +1442,25 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             return false;
           }
 
-          // Si rilegge dal DB (tutte le note, contenuto incluso) SOLO se il DB
-          // locale è cambiato rispetto allo stato in memoria: il server ha
-          // restituito righe, è stato un full_resync oppure sono stati
-          // riparati dei record. Con "sync al cambio nota" attiva ogni
-          // cambio nota avvia un giro: rileggere e ricostruire l'intero
-          // archivio a ogni giro, anche con risposta vuota, era puro lavoro
-          // sprecato. markSynced e la purge dei tombstone non toccano nulla
-          // che la UI mostri.
-          final localDbChanged =
-              repaired ||
-              response.fullResync ||
-              response.folders.isNotEmpty ||
-              response.notes.isNotEmpty;
-          if (localDbChanged) {
+          // Si rilegge dal DB SOLO se il DB locale è cambiato rispetto allo
+          // stato in memoria: il server ha restituito righe, è stato un
+          // full_resync oppure sono stati riparati dei record. Con "sync al
+          // cambio nota" attiva ogni cambio nota avvia un giro: rileggere e
+          // ricostruire l'intero archivio a ogni giro, anche con risposta
+          // vuota, era puro lavoro sprecato. markSynced e la purge dei
+          // tombstone non toccano nulla che la UI mostri.
+          if (repaired || response.fullResync) {
             await _ref.read(folderProvider.notifier).refreshFromDb();
             await _ref.read(notesProvider.notifier).refreshFromDb();
+          } else {
+            if (response.folders.isNotEmpty) {
+              await _ref.read(folderProvider.notifier).refreshFromDb();
+            }
+            if (response.notes.isNotEmpty) {
+              await _ref
+                  .read(notesProvider.notifier)
+                  .applyRemoteChanges(response.notes.map((n) => n.id));
+            }
           }
 
           final syncedAt = DateTime.now();
