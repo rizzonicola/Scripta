@@ -207,7 +207,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     });
 
     // Fine-grained Riverpod selectors
-    final notes = ref.watch(filteredNotesProvider);
+    final noteIds = ref.watch(filteredNoteIdsProvider).ids;
     final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
     final selectedFolderId = ref.watch(
@@ -289,7 +289,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
               child: Row(
                 children: [
                   Text(
-                    '${notes.length} ${notes.length == 1 ? "nota" : "note"}',
+                    '${noteIds.length} ${noteIds.length == 1 ? "nota" : "note"}',
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: theme.mutedTextColor,
                       fontWeight: FontWeight.w600,
@@ -332,7 +332,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
               behavior: HitTestBehavior.opaque,
               entriesBuilder: (ctx) =>
                   _listMenuEntries(ctx, l10n, sortOrder, selectedFolderId),
-              child: notes.isEmpty
+              child: noteIds.isEmpty
                   ? _buildEmptyState(context, l10n, theme)
                   : isCustomReorderActive
                   ? ReorderableListView.builder(
@@ -361,7 +361,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                         );
                       },
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: notes.length,
+                      itemCount: noteIds.length,
                       onReorderItem: (oldIndex, newIndex) {
                         // onReorderItem fornisce newIndex già corretto per
                         // la rimozione dell'elemento; reorderNotes usa la
@@ -378,36 +378,34 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                             .reorderNotes(
                               oldIndex,
                               legacyNewIndex,
-                              visibleIds: notes.map((n) => n.id).toList(),
+                              visibleIds: noteIds.toList(),
                             );
                       },
                       itemBuilder: (context, index) {
-                        final note = notes[index];
-                        final isSelected = activeNoteId == note.id;
+                        final noteId = noteIds[index];
 
-                        return NoteCard(
-                          key: ValueKey(note.id),
-                          note: note,
-                          isSelected: isSelected,
+                        return _NoteListItem(
+                          key: ValueKey(noteId),
+                          noteId: noteId,
+                          isSelected: activeNoteId == noteId,
                           showDragHandle: true,
                           dragIndex: index,
-                          onTap: () => _openNote(note),
+                          onTap: _openNote,
                         );
                       },
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: notes.length,
+                      itemCount: noteIds.length,
                       itemBuilder: (context, index) {
-                        final note = notes[index];
-                        final isSelected = activeNoteId == note.id;
+                        final noteId = noteIds[index];
 
-                        return NoteCard(
-                          key: ValueKey(note.id),
-                          note: note,
-                          isSelected: isSelected,
+                        return _NoteListItem(
+                          key: ValueKey(noteId),
+                          noteId: noteId,
+                          isSelected: activeNoteId == noteId,
                           showDragHandle: false,
-                          onTap: () => _openNote(note),
+                          onTap: _openNote,
                         );
                       },
                     ),
@@ -503,6 +501,42 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Legge solo la nota che questa card rappresenta.
+///
+/// `NotesListView` osserva gli id della lista (stabili durante la digitazione);
+/// questa sottoscrizione separata fa ricostruire soltanto la card della nota
+/// modificata, non tutte quelle visibili.
+class _NoteListItem extends ConsumerWidget {
+  const _NoteListItem({
+    super.key,
+    required this.noteId,
+    required this.isSelected,
+    required this.showDragHandle,
+    required this.onTap,
+    this.dragIndex,
+  });
+
+  final String noteId;
+  final bool isSelected;
+  final bool showDragHandle;
+  final void Function(NoteModel note) onTap;
+  final int? dragIndex;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final note = ref.watch(notesByIdProvider.select((notes) => notes[noteId]));
+    if (note == null) return const SizedBox.shrink();
+
+    return NoteCard(
+      note: note,
+      isSelected: isSelected,
+      showDragHandle: showDragHandle,
+      dragIndex: dragIndex,
+      onTap: () => onTap(note),
     );
   }
 }

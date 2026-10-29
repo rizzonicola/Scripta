@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show debugPrint, listEquals, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
 // in questo import separato, non rimossi). NotesNotifier resta
@@ -1453,4 +1454,38 @@ final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
   }
 
   return filtered;
+});
+
+/// Id della lista filtrata, con uguaglianza per valore.
+///
+/// `NotesListView` osserva questo provider invece dell'intera lista: modificare
+/// il contenuto di una nota produce una nuova `List<NoteModel>` a ogni
+/// battitura, ma gli id (e quindi l'ordine della lista) restano gli stessi.
+/// Il confronto per valore evita di ricostruire il contenitore e tutte le card
+/// visibili; ogni card legge poi la propria nota da [notesByIdProvider].
+final class FilteredNoteIds {
+  const FilteredNoteIds(this.ids);
+
+  final List<String> ids;
+
+  @override
+  bool operator ==(Object other) =>
+      other is FilteredNoteIds && listEquals(ids, other.ids);
+
+  @override
+  int get hashCode => Object.hashAll(ids);
+}
+
+/// Mappa id → nota, ricostruita solo quando cambia la lista delle note.
+///
+/// Le card usano `select` su questa mappa: la modifica di una nota sostituisce
+/// solo la sua istanza, quindi Riverpod notifica solo la card interessata.
+final notesByIdProvider = Provider<Map<String, NoteModel>>((ref) {
+  final notes = ref.watch(notesProvider.select((s) => s.notes));
+  return {for (final note in notes) note.id: note};
+});
+
+final filteredNoteIdsProvider = Provider<FilteredNoteIds>((ref) {
+  final notes = ref.watch(filteredNotesProvider);
+  return FilteredNoteIds([for (final note in notes) note.id]);
 });
