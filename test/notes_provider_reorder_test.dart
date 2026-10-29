@@ -283,10 +283,7 @@ void main() {
         final notifier = await _customNotifier(dao);
 
         notifier.updateNote('A', content: 'testo digitato'); // debounce 500ms
-        notifier.moveNote('A', 'destinazione'); // entro i 500ms
-
-        // Lascia scattare il timer di autosave e tutte le scritture.
-        await Future<void>.delayed(const Duration(milliseconds: 700));
+        await notifier.moveNote('A', 'destinazione'); // entro i 500ms
         await notifier.flushPendingSaves();
 
         expect(dao.rows['A']!.folderId, 'destinazione');
@@ -301,9 +298,7 @@ void main() {
         final notifier = await _customNotifier(dao);
 
         notifier.updateNote('A', content: 'testo digitato');
-        notifier.deleteNote('A');
-
-        await Future<void>.delayed(const Duration(milliseconds: 700));
+        await notifier.deleteNote('A');
         await notifier.flushPendingSaves();
 
         expect(dao.rows['A']!.isDeleted, isTrue);
