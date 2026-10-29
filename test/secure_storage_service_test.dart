@@ -123,41 +123,45 @@ void main() {
     expect(legacyPrefs.containsKey(_tokenKey), isFalse);
   });
 
-  test('clearAuth cancella token e dati personali ma conserva il server',
-      () async {
-    await service.saveAuthToken('jwt-secret');
-    await service.saveRefreshToken('refresh-secret');
-    await service.saveUsername('mario');
-    await service.saveServerUrl('https://notes.example');
+  test(
+    'clearAuth cancella token e dati personali ma conserva il server',
+    () async {
+      await service.saveAuthToken('jwt-secret');
+      await service.saveRefreshToken('refresh-secret');
+      await service.saveUsername('mario');
+      await service.saveServerUrl('https://notes.example');
 
-    await service.clearAuth();
+      await service.clearAuth();
 
-    expect(await service.getAuthToken(), isNull);
-    expect(await service.getRefreshToken(), isNull);
-    expect(await service.getUsername(), isNull);
-    expect(await service.getServerUrl(), 'https://notes.example');
-    expect(prefs.containsKey(_tokenKey), isFalse);
-    expect(prefs.containsKey(_refreshTokenKey), isFalse);
-    expect(prefs.containsKey(_usernameKey), isFalse);
-  });
+      expect(await service.getAuthToken(), isNull);
+      expect(await service.getRefreshToken(), isNull);
+      expect(await service.getUsername(), isNull);
+      expect(await service.getServerUrl(), 'https://notes.example');
+      expect(prefs.containsKey(_tokenKey), isFalse);
+      expect(prefs.containsKey(_refreshTokenKey), isFalse);
+      expect(prefs.containsKey(_usernameKey), isFalse);
+    },
+  );
 
-  test('il token in memoria prevale su un vecchio token nel Keychain',
-      () async {
-    final staleStorage = _TestSecureStorage(
-      data: {'inkflow_jwt_token': 'stale-token'},
-      writeFails: true,
-      deleteFails: true,
-    );
-    final staleService = SecureStorageService.withFallback(
-      staleStorage,
-      fallbackEnabled: true,
-    );
+  test(
+    'il token in memoria prevale su un vecchio token nel Keychain',
+    () async {
+      final staleStorage = _TestSecureStorage(
+        data: {'inkflow_jwt_token': 'stale-token'},
+        writeFails: true,
+        deleteFails: true,
+      );
+      final staleService = SecureStorageService.withFallback(
+        staleStorage,
+        fallbackEnabled: true,
+      );
 
-    await staleService.saveAuthToken('fresh-token');
+      await staleService.saveAuthToken('fresh-token');
 
-    expect(await staleService.getAuthToken(), 'fresh-token');
-    expect(staleStorage.data['inkflow_jwt_token'], 'stale-token');
-  });
+      expect(await staleService.getAuthToken(), 'fresh-token');
+      expect(staleStorage.data['inkflow_jwt_token'], 'stale-token');
+    },
+  );
 
   test('senza fallback un errore del Keychain non viene nascosto', () async {
     final strictService = SecureStorageService.withFallback(

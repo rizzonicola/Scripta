@@ -204,8 +204,9 @@ final RegExp _textLikeCommand = RegExp(
   r'\\(?:text|textrm|textbf|textit|textsf|texttt|mathrm|mathbf|mathit|mathsf|'
   r'mathtt|mathbb|mathcal|operatorname|mbox)\s*\{([^{}]*)\}',
 );
-final RegExp _fracCommand =
-    RegExp(r'\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}');
+final RegExp _fracCommand = RegExp(
+  r'\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}',
+);
 final RegExp _sqrtCommand = RegExp(r'\\sqrt\s*\{([^{}]*)\}');
 final RegExp _leftRight = RegExp(r'\\(?:left|right)(?![a-zA-Z])');
 final RegExp _thinSpaces = RegExp(r'\\[,;:]');
@@ -231,10 +232,7 @@ String normalizeTexForInline(String tex) {
     _fracCommand,
     (m) => '${_paren(m.group(1)!)}/${_paren(m.group(2)!)}',
   );
-  out = out.replaceAllMapped(
-    _sqrtCommand,
-    (m) => '√${_paren(m.group(1)!)}',
-  );
+  out = out.replaceAllMapped(_sqrtCommand, (m) => '√${_paren(m.group(1)!)}');
   out = out.replaceAll(_leftRight, '');
   out = out.replaceAll(_thinSpaces, ' ');
   out = out.replaceAll(r'\!', '');
@@ -247,8 +245,10 @@ String normalizeTexForInline(String tex) {
 // visibili: in quel caso i delimitatori li togliamo noi. Si toglie solo se il
 // testo è "sicuro" (lettere, cifre, spazi e punteggiatura semplice), per non
 // far interpretare a Markdown caratteri come `*` o `_`.
-final RegExp _plainTexAfterNormalize =
-    RegExp(r'^[\p{L}\p{N}\s().,:;+\-=/√°%]*$', unicode: true);
+final RegExp _plainTexAfterNormalize = RegExp(
+  r'^[\p{L}\p{N}\s().,:;+\-=/√°%]*$',
+  unicode: true,
+);
 
 String _normalizeInlineSegment(String segment) {
   if (!segment.contains(r'$')) return segment;

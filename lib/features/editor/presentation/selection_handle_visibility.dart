@@ -89,7 +89,8 @@ class SelectionHandleStatus {
   }
 
   @override
-  String toString() => 'SelectionHandleStatus(painted: $isPainted, '
+  String toString() =>
+      'SelectionHandleStatus(painted: $isPainted, '
       'linked: $isLinked, opacity: ${opacity.toStringAsFixed(2)}, '
       'offstage: $isOffstage, rect: $rect)';
 }

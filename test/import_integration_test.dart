@@ -96,18 +96,17 @@ ExportNote _n(
   int orderIndex = 0,
   int createdAtMs = 1000,
   int updatedAtMs = 2000,
-}) =>
-    (
-      id: id,
-      title: title,
-      content: content,
-      folderId: folderId,
-      isFavorite: isFavorite,
-      isPinned: isPinned,
-      orderIndex: orderIndex,
-      createdAtMs: createdAtMs,
-      updatedAtMs: updatedAtMs,
-    );
+}) => (
+  id: id,
+  title: title,
+  content: content,
+  folderId: folderId,
+  isFavorite: isFavorite,
+  isPinned: isPinned,
+  orderIndex: orderIndex,
+  createdAtMs: createdAtMs,
+  updatedAtMs: updatedAtMs,
+);
 
 final List<ExportNote> _notes = [
   // Senza cartella e con cartella sconosciuta: finiscono in Non_Catalogate/.
@@ -143,9 +142,9 @@ ZipResult _exportBackup() =>
     buildNotesZip((folders: _folders, notes: _notes, settings: null));
 
 List<String> _zipNames(Uint8List bytes) => [
-      for (final f in ZipDecoder().decodeBytes(bytes).files)
-        if (f.isFile) f.name,
-    ];
+  for (final f in ZipDecoder().decodeBytes(bytes).files)
+    if (f.isFile) f.name,
+];
 
 /// ZIP "fatto da altri strumenti": nomi e contenuti a piacere.
 Uint8List _zipOf(Map<String, String> files) {
@@ -159,9 +158,9 @@ Uint8List _zipOf(Map<String, String> files) {
 
 /// Forma confrontabile (e ordinata) delle voci estratte.
 List<String> _describe(List<ImportEntry> entries) => [
-      for (final e in entries)
-        '${e.folderPathSegments.join('/')}|${e.fileName}|${e.rawContent}',
-    ]..sort();
+  for (final e in entries)
+    '${e.folderPathSegments.join('/')}|${e.fileName}|${e.rawContent}',
+]..sort();
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -210,13 +209,13 @@ void main() {
   }
 
   List<String> folderPaths() => [
-        for (final id in foldersDao.rows.keys) pathOf(id)!,
-      ];
+    for (final id in foldersDao.rows.keys) pathOf(id)!,
+  ];
 
   List<String> importedSummary() => [
-        for (final n in notesDao.rows.values)
-          '${pathOf(n.folderId) ?? 'radice'}|${n.title}|${n.content}',
-      ];
+    for (final n in notesDao.rows.values)
+      '${pathOf(n.folderId) ?? 'radice'}|${n.title}|${n.content}',
+  ];
 
   Future<({int importedNotes, int importedFolders})> commit(
     List<ImportEntry> entries,
@@ -228,177 +227,204 @@ void main() {
 
   group('ZIP prodotto dall\'esportazione', () {
     test(
-        'il backup contiene davvero il contenitore Non_Catalogate (premessa del difetto)',
-        () {
-      final names = _zipNames(_exportBackup().bytes);
+      'il backup contiene davvero il contenitore Non_Catalogate (premessa del difetto)',
+      () {
+        final names = _zipNames(_exportBackup().bytes);
 
-      expect(
-        names.where((n) => n.startsWith('$uncatalogedFolderName/')),
-        unorderedEquals([
-          '$uncatalogedFolderName/1 - Nome Nota.md',
-          '$uncatalogedFolderName/10 cose da fare.md',
-        ]),
-      );
-    });
-
-    test('esporta → importa: struttura della radice e titoli identici',
-        () async {
-      final result = await commit(
-        ImportService.decodeZipEntries(_exportBackup().bytes),
-      );
-
-      expect(result.importedNotes, _notes.length);
-      expect(result.importedFolders, _expectedFolderCount);
-      expect(
-        folderPaths(),
-        unorderedEquals(['Lavoro', 'Lavoro/2 - Progetti', 'Personale']),
-      );
-      expect(importedSummary(), unorderedEquals(_expectedImported));
-    });
+        expect(
+          names.where((n) => n.startsWith('$uncatalogedFolderName/')),
+          unorderedEquals([
+            '$uncatalogedFolderName/1 - Nome Nota.md',
+            '$uncatalogedFolderName/10 cose da fare.md',
+          ]),
+        );
+      },
+    );
 
     test(
-        'difetto 1: le note senza cartella stanno alla radice, senza cartella "Non_Catalogate"',
-        () async {
-      await commit(ImportService.decodeZipEntries(_exportBackup().bytes));
+      'esporta → importa: struttura della radice e titoli identici',
+      () async {
+        final result = await commit(
+          ImportService.decodeZipEntries(_exportBackup().bytes),
+        );
 
-      expect(
-        foldersDao.rows.values.where((f) => isUncatalogedFolderName(f.name)),
-        isEmpty,
-        reason: 'nessuna cartella visibile con il nome del contenitore',
-      );
-      final uncategorized = notesDao.rows.values
-          .where((n) =>
-              n.title == '10 cose da fare' ||
-              (n.title == '1 - Nome Nota' && n.content == 'corpo A'))
-          .toList();
-      expect(uncategorized, hasLength(2));
-      for (final note in uncategorized) {
-        expect(note.folderId, isNull,
-            reason: '"${note.title}" deve comparire solo in "Tutte le note"');
-      }
-    });
+        expect(result.importedNotes, _notes.length);
+        expect(result.importedFolders, _expectedFolderCount);
+        expect(
+          folderPaths(),
+          unorderedEquals(['Lavoro', 'Lavoro/2 - Progetti', 'Personale']),
+        );
+        expect(importedSummary(), unorderedEquals(_expectedImported));
+      },
+    );
 
     test(
-        'difetto 2: "1 - Nome Nota" conserva il prefisso anche se il testo inizia con "# Nome Nota"',
-        () async {
-      await commit(ImportService.decodeZipEntries(_exportBackup().bytes));
+      'difetto 1: le note senza cartella stanno alla radice, senza cartella "Non_Catalogate"',
+      () async {
+        await commit(ImportService.decodeZipEntries(_exportBackup().bytes));
 
-      final imported = notesDao.rows.values
-          .singleWhere((n) => n.content.startsWith('# Nome Nota'));
-      expect(imported.title, '1 - Nome Nota');
-      expect(imported.content, '# Nome Nota\n\ncorpo C');
-    });
-
-    test('il manifest ripristina metadati, contenuto esatto e cartelle vuote',
-        () async {
-      final zip = buildNotesZip((
-        folders: [
-          (id: 'f', name: 'Lavoro', parentId: null),
-          (id: 'vuota', name: 'Vuota', parentId: 'f'),
-        ],
-        notes: [
-          _n(
-            'nota-1',
-            '1 - Titolo originale',
-            '# Intestazione diversa\n\ncorpo esatto',
-            'f',
-            isFavorite: true,
-            isPinned: true,
-            orderIndex: 42,
-            createdAtMs: 1000,
-            updatedAtMs: 2000,
-          ),
-        ],
-        settings: const {'theme': 'dark', 'font_size': 18},
-      ));
-      final bundle = ImportService.decodeZipBundle(zip.bytes);
-
-      expect(bundle.entries.single.manifestNote, isNotNull);
-      expect(bundle.emptyFolderPaths,
-          containsAll(<String>['Lavoro', 'Lavoro/Vuota']));
-      expect(bundle.settings, const {'theme': 'dark', 'font_size': 18});
-
-      final result = await ImportService.commitEntries(
-        folders,
-        notes,
-        bundle.entries,
-        emptyFolderPaths: bundle.emptyFolderPaths,
-      );
-      await _settle();
-
-      expect(result.importedFolders, 2);
-      expect(folderPaths(), unorderedEquals(['Lavoro', 'Lavoro/Vuota']));
-      final imported = notesDao.rows.values.single;
-      expect(imported.title, '1 - Titolo originale');
-      expect(imported.content, '# Intestazione diversa\n\ncorpo esatto');
-      expect(imported.isFavorite, isTrue);
-      expect(imported.isPinned, isTrue);
-      expect(imported.orderIndex, 42);
-      expect(imported.createdAt, 1000);
-      expect(imported.updatedAt, 2000);
-    });
+        expect(
+          foldersDao.rows.values.where((f) => isUncatalogedFolderName(f.name)),
+          isEmpty,
+          reason: 'nessuna cartella visibile con il nome del contenitore',
+        );
+        final uncategorized = notesDao.rows.values
+            .where(
+              (n) =>
+                  n.title == '10 cose da fare' ||
+                  (n.title == '1 - Nome Nota' && n.content == 'corpo A'),
+            )
+            .toList();
+        expect(uncategorized, hasLength(2));
+        for (final note in uncategorized) {
+          expect(
+            note.folderId,
+            isNull,
+            reason: '"${note.title}" deve comparire solo in "Tutte le note"',
+          );
+        }
+      },
+    );
 
     test(
-        'importare due volte è additivo: note raddoppiate, cartelle riusate, ancora nessuna Non_Catalogate',
-        () async {
-      final bytes = _exportBackup().bytes;
-      await commit(ImportService.decodeZipEntries(bytes));
-      final second = await commit(ImportService.decodeZipEntries(bytes));
+      'difetto 2: "1 - Nome Nota" conserva il prefisso anche se il testo inizia con "# Nome Nota"',
+      () async {
+        await commit(ImportService.decodeZipEntries(_exportBackup().bytes));
 
-      expect(second.importedNotes, _notes.length);
-      expect(second.importedFolders, 0,
-          reason: 'le cartelle esistenti si riusano');
-      expect(notesDao.rows, hasLength(_notes.length * 2));
-      expect(foldersDao.rows, hasLength(_expectedFolderCount));
-      expect(
-        importedSummary(),
-        unorderedEquals([..._expectedImported, ..._expectedImported]),
-      );
-    });
+        final imported = notesDao.rows.values.singleWhere(
+          (n) => n.content.startsWith('# Nome Nota'),
+        );
+        expect(imported.title, '1 - Nome Nota');
+        expect(imported.content, '# Nome Nota\n\ncorpo C');
+      },
+    );
 
     test(
-        'una cartella "Non_Catalogate" creata da vecchie importazioni non riceve nuove note',
-        () async {
-      final legacy = folders.addFolder(uncatalogedFolderName);
-      await _settle();
+      'il manifest ripristina metadati, contenuto esatto e cartelle vuote',
+      () async {
+        final zip = buildNotesZip((
+          folders: [
+            (id: 'f', name: 'Lavoro', parentId: null),
+            (id: 'vuota', name: 'Vuota', parentId: 'f'),
+          ],
+          notes: [
+            _n(
+              'nota-1',
+              '1 - Titolo originale',
+              '# Intestazione diversa\n\ncorpo esatto',
+              'f',
+              isFavorite: true,
+              isPinned: true,
+              orderIndex: 42,
+              createdAtMs: 1000,
+              updatedAtMs: 2000,
+            ),
+          ],
+          settings: const {'theme': 'dark', 'font_size': 18},
+        ));
+        final bundle = ImportService.decodeZipBundle(zip.bytes);
 
-      final result = await commit(
-        ImportService.decodeZipEntries(_exportBackup().bytes),
-      );
+        expect(bundle.entries.single.manifestNote, isNotNull);
+        expect(
+          bundle.emptyFolderPaths,
+          containsAll(<String>['Lavoro', 'Lavoro/Vuota']),
+        );
+        expect(bundle.settings, const {'theme': 'dark', 'font_size': 18});
 
-      expect(result.importedFolders, _expectedFolderCount,
-          reason: 'quella vecchia non conta né si riusa');
-      expect(
-        notesDao.rows.values.where((n) => n.folderId == legacy.id),
-        isEmpty,
-      );
-      expect(
-        foldersDao.rows.values.where((f) => isUncatalogedFolderName(f.name)),
-        hasLength(1),
-        reason: 'solo quella già presente: l\'import non ne crea altre',
-      );
-    });
+        final result = await ImportService.commitEntries(
+          folders,
+          notes,
+          bundle.entries,
+          emptyFolderPaths: bundle.emptyFolderPaths,
+        );
+        await _settle();
+
+        expect(result.importedFolders, 2);
+        expect(folderPaths(), unorderedEquals(['Lavoro', 'Lavoro/Vuota']));
+        final imported = notesDao.rows.values.single;
+        expect(imported.title, '1 - Titolo originale');
+        expect(imported.content, '# Intestazione diversa\n\ncorpo esatto');
+        expect(imported.isFavorite, isTrue);
+        expect(imported.isPinned, isTrue);
+        expect(imported.orderIndex, 42);
+        expect(imported.createdAt, 1000);
+        expect(imported.updatedAt, 2000);
+      },
+    );
 
     test(
-        'una cartella vera annidata "Lavoro/Non_Catalogate" resta una cartella',
-        () async {
-      final bytes = _zipOf({
-        'Lavoro/Non_Catalogate/x.md': 'dentro',
-        'Non_Catalogate/y.md': 'radice',
-      });
+      'importare due volte è additivo: note raddoppiate, cartelle riusate, ancora nessuna Non_Catalogate',
+      () async {
+        final bytes = _exportBackup().bytes;
+        await commit(ImportService.decodeZipEntries(bytes));
+        final second = await commit(ImportService.decodeZipEntries(bytes));
 
-      final result = await commit(ImportService.decodeZipEntries(bytes));
+        expect(second.importedNotes, _notes.length);
+        expect(
+          second.importedFolders,
+          0,
+          reason: 'le cartelle esistenti si riusano',
+        );
+        expect(notesDao.rows, hasLength(_notes.length * 2));
+        expect(foldersDao.rows, hasLength(_expectedFolderCount));
+        expect(
+          importedSummary(),
+          unorderedEquals([..._expectedImported, ..._expectedImported]),
+        );
+      },
+    );
 
-      expect(result.importedFolders, 2);
-      expect(
-        folderPaths(),
-        unorderedEquals(['Lavoro', 'Lavoro/Non_Catalogate']),
-      );
-      expect(
-        importedSummary(),
-        unorderedEquals(['Lavoro/Non_Catalogate|x|dentro', 'radice|y|radice']),
-      );
-    });
+    test(
+      'una cartella "Non_Catalogate" creata da vecchie importazioni non riceve nuove note',
+      () async {
+        final legacy = folders.addFolder(uncatalogedFolderName);
+        await _settle();
+
+        final result = await commit(
+          ImportService.decodeZipEntries(_exportBackup().bytes),
+        );
+
+        expect(
+          result.importedFolders,
+          _expectedFolderCount,
+          reason: 'quella vecchia non conta né si riusa',
+        );
+        expect(
+          notesDao.rows.values.where((n) => n.folderId == legacy.id),
+          isEmpty,
+        );
+        expect(
+          foldersDao.rows.values.where((f) => isUncatalogedFolderName(f.name)),
+          hasLength(1),
+          reason: 'solo quella già presente: l\'import non ne crea altre',
+        );
+      },
+    );
+
+    test(
+      'una cartella vera annidata "Lavoro/Non_Catalogate" resta una cartella',
+      () async {
+        final bytes = _zipOf({
+          'Lavoro/Non_Catalogate/x.md': 'dentro',
+          'Non_Catalogate/y.md': 'radice',
+        });
+
+        final result = await commit(ImportService.decodeZipEntries(bytes));
+
+        expect(result.importedFolders, 2);
+        expect(
+          folderPaths(),
+          unorderedEquals(['Lavoro', 'Lavoro/Non_Catalogate']),
+        );
+        expect(
+          importedSummary(),
+          unorderedEquals([
+            'Lavoro/Non_Catalogate|x|dentro',
+            'radice|y|radice',
+          ]),
+        );
+      },
+    );
 
     test('un archivio senza note non crea nulla', () async {
       final result = await commit(ImportService.decodeZipEntries(_zipOf({})));
@@ -443,7 +469,9 @@ void main() {
       final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
 
       expect(
-          () => ImportService.decodeZipEntries(bytes), throwsFormatException);
+        () => ImportService.decodeZipEntries(bytes),
+        throwsFormatException,
+      );
     });
 
     test('troppi file da importare vengono rifiutati', () {
@@ -454,7 +482,9 @@ void main() {
       final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
 
       expect(
-          () => ImportService.decodeZipEntries(bytes), throwsFormatException);
+        () => ImportService.decodeZipEntries(bytes),
+        throwsFormatException,
+      );
     });
 
     test('un percorso troppo profondo viene rifiutato', () {
@@ -465,7 +495,9 @@ void main() {
       final bytes = _zipOf({deepName: 'contenuto'});
 
       expect(
-          () => ImportService.decodeZipEntries(bytes), throwsFormatException);
+        () => ImportService.decodeZipEntries(bytes),
+        throwsFormatException,
+      );
     });
   });
 
@@ -486,61 +518,68 @@ void main() {
       await file.writeAsString(text);
     }
 
-    test('stesse regole dello ZIP: radice, annidamento, rumore di macOS',
-        () async {
-      await write(['Non_Catalogate', '1 - Nome Nota.md'], 'radice');
-      await write(['Lavoro', '2 - Progetti', '01. Introduzione.md'],
-          '# Introduzione\n\ncorpo');
-      await write(['Lavoro', 'Non_Catalogate', 'x.md'], 'vera cartella');
-      await write(['superiore.md'], 'in cima');
-      await write(['__MACOSX', 'Lavoro', '._x.md'], 'spazzatura');
-      await write(['Lavoro', '._x.md'], 'spazzatura');
-      await write(['Lavoro', '.DS_Store'], 'bin');
-      await write(['Lavoro', 'immagine.png'], 'png');
-
-      final entries = await ImportService.extractFromDirectory(root);
-      final result = await commit(entries);
-
-      expect(result.importedNotes, 4);
-      expect(
-        folderPaths(),
-        unorderedEquals([
+    test(
+      'stesse regole dello ZIP: radice, annidamento, rumore di macOS',
+      () async {
+        await write(['Non_Catalogate', '1 - Nome Nota.md'], 'radice');
+        await write([
           'Lavoro',
-          'Lavoro/2 - Progetti',
-          'Lavoro/Non_Catalogate',
-        ]),
-      );
-      expect(
-        importedSummary(),
-        unorderedEquals([
-          'radice|1 - Nome Nota|radice',
-          // "# Introduzione" non è l'eco di "01. Introduzione": il titolo con
-          // il prefisso numerico vince e l'intestazione resta nel testo.
-          'Lavoro/2 - Progetti|01. Introduzione|# Introduzione\n\ncorpo',
-          'Lavoro/Non_Catalogate|x|vera cartella',
-          'radice|superiore|in cima',
-        ]),
-      );
-    });
+          '2 - Progetti',
+          '01. Introduzione.md',
+        ], '# Introduzione\n\ncorpo');
+        await write(['Lavoro', 'Non_Catalogate', 'x.md'], 'vera cartella');
+        await write(['superiore.md'], 'in cima');
+        await write(['__MACOSX', 'Lavoro', '._x.md'], 'spazzatura');
+        await write(['Lavoro', '._x.md'], 'spazzatura');
+        await write(['Lavoro', '.DS_Store'], 'bin');
+        await write(['Lavoro', 'immagine.png'], 'png');
 
-    test('importare la cartella equivale a importare lo ZIP da cui proviene',
-        () async {
-      final zipBytes = _exportBackup().bytes;
-      for (final file in ZipDecoder().decodeBytes(zipBytes).files) {
-        if (!file.isFile) continue;
-        final target = File(p.joinAll([root.path, ...file.name.split('/')]));
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(file.content as List<int>);
-      }
+        final entries = await ImportService.extractFromDirectory(root);
+        final result = await commit(entries);
 
-      final fromDisk = await ImportService.extractFromDirectory(root);
-      final fromZip = ImportService.decodeZipEntries(zipBytes);
-      expect(_describe(fromDisk), _describe(fromZip));
+        expect(result.importedNotes, 4);
+        expect(
+          folderPaths(),
+          unorderedEquals([
+            'Lavoro',
+            'Lavoro/2 - Progetti',
+            'Lavoro/Non_Catalogate',
+          ]),
+        );
+        expect(
+          importedSummary(),
+          unorderedEquals([
+            'radice|1 - Nome Nota|radice',
+            // "# Introduzione" non è l'eco di "01. Introduzione": il titolo con
+            // il prefisso numerico vince e l'intestazione resta nel testo.
+            'Lavoro/2 - Progetti|01. Introduzione|# Introduzione\n\ncorpo',
+            'Lavoro/Non_Catalogate|x|vera cartella',
+            'radice|superiore|in cima',
+          ]),
+        );
+      },
+    );
 
-      final result = await commit(fromDisk);
-      expect(result.importedFolders, _expectedFolderCount);
-      expect(importedSummary(), unorderedEquals(_expectedImported));
-    });
+    test(
+      'importare la cartella equivale a importare lo ZIP da cui proviene',
+      () async {
+        final zipBytes = _exportBackup().bytes;
+        for (final file in ZipDecoder().decodeBytes(zipBytes).files) {
+          if (!file.isFile) continue;
+          final target = File(p.joinAll([root.path, ...file.name.split('/')]));
+          await target.parent.create(recursive: true);
+          await target.writeAsBytes(file.content as List<int>);
+        }
+
+        final fromDisk = await ImportService.extractFromDirectory(root);
+        final fromZip = ImportService.decodeZipEntries(zipBytes);
+        expect(_describe(fromDisk), _describe(fromZip));
+
+        final result = await commit(fromDisk);
+        expect(result.importedFolders, _expectedFolderCount);
+        expect(importedSummary(), unorderedEquals(_expectedImported));
+      },
+    );
 
     test(
       'un "\\" nel nome di un file è un carattere, non un separatore (Linux, macOS, Android, iOS)',

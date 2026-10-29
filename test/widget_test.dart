@@ -85,18 +85,15 @@ void main() {
   });
 
   testWidgets(
-      'Scripta app initial widget pump test — no fake welcome note/folders',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(
-      const ProviderScope(
-        child: ScriptaApp(),
-      ),
-    );
-    await tester.pumpAndSettle();
+    'Scripta app initial widget pump test — no fake welcome note/folders',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(const ProviderScope(child: ScriptaApp()));
+      await tester.pumpAndSettle();
 
-    // Scripta title should be present
-    expect(find.text('Scripta'), findsWidgets);
-  });
+      // Scripta title should be present
+      expect(find.text('Scripta'), findsWidgets);
+    },
+  );
 
   test('ScriptaCodeHighlighter highlights Dart code into styled tokens', () {
     const code = 'void main() {\n  final app = ScriptaApp();\n}';
@@ -126,25 +123,31 @@ void main() {
     expect(texts, jsonCode);
   });
 
-  test('moveNote updates folderId and moves note between folders and root',
-      () async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
+  test(
+    'moveNote updates folderId and moves note between folders and root',
+    () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
 
-    final notesNotifier = container.read(notesProvider.notifier);
-    final note = notesNotifier.createNote(folderId: 'folder_a');
-    expect(note.folderId, 'folder_a');
+      final notesNotifier = container.read(notesProvider.notifier);
+      final note = notesNotifier.createNote(folderId: 'folder_a');
+      expect(note.folderId, 'folder_a');
 
-    await notesNotifier.moveNote(note.id, 'folder_b');
-    final movedNote =
-        container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
-    expect(movedNote.folderId, 'folder_b');
+      await notesNotifier.moveNote(note.id, 'folder_b');
+      final movedNote = container
+          .read(notesProvider)
+          .notes
+          .firstWhere((n) => n.id == note.id);
+      expect(movedNote.folderId, 'folder_b');
 
-    await notesNotifier.moveNote(note.id, null);
-    final rootNote =
-        container.read(notesProvider).notes.firstWhere((n) => n.id == note.id);
-    expect(rootNote.folderId, isNull);
-  });
+      await notesNotifier.moveNote(note.id, null);
+      final rootNote = container
+          .read(notesProvider)
+          .notes
+          .firstWhere((n) => n.id == note.id);
+      expect(rootNote.folderId, isNull);
+    },
+  );
 
   test('moveFolder moves folder and prevents cyclic moves', () async {
     final container = ProviderContainer();
@@ -185,17 +188,21 @@ void main() {
     final notesNotifier = container.read(notesProvider.notifier);
 
     final parent = folderNotifier.addFolder('Progetti');
-    final child =
-        folderNotifier.addFolder('Sotto-progetto', parentId: parent.id);
+    final child = folderNotifier.addFolder(
+      'Sotto-progetto',
+      parentId: parent.id,
+    );
     final noteInParent = notesNotifier.createNote(folderId: parent.id);
     final noteInChild = notesNotifier.createNote(folderId: child.id);
 
     // Attendere che le creazioni asincrone abbiano persistito su SQLite prima
     // di lanciare la cancellazione (polling sul DB, non un ritardo fisso).
     final dao = NotesDao();
-    await waitUntil(() async =>
-        await dao.getById(noteInParent.id) != null &&
-        await dao.getById(noteInChild.id) != null);
+    await waitUntil(
+      () async =>
+          await dao.getById(noteInParent.id) != null &&
+          await dao.getById(noteInChild.id) != null,
+    );
 
     folderNotifier.deleteFolder(parent.id);
 
@@ -210,8 +217,11 @@ void main() {
       return !ids.contains(noteInParent.id) && !ids.contains(noteInChild.id);
     });
 
-    final activeNoteIds =
-        container.read(notesProvider).notes.map((n) => n.id).toSet();
+    final activeNoteIds = container
+        .read(notesProvider)
+        .notes
+        .map((n) => n.id)
+        .toSet();
     expect(activeNoteIds.contains(noteInParent.id), isFalse);
     expect(activeNoteIds.contains(noteInChild.id), isFalse);
   });

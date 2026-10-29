@@ -77,7 +77,8 @@ class AppTheme {
           : palette.surface,
       elevation: 4,
       shadowColor: Colors.black.withValues(
-          alpha: palette.brightness == Brightness.dark ? 0.24 : 0.08),
+        alpha: palette.brightness == Brightness.dark ? 0.24 : 0.08,
+      ),
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
@@ -149,9 +150,7 @@ class AppTheme {
         elevation: 0,
         centerTitle: false,
         scrolledUnderElevation: 0,
-        shape: Border(
-          bottom: BorderSide(color: palette.border, width: 1),
-        ),
+        shape: Border(bottom: BorderSide(color: palette.border, width: 1)),
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: palette.surfaceElevated,
@@ -168,18 +167,12 @@ class AppTheme {
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: palette.border),
         ),
-        textStyle: TextStyle(
-          color: palette.textPrimary,
-          fontSize: 12,
-        ),
+        textStyle: TextStyle(color: palette.textPrimary, fontSize: 12),
       ),
     );
   }
 
-  static ThemeData lightTheme({
-    String? themeId,
-    String fontFamily = 'Inter',
-  }) {
+  static ThemeData lightTheme({String? themeId, String fontFamily = 'Inter'}) {
     final palette = AppThemePalettes.getById(
       themeId,
       fallbackBrightness: Brightness.light,
@@ -187,10 +180,7 @@ class AppTheme {
     return fromPalette(palette, fontFamily: fontFamily);
   }
 
-  static ThemeData darkTheme({
-    String? themeId,
-    String fontFamily = 'Inter',
-  }) {
+  static ThemeData darkTheme({String? themeId, String fontFamily = 'Inter'}) {
     final palette = AppThemePalettes.getById(
       themeId,
       fallbackBrightness: Brightness.dark,

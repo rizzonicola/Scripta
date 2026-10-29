@@ -56,8 +56,9 @@ class SearchHighlightingTextEditingController extends TextEditingController {
     // `NoteSearchHighlightedView` per la vista di sola lettura, così
     // l'aspetto della ricerca resta coerente in entrambe le modalità.
     final normalHighlight =
-        (isDark ? Colors.amber.shade700 : Colors.amber.shade300)
-            .withValues(alpha: 0.55);
+        (isDark ? Colors.amber.shade700 : Colors.amber.shade300).withValues(
+          alpha: 0.55,
+        );
     const activeHighlight = Color(0xFFFB923C); // Orange 400
 
     final text = this.text;
@@ -71,19 +72,22 @@ class SearchHighlightingTextEditingController extends TextEditingController {
       if (start >= end) continue;
 
       if (start > cursor) {
-        children
-            .add(TextSpan(text: text.substring(cursor, start), style: style));
+        children.add(
+          TextSpan(text: text.substring(cursor, start), style: style),
+        );
       }
 
       final isActive = i == _activeMatchIndex;
-      children.add(TextSpan(
-        text: text.substring(start, end),
-        style: (style ?? const TextStyle()).copyWith(
-          backgroundColor: isActive ? activeHighlight : normalHighlight,
-          color: isActive ? Colors.black : style?.color,
-          fontWeight: isActive ? FontWeight.w700 : style?.fontWeight,
+      children.add(
+        TextSpan(
+          text: text.substring(start, end),
+          style: (style ?? const TextStyle()).copyWith(
+            backgroundColor: isActive ? activeHighlight : normalHighlight,
+            color: isActive ? Colors.black : style?.color,
+            fontWeight: isActive ? FontWeight.w700 : style?.fontWeight,
+          ),
         ),
-      ));
+      );
       cursor = end;
     }
 

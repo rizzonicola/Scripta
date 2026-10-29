@@ -237,7 +237,8 @@ ParsedNote parseNoteFile(String raw, String fileName) {
   final heading = idx < lines.length ? _firstLevelHeading(lines[idx]) : null;
   if (heading == null) return (title: fileTitle, content: text);
 
-  final isTitleEcho = heading.isEmpty ||
+  final isTitleEcho =
+      heading.isEmpty ||
       _echoesFileName(heading, baseName) ||
       _generatedName.hasMatch(baseName);
   if (!isTitleEcho) return (title: fileTitle, content: text);

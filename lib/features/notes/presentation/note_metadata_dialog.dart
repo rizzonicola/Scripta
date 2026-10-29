@@ -43,8 +43,9 @@ class _NoteMetadataDialogState extends ConsumerState<_NoteMetadataDialog> {
   late bool _pinned = widget.note.isPinned;
   late DateTime _createdAt = widget.note.createdAt.toLocal();
   late final DateTime _updatedAt = widget.note.updatedAt.toLocal();
-  late final TextEditingController _orderController =
-      TextEditingController(text: widget.note.orderIndex.toString());
+  late final TextEditingController _orderController = TextEditingController(
+    text: widget.note.orderIndex.toString(),
+  );
   String? _orderError;
 
   @override
@@ -94,7 +95,9 @@ class _NoteMetadataDialogState extends ConsumerState<_NoteMetadataDialog> {
       });
       return;
     }
-    ref.read(notesProvider.notifier).updateMetadata(
+    ref
+        .read(notesProvider.notifier)
+        .updateMetadata(
           widget.note.id,
           isFavorite: _favorite,
           isPinned: _pinned,

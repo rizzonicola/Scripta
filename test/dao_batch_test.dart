@@ -15,19 +15,18 @@ NoteRow _note(
   int? deletedAt,
   String title = 't',
   String? folderId,
-}) =>
-    NoteRow(
-      id: id,
-      title: title,
-      content: '',
-      folderId: folderId,
-      isFavorite: false,
-      isPinned: false,
-      orderIndex: 0,
-      createdAt: createdAt,
-      updatedAt: updatedAt,
-      deletedAt: deletedAt,
-    );
+}) => NoteRow(
+  id: id,
+  title: title,
+  content: '',
+  folderId: folderId,
+  isFavorite: false,
+  isPinned: false,
+  orderIndex: 0,
+  createdAt: createdAt,
+  updatedAt: updatedAt,
+  deletedAt: deletedAt,
+);
 
 FolderRow _folder(
   String id, {
@@ -36,15 +35,14 @@ FolderRow _folder(
   bool isExpanded = true,
   int updatedAt = 1000,
   int? deletedAt,
-}) =>
-    FolderRow(
-      id: id,
-      name: name,
-      parentId: parentId,
-      isExpanded: isExpanded,
-      updatedAt: updatedAt,
-      deletedAt: deletedAt,
-    );
+}) => FolderRow(
+  id: id,
+  name: name,
+  parentId: parentId,
+  isExpanded: isExpanded,
+  updatedAt: updatedAt,
+  deletedAt: deletedAt,
+);
 
 Future<Set<String>> _activeNoteIds(NotesDao dao) async =>
     (await dao.getActive()).map((r) => r.id).toSet();
@@ -119,10 +117,10 @@ void main() {
       final rows = await db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE '%tombstones'",
       );
-      expect(
-        rows.map((r) => r['name']).toSet(),
-        {'idx_notes_tombstones', 'idx_folders_tombstones'},
-      );
+      expect(rows.map((r) => r['name']).toSet(), {
+        'idx_notes_tombstones',
+        'idx_folders_tombstones',
+      });
     });
   });
 
@@ -145,123 +143,139 @@ void main() {
     });
 
     test(
-        'applyRemoteLWWBatch gestisce più righe del limite di variabili SQLite',
-        () async {
-      final dao = NotesDao();
-      await dao.applyRemoteLWWBatch([
-        for (var i = 0; i < 1200; i++) _note('n$i', updatedAt: 1000 + i),
-      ]);
+      'applyRemoteLWWBatch gestisce più righe del limite di variabili SQLite',
+      () async {
+        final dao = NotesDao();
+        await dao.applyRemoteLWWBatch([
+          for (var i = 0; i < 1200; i++) _note('n$i', updatedAt: 1000 + i),
+        ]);
 
-      expect((await dao.getActive()).length, 1200);
-      expect(await dao.listDirty(), isEmpty);
-    });
+        expect((await dao.getActive()).length, 1200);
+        expect(await dao.listDirty(), isEmpty);
+      },
+    );
 
     test(
-        'in un batch la modifica locale sporca più recente resta, le altre righe si applicano',
-        () async {
-      final dao = NotesDao();
-      await dao.upsert(_note('keep', updatedAt: 5000, title: 'locale'));
+      'in un batch la modifica locale sporca più recente resta, le altre righe si applicano',
+      () async {
+        final dao = NotesDao();
+        await dao.upsert(_note('keep', updatedAt: 5000, title: 'locale'));
 
-      await dao.applyRemoteLWWBatch([
-        _note('keep', updatedAt: 4000, title: 'remoto vecchio'),
-        _note('other', updatedAt: 100, title: 'nuova'),
-      ]);
+        await dao.applyRemoteLWWBatch([
+          _note('keep', updatedAt: 4000, title: 'remoto vecchio'),
+          _note('other', updatedAt: 100, title: 'nuova'),
+        ]);
 
-      expect((await dao.getById('keep'))!.title, 'locale');
-      expect((await dao.listDirty()).map((r) => r.id).toSet(), {'keep'});
-      expect((await dao.getById('other'))!.title, 'nuova');
-    });
+        expect((await dao.getById('keep'))!.title, 'locale');
+        expect((await dao.listDirty()).map((r) => r.id).toSet(), {'keep'});
+        expect((await dao.getById('other'))!.title, 'nuova');
+      },
+    );
 
-    test('una pull applica la data di creazione remota quando il remoto vince',
-        () async {
-      final dao = NotesDao();
-      await dao.upsert(_note('a', createdAt: 50, updatedAt: 1000));
-      await dao.markSynced({'a': 1000});
+    test(
+      'una pull applica la data di creazione remota quando il remoto vince',
+      () async {
+        final dao = NotesDao();
+        await dao.upsert(_note('a', createdAt: 50, updatedAt: 1000));
+        await dao.markSynced({'a': 1000});
 
-      await dao.applyRemoteLWWBatch([
-        _note('a', createdAt: 999, updatedAt: 2000, title: 'dal server'),
-      ]);
+        await dao.applyRemoteLWWBatch([
+          _note('a', createdAt: 999, updatedAt: 2000, title: 'dal server'),
+        ]);
 
-      final row = await dao.getById('a');
-      expect(row!.title, 'dal server');
-      expect(row.createdAt, 999);
-    });
+        final row = await dao.getById('a');
+        expect(row!.title, 'dal server');
+        expect(row.createdAt, 999);
+      },
+    );
 
-    test('la data di creazione remota non supera la sua ultima modifica',
-        () async {
-      final dao = NotesDao();
-      await dao.upsert(_note('a', createdAt: 9000, updatedAt: 9500));
-      await dao.markSynced({'a': 9500});
+    test(
+      'la data di creazione remota non supera la sua ultima modifica',
+      () async {
+        final dao = NotesDao();
+        await dao.upsert(_note('a', createdAt: 9000, updatedAt: 9500));
+        await dao.markSynced({'a': 9500});
 
-      await dao
-          .applyRemoteLWWBatch([_note('a', createdAt: 5000, updatedAt: 3000)]);
+        await dao.applyRemoteLWWBatch([
+          _note('a', createdAt: 5000, updatedAt: 3000),
+        ]);
 
-      expect((await dao.getById('a'))!.createdAt, 3000);
-    });
+        expect((await dao.getById('a'))!.createdAt, 3000);
+      },
+    );
 
     test('una data di creazione remota assente usa updated_at', () async {
       final dao = NotesDao();
       await dao.upsert(_note('a', createdAt: 50, updatedAt: 1000));
       await dao.markSynced({'a': 1000});
 
-      await dao
-          .applyRemoteLWWBatch([_note('a', createdAt: 0, updatedAt: 3000)]);
+      await dao.applyRemoteLWWBatch([
+        _note('a', createdAt: 0, updatedAt: 3000),
+      ]);
 
       expect((await dao.getById('a'))!.createdAt, 3000);
     });
 
     test(
-        'lo stesso id ripetuto nel batch equivale ad applicare le righe in sequenza',
-        () async {
-      final dao = NotesDao();
-      await dao.applyRemoteLWWBatch([
-        _note('x', updatedAt: 2000, title: 'v2'),
-        _note('x', updatedAt: 1000, title: 'v1'),
-      ]);
+      'lo stesso id ripetuto nel batch equivale ad applicare le righe in sequenza',
+      () async {
+        final dao = NotesDao();
+        await dao.applyRemoteLWWBatch([
+          _note('x', updatedAt: 2000, title: 'v2'),
+          _note('x', updatedAt: 1000, title: 'v1'),
+        ]);
 
-      // La riga locale è pulita dopo la prima: il server resta autoritativo.
-      expect((await dao.getById('x'))!.title, 'v1');
-    });
-
-    test('deleteCleanNotIn elimina a blocchi e risparmia le righe sporche',
-        () async {
-      final dao = NotesDao();
-      await dao
-          .applyRemoteLWWBatch([for (var i = 0; i < 700; i++) _note('c$i')]);
-      await dao.upsert(_note('mine')); // sporca: modifica locale non inviata
-
-      await dao.deleteCleanNotIn({'c0'});
-
-      expect(await _activeNoteIds(dao), {'c0', 'mine'});
-    });
-
-    test('purgeCleanTombstones elimina solo i tombstone già confermati',
-        () async {
-      final dao = NotesDao();
-      await dao.applyRemoteLWWBatch([
-        _note('gone', deletedAt: 10), // tombstone ricevuto dal server: pulito
-        _note('alive'),
-      ]);
-      await dao.upsert(_note('pending',
-          deletedAt: 20)); // eliminazione locale non ancora inviata
-
-      await dao.purgeCleanTombstones();
-
-      expect(await dao.getById('gone'), isNull);
-      expect(await dao.getById('pending'), isNotNull);
-      expect(await dao.getById('alive'), isNotNull);
-    });
+        // La riga locale è pulita dopo la prima: il server resta autoritativo.
+        expect((await dao.getById('x'))!.title, 'v1');
+      },
+    );
 
     test(
-        'upsertBatch scrive tutte le righe come sporche (e non fa nulla se vuoto)',
-        () async {
-      final dao = NotesDao();
-      await dao.upsertBatch(const []);
-      expect(await dao.getActive(), isEmpty);
+      'deleteCleanNotIn elimina a blocchi e risparmia le righe sporche',
+      () async {
+        final dao = NotesDao();
+        await dao.applyRemoteLWWBatch([
+          for (var i = 0; i < 700; i++) _note('c$i'),
+        ]);
+        await dao.upsert(_note('mine')); // sporca: modifica locale non inviata
 
-      await dao.upsertBatch([_note('a'), _note('b')]);
-      expect((await dao.listDirty()).map((r) => r.id).toSet(), {'a', 'b'});
-    });
+        await dao.deleteCleanNotIn({'c0'});
+
+        expect(await _activeNoteIds(dao), {'c0', 'mine'});
+      },
+    );
+
+    test(
+      'purgeCleanTombstones elimina solo i tombstone già confermati',
+      () async {
+        final dao = NotesDao();
+        await dao.applyRemoteLWWBatch([
+          _note('gone', deletedAt: 10), // tombstone ricevuto dal server: pulito
+          _note('alive'),
+        ]);
+        await dao.upsert(
+          _note('pending', deletedAt: 20),
+        ); // eliminazione locale non ancora inviata
+
+        await dao.purgeCleanTombstones();
+
+        expect(await dao.getById('gone'), isNull);
+        expect(await dao.getById('pending'), isNotNull);
+        expect(await dao.getById('alive'), isNotNull);
+      },
+    );
+
+    test(
+      'upsertBatch scrive tutte le righe come sporche (e non fa nulla se vuoto)',
+      () async {
+        final dao = NotesDao();
+        await dao.upsertBatch(const []);
+        expect(await dao.getActive(), isEmpty);
+
+        await dao.upsertBatch([_note('a'), _note('b')]);
+        expect((await dao.listDirty()).map((r) => r.id).toSet(), {'a', 'b'});
+      },
+    );
   });
 
   group('FoldersDao (batch e cascade)', () {
@@ -283,51 +297,56 @@ void main() {
     });
 
     test(
-        'cascadeSoftDelete cancella sottoalbero e note, risparmia le altre cartelle',
-        () async {
-      final folders = FoldersDao();
-      final notes = NotesDao();
-      await folders.upsert(_folder('root'));
-      await folders.upsert(_folder('child', parentId: 'root'));
-      await folders.upsert(_folder('grand', parentId: 'child'));
-      await folders.upsert(_folder('sibling'));
-      await notes.upsertBatch([
-        _note('n1', folderId: 'root'),
-        _note('n2', folderId: 'grand'),
-        _note('n3', folderId: 'sibling'),
-      ]);
+      'cascadeSoftDelete cancella sottoalbero e note, risparmia le altre cartelle',
+      () async {
+        final folders = FoldersDao();
+        final notes = NotesDao();
+        await folders.upsert(_folder('root'));
+        await folders.upsert(_folder('child', parentId: 'root'));
+        await folders.upsert(_folder('grand', parentId: 'child'));
+        await folders.upsert(_folder('sibling'));
+        await notes.upsertBatch([
+          _note('n1', folderId: 'root'),
+          _note('n2', folderId: 'grand'),
+          _note('n3', folderId: 'sibling'),
+        ]);
 
-      await folders.cascadeSoftDelete(
-        'root',
-        5000,
-        deleteNotesInFolder: notes.softDeleteByFolder,
-      );
+        await folders.cascadeSoftDelete(
+          'root',
+          5000,
+          deleteNotesInFolder: notes.softDeleteByFolder,
+        );
 
-      expect((await folders.getActive()).map((f) => f.id).toSet(), {'sibling'});
-      expect(await _activeNoteIds(notes), {'n3'});
-      for (final id in ['root', 'child', 'grand']) {
-        expect((await folders.getById(id))!.deletedAt, 5000, reason: id);
-      }
-      expect((await folders.getById('sibling'))!.deletedAt, isNull);
-      expect((await notes.getById('n1'))!.deletedAt, 5000);
-      expect((await notes.getById('n2'))!.deletedAt, 5000);
-    });
+        expect((await folders.getActive()).map((f) => f.id).toSet(), {
+          'sibling',
+        });
+        expect(await _activeNoteIds(notes), {'n3'});
+        for (final id in ['root', 'child', 'grand']) {
+          expect((await folders.getById(id))!.deletedAt, 5000, reason: id);
+        }
+        expect((await folders.getById('sibling'))!.deletedAt, isNull);
+        expect((await notes.getById('n1'))!.deletedAt, 5000);
+        expect((await notes.getById('n2'))!.deletedAt, 5000);
+      },
+    );
 
-    test('cascadeSoftDelete termina anche con riferimenti genitore ciclici',
-        () async {
-      final folders = FoldersDao();
-      await folders.upsert(_folder('a', parentId: 'b'));
-      await folders.upsert(_folder('b', parentId: 'a'));
+    test(
+      'cascadeSoftDelete termina anche con riferimenti genitore ciclici',
+      () async {
+        final folders = FoldersDao();
+        await folders.upsert(_folder('a', parentId: 'b'));
+        await folders.upsert(_folder('b', parentId: 'a'));
 
-      await folders.cascadeSoftDelete(
-        'a',
-        7000,
-        deleteNotesInFolder: (folderId, now) async {},
-      );
+        await folders.cascadeSoftDelete(
+          'a',
+          7000,
+          deleteNotesInFolder: (folderId, now) async {},
+        );
 
-      expect((await folders.getById('a'))!.deletedAt, 7000);
-      expect((await folders.getById('b'))!.deletedAt, 7000);
-    });
+        expect((await folders.getById('a'))!.deletedAt, 7000);
+        expect((await folders.getById('b'))!.deletedAt, 7000);
+      },
+    );
 
     test('cascadeSoftDelete marca come sporche le righe cancellate', () async {
       final folders = FoldersDao();
@@ -343,50 +362,55 @@ void main() {
       expect((await folders.listDirty()).map((f) => f.id).toSet(), {'root'});
     });
 
-    test('applyRemoteLWWBatch preserva isExpanded locale e applica il resto',
-        () async {
-      final folders = FoldersDao();
-      await folders.upsert(_folder('f', name: 'F', isExpanded: false));
-      await folders.markSynced({'f': 1000});
+    test(
+      'applyRemoteLWWBatch preserva isExpanded locale e applica il resto',
+      () async {
+        final folders = FoldersDao();
+        await folders.upsert(_folder('f', name: 'F', isExpanded: false));
+        await folders.markSynced({'f': 1000});
 
-      await folders.applyRemoteLWWBatch([
-        _folder('f', name: 'Rinominata', isExpanded: true, updatedAt: 2000),
-      ]);
+        await folders.applyRemoteLWWBatch([
+          _folder('f', name: 'Rinominata', isExpanded: true, updatedAt: 2000),
+        ]);
 
-      final row = await folders.getById('f');
-      expect(row!.name, 'Rinominata');
-      expect(row.isExpanded, isFalse);
-    });
-
-    test('applyRemoteLWWBatch non sovrascrive una cartella sporca più recente',
-        () async {
-      final folders = FoldersDao();
-      await folders.upsert(_folder('f', name: 'locale', updatedAt: 5000));
-
-      await folders.applyRemoteLWWBatch([
-        _folder('f', name: 'remota vecchia', updatedAt: 4000),
-      ]);
-
-      expect((await folders.getById('f'))!.name, 'locale');
-      expect((await folders.listDirty()).map((f) => f.id).toSet(), {'f'});
-    });
+        final row = await folders.getById('f');
+        expect(row!.name, 'Rinominata');
+        expect(row.isExpanded, isFalse);
+      },
+    );
 
     test(
-        'purgeCleanTombstones elimina solo le cartelle cancellate e confermate',
-        () async {
-      final folders = FoldersDao();
-      await folders.applyRemoteLWWBatch([
-        _folder('gone', deletedAt: 10),
-        _folder('alive'),
-      ]);
-      await folders.upsert(_folder('pending', deletedAt: 20));
+      'applyRemoteLWWBatch non sovrascrive una cartella sporca più recente',
+      () async {
+        final folders = FoldersDao();
+        await folders.upsert(_folder('f', name: 'locale', updatedAt: 5000));
 
-      await folders.purgeCleanTombstones();
+        await folders.applyRemoteLWWBatch([
+          _folder('f', name: 'remota vecchia', updatedAt: 4000),
+        ]);
 
-      expect(await folders.getById('gone'), isNull);
-      expect(await folders.getById('pending'), isNotNull);
-      expect(await folders.getById('alive'), isNotNull);
-    });
+        expect((await folders.getById('f'))!.name, 'locale');
+        expect((await folders.listDirty()).map((f) => f.id).toSet(), {'f'});
+      },
+    );
+
+    test(
+      'purgeCleanTombstones elimina solo le cartelle cancellate e confermate',
+      () async {
+        final folders = FoldersDao();
+        await folders.applyRemoteLWWBatch([
+          _folder('gone', deletedAt: 10),
+          _folder('alive'),
+        ]);
+        await folders.upsert(_folder('pending', deletedAt: 20));
+
+        await folders.purgeCleanTombstones();
+
+        expect(await folders.getById('gone'), isNull);
+        expect(await folders.getById('pending'), isNotNull);
+        expect(await folders.getById('alive'), isNotNull);
+      },
+    );
   });
 
   group('SyncMetaDao (identità account)', () {
@@ -404,16 +428,18 @@ void main() {
       AppDatabase.debugDatabasePathOverride = null;
     });
 
-    test('clearSyncState azzera il cursore e conserva la nuova identità',
-        () async {
-      final meta = SyncMetaDao();
-      await meta.setSyncCursor(123456);
-      await meta.setAccountIdentity('http://old|A');
+    test(
+      'clearSyncState azzera il cursore e conserva la nuova identità',
+      () async {
+        final meta = SyncMetaDao();
+        await meta.setSyncCursor(123456);
+        await meta.setAccountIdentity('http://old|A');
 
-      await meta.clearSyncState(accountIdentity: 'http://new|B');
+        await meta.clearSyncState(accountIdentity: 'http://new|B');
 
-      expect(await meta.getSyncCursor(), 0);
-      expect(await meta.getAccountIdentity(), 'http://new|B');
-    });
+        expect(await meta.getSyncCursor(), 0);
+        expect(await meta.getAccountIdentity(), 'http://new|B');
+      },
+    );
   });
 }

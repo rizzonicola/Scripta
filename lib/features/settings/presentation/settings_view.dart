@@ -37,10 +37,8 @@ class SettingsView extends ConsumerWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => const FractionallySizedBox(
-        heightFactor: 0.85,
-        child: SettingsView(),
-      ),
+      builder: (ctx) =>
+          const FractionallySizedBox(heightFactor: 0.85, child: SettingsView()),
     );
   }
 
@@ -138,7 +136,9 @@ class SettingsView extends ConsumerWidget {
                       ref
                           .read(settingsProvider.notifier)
                           .setThemeId(palette.id);
-                      ref.read(settingsProvider.notifier).setThemeMode(
+                      ref
+                          .read(settingsProvider.notifier)
+                          .setThemeMode(
                             palette.brightness == Brightness.dark
                                 ? ThemeMode.dark
                                 : ThemeMode.light,
@@ -243,8 +243,9 @@ class SettingsView extends ConsumerWidget {
                 children: [
                   RadioListTile<String?>(
                     title: Text(l10n.languageSystem),
-                    subtitle:
-                        const Text('Rileva automaticamente / Auto detect'),
+                    subtitle: const Text(
+                      'Rileva automaticamente / Auto detect',
+                    ),
                     value: null,
                   ),
                   RadioListTile<String?>(
@@ -286,8 +287,10 @@ class SettingsView extends ConsumerWidget {
                     initialValue: settings.fontFamily,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                     ),
                     items: const [
                       DropdownMenuItem(

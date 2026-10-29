@@ -104,8 +104,9 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       final note = notifier.createNote(folderId: 'personal-folder-id');
-      final beforeMove =
-          notifier.state.notes.firstWhere((n) => n.id == note.id);
+      final beforeMove = notifier.state.notes.firstWhere(
+        (n) => n.id == note.id,
+      );
       expect(beforeMove.folderId, 'personal-folder-id');
 
       await notifier.moveNote(note.id, 'work-folder-id');
@@ -113,9 +114,10 @@ void main() {
       final afterMove = notifier.state.notes.firstWhere((n) => n.id == note.id);
       expect(afterMove.folderId, 'work-folder-id');
       expect(
-          afterMove.updatedAt.isAfter(beforeMove.updatedAt) ||
-              afterMove.updatedAt.isAtSameMomentAs(beforeMove.updatedAt),
-          isTrue);
+        afterMove.updatedAt.isAfter(beforeMove.updatedAt) ||
+            afterMove.updatedAt.isAtSameMomentAs(beforeMove.updatedAt),
+        isTrue,
+      );
     });
 
     test('moving to null (root) clears the folder', () async {
@@ -143,40 +145,44 @@ void main() {
       expect(after.folderId, 'folder-a');
     });
 
-    test('se il DB rifiuta la scrittura lo spostamento viene annullato',
-        () async {
-      final dao = FakeNotesDao();
-      final notifier = NotesNotifier(dao: dao);
-      await Future<void>.delayed(Duration.zero);
+    test(
+      'se il DB rifiuta la scrittura lo spostamento viene annullato',
+      () async {
+        final dao = FakeNotesDao();
+        final notifier = NotesNotifier(dao: dao);
+        await Future<void>.delayed(Duration.zero);
 
-      final note = notifier.createNote(folderId: 'folder-a');
-      await Future<void>.delayed(Duration.zero);
+        final note = notifier.createNote(folderId: 'folder-a');
+        await Future<void>.delayed(Duration.zero);
 
-      dao.failUpserts = true;
-      await expectLater(
-        notifier.moveNote(note.id, 'folder-b'),
-        throwsStateError,
-      );
+        dao.failUpserts = true;
+        await expectLater(
+          notifier.moveNote(note.id, 'folder-b'),
+          throwsStateError,
+        );
 
-      final after = notifier.state.notes.firstWhere((n) => n.id == note.id);
-      expect(after.folderId, 'folder-a');
-      expect((await dao.getById(note.id))!.folderId, 'folder-a');
-    });
+        final after = notifier.state.notes.firstWhere((n) => n.id == note.id);
+        expect(after.folderId, 'folder-a');
+        expect((await dao.getById(note.id))!.folderId, 'folder-a');
+      },
+    );
 
-    test('deleteNote removes it from the active list and persists a tombstone',
-        () async {
-      final dao = FakeNotesDao();
-      final notifier = NotesNotifier(dao: dao);
-      await Future<void>.delayed(Duration.zero);
+    test(
+      'deleteNote removes it from the active list and persists a tombstone',
+      () async {
+        final dao = FakeNotesDao();
+        final notifier = NotesNotifier(dao: dao);
+        await Future<void>.delayed(Duration.zero);
 
-      final note = notifier.createNote();
-      await notifier.deleteNote(note.id);
+        final note = notifier.createNote();
+        await notifier.deleteNote(note.id);
 
-      expect(notifier.state.notes.any((n) => n.id == note.id), isFalse);
+        expect(notifier.state.notes.any((n) => n.id == note.id), isFalse);
 
-      final stored = await dao.getById(note.id);
-      expect(stored, isNotNull);
-      expect(stored!.isDeleted, isTrue);
-    });
+        final stored = await dao.getById(note.id);
+        expect(stored, isNotNull);
+        expect(stored!.isDeleted, isTrue);
+      },
+    );
   });
 }

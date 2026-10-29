@@ -78,9 +78,11 @@ class _StartupServer {
 
   late final http.Client client = MockClient(_handle);
 
-  http.Response _error(int status) =>
-      http.Response(json.encode({'error': 'errore di prova'}), status,
-          headers: _headers);
+  http.Response _error(int status) => http.Response(
+    json.encode({'error': 'errore di prova'}),
+    status,
+    headers: _headers,
+  );
 
   Future<http.Response> _handle(http.Request request) async {
     switch (request.url.path) {
@@ -168,13 +170,10 @@ void main() {
   }
 
   /// Attende che il primo giro di sync sia concluso con successo.
-  Future<void> waitFirstSyncDone(ProviderContainer container) => _waitUntil(
-        () {
-          final s = container.read(syncProvider);
-          return s.lastSyncTime != null && !s.isSyncing;
-        },
-        reason: 'la prima sync non si è conclusa in tempo',
-      );
+  Future<void> waitFirstSyncDone(ProviderContainer container) => _waitUntil(() {
+    final s = container.read(syncProvider);
+    return s.lastSyncTime != null && !s.isSyncing;
+  }, reason: 'la prima sync non si è conclusa in tempo');
 
   group('avvio in parallelo', () {
     test('la sync parte anche se l\'health check non risponde', () async {
@@ -193,10 +192,16 @@ void main() {
         () => server.syncCalls >= 1,
         reason: 'la sync non è partita mentre l\'health check era in attesa',
       );
-      expect(server.healthCalls, greaterThanOrEqualTo(1),
-          reason: 'l\'health check è partito ed è ancora in attesa');
-      expect(server.healthGate!.isCompleted, isFalse,
-          reason: 'la sync è partita senza che il health check abbia risposto');
+      expect(
+        server.healthCalls,
+        greaterThanOrEqualTo(1),
+        reason: 'l\'health check è partito ed è ancora in attesa',
+      );
+      expect(
+        server.healthGate!.isCompleted,
+        isFalse,
+        reason: 'la sync è partita senza che il health check abbia risposto',
+      );
 
       // Rilascia e lascia finire tutto prima del tearDown.
       server.healthGate!.complete();
@@ -215,54 +220,65 @@ void main() {
         () => server.syncCalls >= 1,
         reason: 'la sync non è partita mentre le impostazioni erano in attesa',
       );
-      expect(server.settingsCalls, greaterThanOrEqualTo(1),
-          reason:
-              'il fetch delle impostazioni è partito ed è ancora in attesa');
+      expect(
+        server.settingsCalls,
+        greaterThanOrEqualTo(1),
+        reason: 'il fetch delle impostazioni è partito ed è ancora in attesa',
+      );
 
       server.settingsGate!.complete();
       await waitFirstSyncDone(container);
     });
 
-    test('con la sync all\'avvio disattivata parte solo il health check',
-        () async {
-      // Guardia di regressione: il ramo `launchSync == false` non deve
-      // lanciare né sync né impostazioni.
-      SharedPreferences.setMockInitialValues({'scripta_sync_on_launch': false});
-      final server = _StartupServer();
-      final container = containerFor(server);
-      container.read(syncProvider.notifier);
+    test(
+      'con la sync all\'avvio disattivata parte solo il health check',
+      () async {
+        // Guardia di regressione: il ramo `launchSync == false` non deve
+        // lanciare né sync né impostazioni.
+        SharedPreferences.setMockInitialValues({
+          'scripta_sync_on_launch': false,
+        });
+        final server = _StartupServer();
+        final container = containerFor(server);
+        container.read(syncProvider.notifier);
 
-      await _waitUntil(
-        () => container.read(syncProvider).isOnline,
-        reason: 'il health check non ha portato lo stato a Online',
-      );
-      // Oltre i 500 ms di rinvio con cui, se abilitata, partirebbe la sync.
-      await Future<void>.delayed(const Duration(milliseconds: 900));
+        await _waitUntil(
+          () => container.read(syncProvider).isOnline,
+          reason: 'il health check non ha portato lo stato a Online',
+        );
+        // Oltre i 500 ms di rinvio con cui, se abilitata, partirebbe la sync.
+        await Future<void>.delayed(const Duration(milliseconds: 900));
 
-      expect(server.healthCalls, 1);
-      expect(server.syncCalls, 0);
-      expect(server.settingsCalls, 0);
-    });
+        expect(server.healthCalls, 1);
+        expect(server.syncCalls, 0);
+        expect(server.settingsCalls, 0);
+      },
+    );
 
-    test('lo stato Online persistito evita il giallo prima del health check',
-        () async {
-      SharedPreferences.setMockInitialValues({
-        'scripta_sync_on_launch': false,
-        'scripta_last_online': true,
-      });
-      final server = _StartupServer()..healthGate = Completer<void>();
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
-      await _waitUntil(() => server.healthCalls >= 1);
+    test(
+      'lo stato Online persistito evita il giallo prima del health check',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'scripta_sync_on_launch': false,
+          'scripta_last_online': true,
+        });
+        final server = _StartupServer()..healthGate = Completer<void>();
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
+        await _waitUntil(() => server.healthCalls >= 1);
 
-      expect(container.read(syncProvider).isOnline, isTrue,
-          reason: 'lo stato dell\'ultima sessione deve valere fino al check');
-      expect(server.healthGate!.isCompleted, isFalse);
+        expect(
+          container.read(syncProvider).isOnline,
+          isTrue,
+          reason: 'lo stato dell\'ultima sessione deve valere fino al check',
+        );
+        expect(server.healthGate!.isCompleted, isFalse);
 
-      server.healthGate!.complete();
-      await _waitUntil(() => container.read(syncProvider).isOnline);
-    });
+        server.healthGate!.complete();
+        await _waitUntil(() => container.read(syncProvider).isOnline);
+      },
+    );
 
     test('l\'esito del health check aggiorna lo stato persistito', () async {
       SharedPreferences.setMockInitialValues({
@@ -283,106 +299,121 @@ void main() {
 
   group('indicatore online/offline con richieste concorrenti', () {
     test(
-        'un health check che fallisce DOPO una sync riuscita non riporta Offline',
-        () async {
-      final server = _StartupServer()
-        ..healthGate = Completer<void>()
-        ..healthStatus = 500;
-      final container = containerFor(server);
-      container.read(syncProvider);
+      'un health check che fallisce DOPO una sync riuscita non riporta Offline',
+      () async {
+        final server = _StartupServer()
+          ..healthGate = Completer<void>()
+          ..healthStatus = 500;
+        final container = containerFor(server);
+        container.read(syncProvider);
 
-      await waitFirstSyncDone(container);
-      expect(container.read(syncProvider).isOnline, isTrue);
+        await waitFirstSyncDone(container);
+        expect(container.read(syncProvider).isOnline, isTrue);
 
-      // Ora l'health check (partito PRIMA della sync) fallisce, tutti e 3 i
-      // tentativi (pause da 1,5 s fra l'uno e l'altro).
-      server.healthGate!.complete();
-      await _waitUntil(() => server.healthCalls >= 3);
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+        // Ora l'health check (partito PRIMA della sync) fallisce, tutti e 3 i
+        // tentativi (pause da 1,5 s fra l'uno e l'altro).
+        server.healthGate!.complete();
+        await _waitUntil(() => server.healthCalls >= 3);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
 
-      expect(container.read(syncProvider).isOnline, isTrue,
+        expect(
+          container.read(syncProvider).isOnline,
+          isTrue,
           reason:
-              'la sync era riuscita dopo la partenza del controllo: il server è raggiungibile');
-    });
+              'la sync era riuscita dopo la partenza del controllo: il server è raggiungibile',
+        );
+      },
+    );
 
     test(
-        'un fetch delle impostazioni fallito DOPO una sync riuscita non riporta Offline',
-        () async {
-      final server = _StartupServer()
-        ..settingsGate = Completer<void>()
-        ..settingsStatus = 500;
-      final container = containerFor(server);
-      container.read(syncProvider);
+      'un fetch delle impostazioni fallito DOPO una sync riuscita non riporta Offline',
+      () async {
+        final server = _StartupServer()
+          ..settingsGate = Completer<void>()
+          ..settingsStatus = 500;
+        final container = containerFor(server);
+        container.read(syncProvider);
 
-      await waitFirstSyncDone(container);
-      expect(container.read(syncProvider).isOnline, isTrue);
+        await waitFirstSyncDone(container);
+        expect(container.read(syncProvider).isOnline, isTrue);
 
-      // Il 500 non è transitorio: nessun nuovo tentativo, il fallimento
-      // arriva subito dopo il rilascio.
-      server.settingsGate!.complete();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+        // Il 500 non è transitorio: nessun nuovo tentativo, il fallimento
+        // arriva subito dopo il rilascio.
+        server.settingsGate!.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 300));
 
-      expect(container.read(syncProvider).isOnline, isTrue);
-    });
+        expect(container.read(syncProvider).isOnline, isTrue);
+      },
+    );
 
     test(
-        'un controllo che fallisce DOPO una richiesta leggera riuscita non riporta Offline',
-        () async {
-      // Percorso del contatore (health check e impostazioni), distinto da
-      // `lastSyncTime`: con la sync all'avvio disattivata non ci sono sync, quindi
-      // l'unico segnale di raggiungibilità è la richiesta delle impostazioni,
-      // chiamata qui a mano. Con la sola regola su `lastSyncTime` questo test
-      // fallirebbe.
-      SharedPreferences.setMockInitialValues({'scripta_sync_on_launch': false});
-      final server = _StartupServer();
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
-      await _waitUntil(
-        () => container.read(syncProvider).isOnline,
-        reason: 'il health check iniziale non ha portato lo stato a Online',
-      );
+      'un controllo che fallisce DOPO una richiesta leggera riuscita non riporta Offline',
+      () async {
+        // Percorso del contatore (health check e impostazioni), distinto da
+        // `lastSyncTime`: con la sync all'avvio disattivata non ci sono sync, quindi
+        // l'unico segnale di raggiungibilità è la richiesta delle impostazioni,
+        // chiamata qui a mano. Con la sola regola su `lastSyncTime` questo test
+        // fallirebbe.
+        SharedPreferences.setMockInitialValues({
+          'scripta_sync_on_launch': false,
+        });
+        final server = _StartupServer();
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
+        await _waitUntil(
+          () => container.read(syncProvider).isOnline,
+          reason: 'il health check iniziale non ha portato lo stato a Online',
+        );
 
-      // Un nuovo controllo parte e resta in attesa del gate; poi fallirà.
-      server.healthGate = Completer<void>();
-      server.healthStatus = 500;
-      final probe = notifier.checkConnection();
-      await _waitUntil(
-        () => server.healthCalls >= 2,
-        reason: 'il secondo controllo non è partito',
-      );
+        // Un nuovo controllo parte e resta in attesa del gate; poi fallirà.
+        server.healthGate = Completer<void>();
+        server.healthStatus = 500;
+        final probe = notifier.checkConnection();
+        await _waitUntil(
+          () => server.healthCalls >= 2,
+          reason: 'il secondo controllo non è partito',
+        );
 
-      // Nel frattempo le impostazioni rispondono: il server è raggiungibile.
-      await notifier.fetchRemoteUserSettings();
-      expect(server.settingsCalls, 1);
+        // Nel frattempo le impostazioni rispondono: il server è raggiungibile.
+        await notifier.fetchRemoteUserSettings();
+        expect(server.settingsCalls, 1);
 
-      // Ora il controllo fallisce (3 tentativi, pause da 1,5 s).
-      server.healthGate!.complete();
-      expect(await probe, isFalse,
-          reason: 'il valore di ritorno resta quello del controllo');
-      expect(container.read(syncProvider).isOnline, isTrue,
+        // Ora il controllo fallisce (3 tentativi, pause da 1,5 s).
+        server.healthGate!.complete();
+        expect(
+          await probe,
+          isFalse,
+          reason: 'il valore di ritorno resta quello del controllo',
+        );
+        expect(
+          container.read(syncProvider).isOnline,
+          isTrue,
           reason:
-              'le impostazioni sono riuscite dopo la partenza del controllo');
-    });
+              'le impostazioni sono riuscite dopo la partenza del controllo',
+        );
+      },
+    );
 
     test(
-        'un controllo che fallisce SENZA successi nel frattempo abbassa l\'indicatore',
-        () async {
-      final server = _StartupServer(); // tutto risponde 200
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
+      'un controllo che fallisce SENZA successi nel frattempo abbassa l\'indicatore',
+      () async {
+        final server = _StartupServer(); // tutto risponde 200
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
 
-      await waitFirstSyncDone(container);
-      await _waitUntil(() => container.read(syncProvider).isOnline);
+        await waitFirstSyncDone(container);
+        await _waitUntil(() => container.read(syncProvider).isOnline);
 
-      // Server che smette di rispondere bene: nessuna altra richiesta in volo
-      // (il watchdog scatta ogni 25 s), quindi l'esito negativo è l'ultimo
-      // dato disponibile e deve valere.
-      server.healthStatus = 500;
-      final probeResult = await notifier.checkConnection();
+        // Server che smette di rispondere bene: nessuna altra richiesta in volo
+        // (il watchdog scatta ogni 25 s), quindi l'esito negativo è l'ultimo
+        // dato disponibile e deve valere.
+        server.healthStatus = 500;
+        final probeResult = await notifier.checkConnection();
 
-      expect(probeResult, isFalse);
-      expect(container.read(syncProvider).isOnline, isFalse);
-    });
+        expect(probeResult, isFalse);
+        expect(container.read(syncProvider).isOnline, isFalse);
+      },
+    );
   });
 }

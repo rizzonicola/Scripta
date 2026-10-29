@@ -72,9 +72,7 @@ class DisplayMathBlock extends StatelessWidget {
           scrollDirection: Axis.horizontal,
           child: ConstrainedBox(
             constraints: BoxConstraints(minWidth: constraints.maxWidth),
-            child: Center(
-              child: mathWidget,
-            ),
+            child: Center(child: mathWidget),
           ),
         );
       },

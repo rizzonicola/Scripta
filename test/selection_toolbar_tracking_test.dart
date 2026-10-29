@@ -156,10 +156,8 @@ Future<void> _pumpView(WidgetTester tester, String content) async {
   await _locateWords(tester);
 }
 
-MarkdownSelectionScopeState _scope(WidgetTester tester) =>
-    tester.state<MarkdownSelectionScopeState>(
-      find.byType(MarkdownSelectionScope),
-    );
+MarkdownSelectionScopeState _scope(WidgetTester tester) => tester
+    .state<MarkdownSelectionScopeState>(find.byType(MarkdownSelectionScope));
 
 /// Punti di tocco che colpiscono DAVVERO una parola: uno per paragrafo CON
 /// testo, in ordine di lettura (indice 0 = primo paragrafo). Si riempie in
@@ -245,9 +243,8 @@ Future<Offset?> _wordPointWithin(WidgetTester tester, Rect area) async {
 }
 
 /// Rettangolo della viewport di scroll (la `ListView` della vista).
-Rect _viewport(WidgetTester tester) => tester.getRect(
-      find.byKey(const ValueKey('markdown-formatted-listview')),
-    );
+Rect _viewport(WidgetTester tester) =>
+    tester.getRect(find.byKey(const ValueKey('markdown-formatted-listview')));
 
 /// Lo `Scrollable` della `ListView` della vista.
 ScrollableState _listScrollable(WidgetTester tester) =>
@@ -316,13 +313,15 @@ void _expectInside(Rect toolbar, Rect viewport, String when) {
   expect(
     toolbar.top,
     greaterThanOrEqualTo(viewport.top + _edgeMargin - _tol),
-    reason: '$when: il menù esce dal bordo SUPERIORE del viewport '
+    reason:
+        '$when: il menù esce dal bordo SUPERIORE del viewport '
         '(menù=$toolbar viewport=$viewport)',
   );
   expect(
     toolbar.bottom,
     lessThanOrEqualTo(viewport.bottom - _edgeMargin + _tol),
-    reason: '$when: il menù esce dal bordo INFERIORE del viewport '
+    reason:
+        '$when: il menù esce dal bordo INFERIORE del viewport '
         '(menù=$toolbar viewport=$viewport)',
   );
   expect(
@@ -349,7 +348,8 @@ void _expectFollowing(WidgetTester tester, double reference, String when) {
   expect(
     content,
     closeTo(reference, _tol),
-    reason: '$when: il menù non segue la nota (posizione nel contenuto '
+    reason:
+        '$when: il menù non segue la nota (posizione nel contenuto '
         '$content, attesa $reference, scarto ${content - reference}; '
         'menù=$rect offset=$pixels). Uno scarto uguale all\'ultimo '
         'spostamento di scroll significa un frame di RITARDO.',
@@ -363,7 +363,8 @@ void _expectPinnedTop(Rect toolbar, Rect viewport, String when) {
   expect(
     toolbar.top - viewport.top,
     inInclusiveRange(_edgeMargin - _tol, _pinReach),
-    reason: '$when: il menù dovrebbe essere agganciato al bordo SUPERIORE '
+    reason:
+        '$when: il menù dovrebbe essere agganciato al bordo SUPERIORE '
         '(menù=$toolbar viewport=$viewport)',
   );
 }
@@ -373,7 +374,8 @@ void _expectPinnedBottom(Rect toolbar, Rect viewport, String when) {
   expect(
     viewport.bottom - toolbar.bottom,
     inInclusiveRange(_edgeMargin - _tol, _pinReach),
-    reason: '$when: il menù dovrebbe essere agganciato al bordo INFERIORE '
+    reason:
+        '$when: il menù dovrebbe essere agganciato al bordo INFERIORE '
         '(menù=$toolbar viewport=$viewport)',
   );
 }
@@ -415,7 +417,8 @@ Future<MarkdownSelection> _selectWordAt(
   expect(
     selection,
     isNotNull,
-    reason: 'il long-press fuori da ogni selezione deve selezionare la '
+    reason:
+        'il long-press fuori da ogni selezione deve selezionare la '
         'parola (punto $point)',
   );
   expect(selection!.isCollapsed, isFalse);
@@ -474,7 +477,8 @@ Future<void> _scanForJumps(
     expect(
       (rect.top - previous!.top).abs(),
       lessThanOrEqualTo(scrolled + _tol),
-      reason: '$when: SCATTO a offset=$offset (prima=$previous dopo=$rect, '
+      reason:
+          '$when: SCATTO a offset=$offset (prima=$previous dopo=$rect, '
           'scroll=$scrolled)',
     );
     previous = rect;
@@ -506,7 +510,8 @@ Future<MarkdownSelection> _selectMidNoteWord(
   expect(
     point,
     isNotNull,
-    reason: 'nessun paragrafo con testo interamente nella fascia 300..520 '
+    reason:
+        'nessun paragrafo con testo interamente nella fascia 300..520 '
         'dopo lo scroll a $offset',
   );
   return _selectWordAt(tester, point!);
@@ -556,7 +561,8 @@ void main() {
           expect(
             _listScrollable(tester).position.maxScrollExtent,
             greaterThan(viewport.height * 10),
-            reason: 'la nota deve essere molto più lunga della viewport, '
+            reason:
+                'la nota deve essere molto più lunga della viewport, '
                 'altrimenti i blocchi non escono dalla cacheExtent e i test '
                 'sugli estremi smontati non misurano nulla',
           );
@@ -569,7 +575,8 @@ void main() {
           expect(
             toolbar,
             isNotNull,
-            reason: 'nessun pulsante del menù trovato per nome del tipo '
+            reason:
+                'nessun pulsante del menù trovato per nome del tipo '
                 '($_toolbarButtonTypes): la struttura della toolbar è cambiata?',
           );
           expect(box, isNotNull, reason: 'la selezione deve avere rettangoli');
@@ -583,7 +590,8 @@ void main() {
           expect(
             box.top - toolbar.bottom,
             lessThan(40),
-            reason: 'il menù deve essere attaccato al bordo superiore della '
+            reason:
+                'il menù deve essere attaccato al bordo superiore della '
                 'selezione',
           );
           _expectInside(toolbar, viewport, 'subito dopo la selezione');
@@ -612,12 +620,15 @@ void main() {
           expect(
             _farFromEdges(rect0!, viewport),
             isTrue,
-            reason: 'precondizione: il menù appena creato deve stare lontano '
+            reason:
+                'precondizione: il menù appena creato deve stare lontano '
                 'dai bordi (menù=$rect0 viewport=$viewport)',
           );
           final reference = rect0.top + start;
-          final toolbarElement =
-              find.byType(AdaptiveTextSelectionToolbar).evaluate().single;
+          final toolbarElement = find
+              .byType(AdaptiveTextSelectionToolbar)
+              .evaluate()
+              .single;
           var checked = 0;
 
           // (a) Scroll programmatico di Δ, un solo frame per volta.
@@ -632,13 +643,15 @@ void main() {
             expect(
               before.top - after!.top,
               closeTo(moved, _tol),
-              reason: 'Δ=$delta: il menù deve spostarsi di -Δ nello STESSO '
+              reason:
+                  'Δ=$delta: il menù deve spostarsi di -Δ nello STESSO '
                   'frame (prima=$before dopo=$after)',
             );
             expect(
               after.left,
               closeTo(before.left, _tol),
-              reason: 'Δ=$delta: lo scroll è verticale, il menù non deve '
+              reason:
+                  'Δ=$delta: lo scroll è verticale, il menù non deve '
                   'muoversi di lato',
             );
             _expectFollowing(tester, reference, 'Δ=$delta');
@@ -650,7 +663,10 @@ void main() {
           // maniglie.
           await _scrollTo(tester, start);
           _expectFollowing(
-              tester, reference, 'ritorno alla posizione iniziale');
+            tester,
+            reference,
+            'ritorno alla posizione iniziale',
+          );
           final gesture = await tester.startGesture(const Offset(392, 700));
           for (var i = 0; i < 10; i++) {
             await gesture.moveBy(const Offset(0, -12));
@@ -693,10 +709,10 @@ void main() {
           // (d) animateTo, un frame da 16 ms alla volta.
           await _scrollTo(tester, start);
           final animation = _listScrollable(tester).position.animateTo(
-                start + 200,
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOut,
-              );
+            start + 200,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
           for (var i = 0; i < 24; i++) {
             await tester.pump(const Duration(milliseconds: 16));
             final rect = _toolbarRect(tester);
@@ -713,7 +729,8 @@ void main() {
           expect(
             checked,
             greaterThan(30),
-            reason: 'troppe poche verifiche eseguite ($checked): il test '
+            reason:
+                'troppe poche verifiche eseguite ($checked): il test '
                 'non misura abbastanza frame',
           );
           expect(controller.selection, initial, reason: 'selezione cambiata');
@@ -723,7 +740,8 @@ void main() {
           expect(
             find.byType(AdaptiveTextSelectionToolbar).evaluate().single,
             same(toolbarElement),
-            reason: 'il menù è stato ricreato durante lo scroll: deve '
+            reason:
+                'il menù è stato ricreato durante lo scroll: deve '
                 'aggiornarsi da solo, senza showToolbar() per frame',
           );
 
@@ -757,7 +775,8 @@ void main() {
           expect(
             room,
             greaterThan(120),
-            reason: 'precondizione: il menù deve avere spazio per salire '
+            reason:
+                'precondizione: il menù deve avere spazio per salire '
                 '(menù=$rect0 viewport=$viewport)',
           );
 
@@ -781,7 +800,8 @@ void main() {
             expect(
               (rect.top - previous.top).abs(),
               lessThanOrEqualTo(scrolled + _tol),
-              reason: 'offset=$offset: SCATTO, il menù si è mosso più della '
+              reason:
+                  'offset=$offset: SCATTO, il menù si è mosso più della '
                   'nota (prima=$previous dopo=$rect, scroll=$scrolled)',
             );
             if (_farFromEdges(rect, viewport)) {
@@ -794,7 +814,8 @@ void main() {
           expect(
             sawFollowing,
             isTrue,
-            reason: 'nessun passo in zona naturale: il test non ha verificato '
+            reason:
+                'nessun passo in zona naturale: il test non ha verificato '
                 'che il menù seguisse la nota prima di fermarsi',
           );
 
@@ -810,7 +831,8 @@ void main() {
             expect(
               rect!.top,
               closeTo(pinned.top, _tol),
-              reason: 'offset=$offset: il menù agganciato al bordo non deve '
+              reason:
+                  'offset=$offset: il menù agganciato al bordo non deve '
                   'muoversi (agganciato=$pinned ora=$rect)',
             );
             expect(rect.left, closeTo(pinned.left, _tol));
@@ -863,7 +885,8 @@ void main() {
           expect(
             rect0!.top,
             greaterThanOrEqualTo(box0!.bottom - 2),
-            reason: 'con la selezione vicina al bordo alto il menù deve stare '
+            reason:
+                'con la selezione vicina al bordo alto il menù deve stare '
                 'SOTTO il bordo inferiore della selezione',
           );
           _expectInside(rect0, viewport, 'selezione in cima');
@@ -881,14 +904,18 @@ void main() {
           );
           final scrolledOut = _toolbarRect(tester)!;
           _expectPinnedTop(
-              scrolledOut, viewport, 'selezione uscita dall\'alto');
+            scrolledOut,
+            viewport,
+            'selezione uscita dall\'alto',
+          );
           await _scrollTo(tester, 4000);
           final pinned = _toolbarRect(tester)!;
           _expectPinnedTop(pinned, viewport, 'selezione smontata, sopra');
           expect(
             pinned.top,
             closeTo(scrolledOut.top, _tol),
-            reason: 'il menù agganciato non deve cambiare posizione quando i '
+            reason:
+                'il menù agganciato non deve cambiare posizione quando i '
                 'blocchi della selezione vengono smontati',
           );
 
@@ -900,7 +927,8 @@ void main() {
           expect(
             back!.top,
             closeTo(rect0.top, 1.5),
-            reason: 'dopo il ritorno in cima il menù deve tornare dov\'era '
+            reason:
+                'dopo il ritorno in cima il menù deve tornare dov\'era '
                 '(prima=$rect0 dopo=$back)',
           );
           expect(back.left, closeTo(rect0.left, 1.5));
@@ -935,7 +963,8 @@ void main() {
           expect(
             pinned,
             isNotNull,
-            reason: 'con la selezione sotto il viewport il menù deve '
+            reason:
+                'con la selezione sotto il viewport il menù deve '
                 'restare visibile',
           );
           _expectInside(pinned!, viewport, 'selezione sotto');
@@ -945,7 +974,8 @@ void main() {
           expect(
             stillPinned.top,
             closeTo(pinned.top, _tol),
-            reason: 'agganciato al bordo inferiore non deve muoversi '
+            reason:
+                'agganciato al bordo inferiore non deve muoversi '
                 '(prima=$pinned dopo=$stillPinned)',
           );
 
@@ -971,7 +1001,8 @@ void main() {
             expect(
               (rect.top - previous.top).abs(),
               lessThanOrEqualTo(scrolled + _tol),
-              reason: 'offset=$offset: SCATTO (prima=$previous dopo=$rect, '
+              reason:
+                  'offset=$offset: SCATTO (prima=$previous dopo=$rect, '
                   'scroll=$scrolled)',
             );
             if (_farFromEdges(rect, viewport)) {
@@ -1010,7 +1041,8 @@ void main() {
           expect(
             back.top,
             closeTo(rect0.top, 1.5),
-            reason: 'dopo il ritorno il menù deve tornare dov\'era '
+            reason:
+                'dopo il ritorno il menù deve tornare dov\'era '
                 '(prima=$rect0 dopo=$back)',
           );
           expect(controller.selection, initial, reason: 'selezione cambiata');
@@ -1071,7 +1103,8 @@ void main() {
           expect(
             scope.toolbarIsVisible,
             isTrue,
-            reason: 'Seleziona tutto con partenza fuori schermo: il menù non '
+            reason:
+                'Seleziona tutto con partenza fuori schermo: il menù non '
                 'deve sparire',
           );
           final after = _toolbarRect(tester);
@@ -1219,14 +1252,16 @@ void main() {
           expect(
             scope.toolbarIsVisible,
             isTrue,
-            reason: 'il tasto destro apre il menù contestuale (Copia / '
+            reason:
+                'il tasto destro apre il menù contestuale (Copia / '
                 'Seleziona tutto): è il comportamento di sempre',
           );
           final before = _toolbarRect(tester);
           expect(
             before,
             isNotNull,
-            reason: 'nessun pulsante del menù trovato per nome del tipo '
+            reason:
+                'nessun pulsante del menù trovato per nome del tipo '
                 '($_toolbarButtonTypes)',
           );
           expect(
@@ -1243,7 +1278,8 @@ void main() {
             expect(
               after!.top,
               closeTo(before.top, 0.5),
-              reason: 'offset=$offset: il menù posizionale (tasto destro) '
+              reason:
+                  'offset=$offset: il menù posizionale (tasto destro) '
                   'deve restare fermo, non seguire la nota '
                   '(prima=$before dopo=$after)',
             );
@@ -1274,8 +1310,10 @@ void main() {
           // Il menù già inseguito, poi il richiamo: nessun menù ricreato.
           await _scrollTo(tester, start + 120);
           _expectFollowing(tester, reference, 'prima del richiamo');
-          final toolbarBefore =
-              find.byType(AdaptiveTextSelectionToolbar).evaluate().single;
+          final toolbarBefore = find
+              .byType(AdaptiveTextSelectionToolbar)
+              .evaluate()
+              .single;
 
           await _holdLongPress(tester, _insideSelection(tester));
           await tester.pumpAndSettle();
@@ -1283,7 +1321,8 @@ void main() {
           expect(
             MarkdownRenderedView.debugSelectionRecallCount,
             1,
-            reason: 'il long-press sulla selezione deve far scattare il '
+            reason:
+                'il long-press sulla selezione deve far scattare il '
                 'richiamo',
           );
           expect(controller.selection, initial, reason: 'selezione cambiata');

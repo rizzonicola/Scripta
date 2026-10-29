@@ -46,7 +46,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 //    `HapticsHelper.reportSelectionState`: ogni test lascia scorrere un
 //    secondo a fine corpo, altrimenti il Timer risulterebbe ancora pendente.
 
-const String _note = 'Primo paragrafo con alcune parole.\n\n'
+const String _note =
+    'Primo paragrafo con alcune parole.\n\n'
     'Secondo paragrafo di testo qualsiasi.\n\n'
     'Terzo paragrafo, ancora un po di testo.\n\n'
     'Quarto paragrafo da selezionare.\n\n'
@@ -131,10 +132,8 @@ Future<void> _pumpView(WidgetTester tester, String content) async {
   await _locateWords(tester);
 }
 
-MarkdownSelectionScopeState _scope(WidgetTester tester) =>
-    tester.state<MarkdownSelectionScopeState>(
-      find.byType(MarkdownSelectionScope),
-    );
+MarkdownSelectionScopeState _scope(WidgetTester tester) => tester
+    .state<MarkdownSelectionScopeState>(find.byType(MarkdownSelectionScope));
 
 /// Punti di tocco che colpiscono DAVVERO una parola: uno per paragrafo CON
 /// testo, in ordine di lettura (indice 0 = primo paragrafo). Si riempie in
@@ -207,17 +206,16 @@ Offset _wordPoint(int paragraph) {
 /// confrontare le istanze degli `Element` prima e dopo (test 1). Non dice
 /// nulla sulla visibilità: per quella vedi [_realHandles].
 Finder get _handles => find.byWidgetPredicate(
-      (widget) => widget.runtimeType.toString() == '_SelectionHandleOverlay',
-    );
+  (widget) => widget.runtimeType.toString() == '_SelectionHandleOverlay',
+);
 
 /// Stato REALE di ogni maniglia presente nell'overlay radice: dipinta o no.
 List<SelectionHandleStatus> _realHandles(WidgetTester tester) =>
     inspectSelectionHandles(tester.element(find.byType(MarkdownRenderedView)));
 
 /// Rettangolo della viewport di scroll (la `ListView` della vista).
-Rect _viewport(WidgetTester tester) => tester.getRect(
-      find.byKey(const ValueKey('markdown-formatted-listview')),
-    );
+Rect _viewport(WidgetTester tester) =>
+    tester.getRect(find.byKey(const ValueKey('markdown-formatted-listview')));
 
 /// `true` se c'è almeno una maniglia e TUTTE sono dipinte e cadono dentro la
 /// viewport. È la condizione che l'utente vede: «le maniglie ci sono».
@@ -312,7 +310,8 @@ Future<MarkdownSelection> _selectWordByLongPress(
   expect(
     selection,
     isNotNull,
-    reason: 'il long-press fuori da ogni selezione deve selezionare la '
+    reason:
+        'il long-press fuori da ogni selezione deve selezionare la '
         'parola (punto $point)',
   );
   expect(selection!.isCollapsed, isFalse);
@@ -362,8 +361,7 @@ void main() {
     MarkdownRenderedView.debugSelectionRecallCount = 0;
   });
 
-  group('Step A: richiamo di maniglie e menù con long-press sulla selezione',
-      () {
+  group('Step A: richiamo di maniglie e menù con long-press sulla selezione', () {
     testWidgets(
       '0. Precondizioni: il long-press fuori da ogni selezione crea selezione, menù e maniglie',
       (tester) async {
@@ -381,7 +379,8 @@ void main() {
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'su Android il pacchetto mostra le maniglie e devono '
+            reason:
+                'su Android il pacchetto mostra le maniglie e devono '
                 'essere DIPINTE, non solo presenti. Se fallisce: o il nome '
                 'del tipo privato di Flutter è cambiato (nessuna maniglia '
                 'trovata), o `inspectSelectionHandles` non riconosce la '
@@ -410,14 +409,17 @@ void main() {
           // Maniglie e menù sono già visibili: il richiamo non deve
           // ricrearli (niente lampeggio, niente toggle). Si confrontano le
           // ISTANZE degli Element, non solo il conteggio.
-          final toolbarBefore =
-              find.byType(AdaptiveTextSelectionToolbar).evaluate().single;
+          final toolbarBefore = find
+              .byType(AdaptiveTextSelectionToolbar)
+              .evaluate()
+              .single;
           final handlesBefore = _handles.evaluate().toList();
           expect(handlesBefore, isNotEmpty);
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'precondizione: subito dopo la selezione TUTTE le maniglie '
+            reason:
+                'precondizione: subito dopo la selezione TUTTE le maniglie '
                 'devono essere dipinte e dentro la viewport (se non lo sono, '
                 'il richiamo le ricostruirebbe e questo test non misurerebbe '
                 'l\'idempotenza). Stato: ${_describeHandles(tester)}',
@@ -466,13 +468,15 @@ void main() {
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'dopo il richiamo le maniglie sono ancora tutte dipinte. '
+            reason:
+                'dopo il richiamo le maniglie sono ancora tutte dipinte. '
                 'Stato: ${_describeHandles(tester)}',
           );
           expect(
             log.vibrations,
             0,
-            reason: 'il gestore del long-press del pacchetto non deve partire '
+            reason:
+                'il gestore del long-press del pacchetto non deve partire '
                 '(farebbe vibrare); un ripristino programmatico non vibra',
           );
           expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
@@ -496,7 +500,8 @@ void main() {
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'precondizione: dopo la selezione le maniglie sono '
+            reason:
+                'precondizione: dopo la selezione le maniglie sono '
                 'dipinte. Stato: ${_describeHandles(tester)}',
           );
 
@@ -529,7 +534,8 @@ void main() {
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'le maniglie devono essere tornate DIPINTE e dentro la '
+            reason:
+                'le maniglie devono essere tornate DIPINTE e dentro la '
                 'viewport (se questa asserzione fallisce, o il richiamo non '
                 'ha ricostruito l\'overlay, o l\'espediente '
                 '_rebuildSelectionOverlay non basta con questa versione del '
@@ -765,7 +771,8 @@ void main() {
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'precondizione: subito dopo la selezione le maniglie sono '
+            reason:
+                'precondizione: subito dopo la selezione le maniglie sono '
                 'dipinte. Stato: ${_describeHandles(tester)}',
           );
 
@@ -793,14 +800,16 @@ void main() {
           expect(
             controller.selection,
             initial,
-            reason: 'la selezione deve restare identica (valore) dopo il '
+            reason:
+                'la selezione deve restare identica (valore) dopo il '
                 'richiamo',
           );
           expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'dopo il long-press le maniglie devono essere DIPINTE e '
+            reason:
+                'dopo il long-press le maniglie devono essere DIPINTE e '
                 'dentro la viewport. Prima del richiamo erano visibili: '
                 '$backVisible. Stato dopo: ${_describeHandles(tester)}; '
                 'estremi-montati=${controller.selectionHandleEndpoints() != null}',
@@ -868,7 +877,8 @@ void main() {
           final endpointsMounted =
               controller.selectionHandleEndpoints() != null;
           final handlesBefore = _realHandles(tester);
-          final expectRebuild = endpointsMounted &&
+          final expectRebuild =
+              endpointsMounted &&
               (handlesBefore.isEmpty ||
                   handlesBefore.any((handle) => !handle.isPainted));
 
@@ -895,10 +905,10 @@ void main() {
             expectRebuild,
             reason: expectRebuild
                 ? 'almeno un estremo è montato e non tutte le maniglie sono '
-                    'dipinte: il richiamo deve ricostruire (selezione per null)'
+                      'dipinte: il richiamo deve ricostruire (selezione per null)'
                 : 'nessun estremo montato (caso (b)) oppure tutte le maniglie '
-                    'sono dipinte: non c\'è nulla da ricostruire, quindi '
-                    'nessun clear()/riassegnazione. Valori visti: $deviations',
+                      'sono dipinte: non c\'è nulla da ricostruire, quindi '
+                      'nessun clear()/riassegnazione. Valori visti: $deviations',
           );
           expect(controller.selection, initial);
           expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
@@ -938,7 +948,8 @@ void main() {
           expect(
             _allHandlesVisible(tester),
             isTrue,
-            reason: 'precondizione: maniglie vere dipinte. Stato: '
+            reason:
+                'precondizione: maniglie vere dipinte. Stato: '
                 '${_describeHandles(tester)}',
           );
 
@@ -955,7 +966,8 @@ void main() {
             expect(
               _realHandles(tester).where((handle) => !handle.isPainted),
               hasLength(1),
-              reason: 'precondizione: la maniglia finta esiste ed è NON '
+              reason:
+                  'precondizione: la maniglia finta esiste ed è NON '
                   'dipinta. Stato: ${_describeHandles(tester)}',
             );
 
@@ -973,7 +985,8 @@ void main() {
             expect(
               sequence,
               contains(isNull),
-              reason: 'una maniglia esistente ma non dipinta deve far '
+              reason:
+                  'una maniglia esistente ma non dipinta deve far '
                   'ricostruire l\'overlay (la selezione passa per null); col '
                   'criterio per esistenza non succedeva',
             );

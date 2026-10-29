@@ -14,18 +14,17 @@ ExportNote _note(
   bool isFavorite = false,
   bool isPinned = false,
   int orderIndex = 0,
-}) =>
-    (
-      id: id,
-      title: title,
-      content: content,
-      folderId: folderId,
-      isFavorite: isFavorite,
-      isPinned: isPinned,
-      orderIndex: orderIndex,
-      createdAtMs: 1000,
-      updatedAtMs: 2000,
-    );
+}) => (
+  id: id,
+  title: title,
+  content: content,
+  folderId: folderId,
+  isFavorite: isFavorite,
+  isPinned: isPinned,
+  orderIndex: orderIndex,
+  createdAtMs: 1000,
+  updatedAtMs: 2000,
+);
 
 ExportFolder _folder(String id, String name, {String? parentId}) =>
     (id: id, name: name, parentId: parentId);
@@ -44,35 +43,36 @@ Map<String, String> _entries(ZipResult result, {bool includeManifest = false}) {
 void main() {
   group('buildNotesZip', () {
     test(
-        'due note con lo stesso titolo nella stessa cartella non si sovrascrivono',
-        () {
-      final result = buildNotesZip((
-        folders: [_folder('f', 'Lavoro')],
-        notes: [
-          _note('id-1', 'Riunione', content: 'uno', folderId: 'f'),
-          _note('id-2', 'Riunione', content: 'due', folderId: 'f'),
-          // Su Windows e macOS "riunione.md" e "Riunione.md" sono lo stesso file.
-          _note('id-3', 'riunione', content: 'tre', folderId: 'f'),
-        ],
-        settings: null,
-      ));
+      'due note con lo stesso titolo nella stessa cartella non si sovrascrivono',
+      () {
+        final result = buildNotesZip((
+          folders: [_folder('f', 'Lavoro')],
+          notes: [
+            _note('id-1', 'Riunione', content: 'uno', folderId: 'f'),
+            _note('id-2', 'Riunione', content: 'due', folderId: 'f'),
+            // Su Windows e macOS "riunione.md" e "Riunione.md" sono lo stesso file.
+            _note('id-3', 'riunione', content: 'tre', folderId: 'f'),
+          ],
+          settings: null,
+        ));
 
-      final entries = _entries(result);
-      expect(result.noteCount, 3);
-      expect(
-        entries.keys,
-        unorderedEquals([
-          'Lavoro/Riunione.md',
-          'Lavoro/Riunione (2).md',
-          'Lavoro/riunione (3).md',
-        ]),
-      );
-      // Nessun contenuto è andato perso.
-      final allText = entries.values.join('\n');
-      expect(allText, contains('uno'));
-      expect(allText, contains('due'));
-      expect(allText, contains('tre'));
-    });
+        final entries = _entries(result);
+        expect(result.noteCount, 3);
+        expect(
+          entries.keys,
+          unorderedEquals([
+            'Lavoro/Riunione.md',
+            'Lavoro/Riunione (2).md',
+            'Lavoro/riunione (3).md',
+          ]),
+        );
+        // Nessun contenuto è andato perso.
+        final allText = entries.values.join('\n');
+        expect(allText, contains('uno'));
+        expect(allText, contains('due'));
+        expect(allText, contains('tre'));
+      },
+    );
 
     test('un id più corto di 6 caratteri non fa fallire l\'esportazione', () {
       final result = buildNotesZip((
@@ -95,27 +95,28 @@ void main() {
     });
 
     test(
-        'note senza cartella o con cartella sconosciuta finiscono in Non_Catalogate',
-        () {
-      final result = buildNotesZip((
-        folders: [_folder('f', 'Reale')],
-        notes: [
-          _note('1111111', 'A'),
-          _note('2222222', 'B', folderId: 'inesistente'),
-          _note('3333333', 'C', folderId: 'f'),
-        ],
-        settings: null,
-      ));
+      'note senza cartella o con cartella sconosciuta finiscono in Non_Catalogate',
+      () {
+        final result = buildNotesZip((
+          folders: [_folder('f', 'Reale')],
+          notes: [
+            _note('1111111', 'A'),
+            _note('2222222', 'B', folderId: 'inesistente'),
+            _note('3333333', 'C', folderId: 'f'),
+          ],
+          settings: null,
+        ));
 
-      expect(
-        _entries(result).keys,
-        unorderedEquals([
-          '$uncatalogedFolderName/A.md',
-          '$uncatalogedFolderName/B.md',
-          'Reale/C.md',
-        ]),
-      );
-    });
+        expect(
+          _entries(result).keys,
+          unorderedEquals([
+            '$uncatalogedFolderName/A.md',
+            '$uncatalogedFolderName/B.md',
+            'Reale/C.md',
+          ]),
+        );
+      },
+    );
 
     test('le cartelle annidate producono percorsi annidati', () {
       final result = buildNotesZip((
@@ -132,24 +133,25 @@ void main() {
     });
 
     test(
-        'i nomi di cartella pericolosi vengono sanitizzati (niente path traversal)',
-        () {
-      final result = buildNotesZip((
-        folders: [
-          _folder('p', '..'),
-          _folder('c', 'a/b', parentId: 'p'),
-        ],
-        notes: [_note('1111111', 'x', folderId: 'c')],
-        settings: null,
-      ));
+      'i nomi di cartella pericolosi vengono sanitizzati (niente path traversal)',
+      () {
+        final result = buildNotesZip((
+          folders: [
+            _folder('p', '..'),
+            _folder('c', 'a/b', parentId: 'p'),
+          ],
+          notes: [_note('1111111', 'x', folderId: 'c')],
+          settings: null,
+        ));
 
-      final names = _entries(result).keys.toList();
-      expect(names, ['_/a_b/x.md']);
-      for (final name in names) {
-        expect(name.split('/'), isNot(contains('..')));
-        expect(name, isNot(startsWith('/')));
-      }
-    });
+        final names = _entries(result).keys.toList();
+        expect(names, ['_/a_b/x.md']);
+        for (final name in names) {
+          expect(name.split('/'), isNot(contains('..')));
+          expect(name, isNot(startsWith('/')));
+        }
+      },
+    );
 
     test('una gerarchia ciclica (dati corrotti) non manda in loop', () {
       final result = buildNotesZip((
@@ -165,60 +167,68 @@ void main() {
       expect(_entries(result).keys.single, endsWith('/N.md'));
     });
 
-    test('antepone il titolo solo se il testo non inizia già con un titolo',
-        () {
-      final result = buildNotesZip((
-        folders: const <ExportFolder>[],
-        notes: [
-          _note('1111111', 'Senza', content: 'corpo'),
-          _note('2222222', 'Con', content: '# Già presente\n\ncorpo'),
-        ],
-        settings: null,
-      ));
+    test(
+      'antepone il titolo solo se il testo non inizia già con un titolo',
+      () {
+        final result = buildNotesZip((
+          folders: const <ExportFolder>[],
+          notes: [
+            _note('1111111', 'Senza', content: 'corpo'),
+            _note('2222222', 'Con', content: '# Già presente\n\ncorpo'),
+          ],
+          settings: null,
+        ));
 
-      final entries = _entries(result);
-      expect(entries['$uncatalogedFolderName/Senza.md'], '# Senza\n\ncorpo');
-      expect(
-          entries['$uncatalogedFolderName/Con.md'], '# Già presente\n\ncorpo');
-    });
+        final entries = _entries(result);
+        expect(entries['$uncatalogedFolderName/Senza.md'], '# Senza\n\ncorpo');
+        expect(
+          entries['$uncatalogedFolderName/Con.md'],
+          '# Già presente\n\ncorpo',
+        );
+      },
+    );
 
     test(
-        'il manifest conserva metadati, cartelle vuote e path dopo le collisioni',
-        () {
-      final result = buildNotesZip((
-        folders: [
-          _folder('f', 'Lavoro'),
-          _folder('empty', 'Vuota', parentId: 'f'),
-        ],
-        notes: [
-          _note('1111111', 'Riunione',
+      'il manifest conserva metadati, cartelle vuote e path dopo le collisioni',
+      () {
+        final result = buildNotesZip((
+          folders: [
+            _folder('f', 'Lavoro'),
+            _folder('empty', 'Vuota', parentId: 'f'),
+          ],
+          notes: [
+            _note(
+              '1111111',
+              'Riunione',
               content: 'uno',
               folderId: 'f',
               isFavorite: true,
               isPinned: true,
-              orderIndex: 7),
-          _note('2222222', 'Riunione', content: 'due', folderId: 'f'),
-        ],
-        settings: const {'theme': 'dark', 'font_size': 18},
-      ));
+              orderIndex: 7,
+            ),
+            _note('2222222', 'Riunione', content: 'due', folderId: 'f'),
+          ],
+          settings: const {'theme': 'dark', 'font_size': 18},
+        ));
 
-      final entries = _entries(result, includeManifest: true);
-      final manifest = BackupManifest.decode(
-        entries[backupManifestFileName]!,
-      );
-      expect(manifest.notes, hasLength(2));
-      expect(manifest.notes.first.path, 'Lavoro/Riunione.md');
-      expect(manifest.notes[1].path, 'Lavoro/Riunione (2).md');
-      expect(manifest.notes.first.title, 'Riunione');
-      expect(manifest.notes.first.isFavorite, isTrue);
-      expect(manifest.notes.first.isPinned, isTrue);
-      expect(manifest.notes.first.orderIndex, 7);
-      expect(
-        manifest.folders.map((f) => f.path),
-        containsAll(<String>['Lavoro', 'Lavoro/Vuota']),
-      );
-      expect(manifest.settings, const {'theme': 'dark', 'font_size': 18});
-    });
+        final entries = _entries(result, includeManifest: true);
+        final manifest = BackupManifest.decode(
+          entries[backupManifestFileName]!,
+        );
+        expect(manifest.notes, hasLength(2));
+        expect(manifest.notes.first.path, 'Lavoro/Riunione.md');
+        expect(manifest.notes[1].path, 'Lavoro/Riunione (2).md');
+        expect(manifest.notes.first.title, 'Riunione');
+        expect(manifest.notes.first.isFavorite, isTrue);
+        expect(manifest.notes.first.isPinned, isTrue);
+        expect(manifest.notes.first.orderIndex, 7);
+        expect(
+          manifest.folders.map((f) => f.path),
+          containsAll(<String>['Lavoro', 'Lavoro/Vuota']),
+        );
+        expect(manifest.settings, const {'theme': 'dark', 'font_size': 18});
+      },
+    );
 
     test('un archivio vuoto è comunque uno ZIP valido', () {
       final result = buildNotesZip((
@@ -235,8 +245,10 @@ void main() {
   group('sanitizzazione', () {
     test('sanitizeFileName sostituisce i caratteri non ammessi', () {
       expect(sanitizeFileName('a/b:c*d?e"f<g>h|i\\j'), 'a_b_c_d_e_f_g_h_i_j');
-      expect(sanitizeFileName('riga\u0000con\u001Fcontrollo'),
-          'riga_con_controllo');
+      expect(
+        sanitizeFileName('riga\u0000con\u001Fcontrollo'),
+        'riga_con_controllo',
+      );
       expect(sanitizeFileName('  spazi  '), 'spazi');
     });
 

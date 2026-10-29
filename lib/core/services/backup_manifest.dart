@@ -33,17 +33,17 @@ class BackupNote {
   });
 
   Map<String, Object?> toJson() => {
-        'path': path,
-        'id': id,
-        'title': title,
-        'content': content,
-        'folderId': folderId,
-        'isFavorite': isFavorite,
-        'isPinned': isPinned,
-        'orderIndex': orderIndex,
-        'createdAt': createdAt?.toUtc().toIso8601String(),
-        'updatedAt': updatedAt?.toUtc().toIso8601String(),
-      };
+    'path': path,
+    'id': id,
+    'title': title,
+    'content': content,
+    'folderId': folderId,
+    'isFavorite': isFavorite,
+    'isPinned': isPinned,
+    'orderIndex': orderIndex,
+    'createdAt': createdAt?.toUtc().toIso8601String(),
+    'updatedAt': updatedAt?.toUtc().toIso8601String(),
+  };
 
   factory BackupNote.fromJson(Map<String, dynamic> json) {
     final path = json['path'];
@@ -82,11 +82,11 @@ class BackupFolder {
   });
 
   Map<String, Object?> toJson() => {
-        'id': id,
-        'name': name,
-        'parentId': parentId,
-        'path': path,
-      };
+    'id': id,
+    'name': name,
+    'parentId': parentId,
+    'path': path,
+  };
 
   factory BackupFolder.fromJson(Map<String, dynamic> json) {
     final path = json['path'];
@@ -118,12 +118,12 @@ class BackupManifest {
   });
 
   Map<String, Object?> toJson() => {
-        'format': backupManifestFormat,
-        'version': version,
-        'folders': [for (final folder in folders) folder.toJson()],
-        'notes': [for (final note in notes) note.toJson()],
-        if (settings != null) 'settings': settings,
-      };
+    'format': backupManifestFormat,
+    'version': version,
+    'folders': [for (final folder in folders) folder.toJson()],
+    'notes': [for (final note in notes) note.toJson()],
+    if (settings != null) 'settings': settings,
+  };
 
   String encode() => const JsonEncoder.withIndent('  ').convert(toJson());
 
@@ -160,8 +160,9 @@ class BackupManifest {
         for (final item in rawNotes)
           if (item is Map) BackupNote.fromJson(Map<String, dynamic>.from(item)),
       ],
-      settings:
-          rawSettings is Map ? Map<String, Object?>.from(rawSettings) : null,
+      settings: rawSettings is Map
+          ? Map<String, Object?>.from(rawSettings)
+          : null,
     );
   }
 

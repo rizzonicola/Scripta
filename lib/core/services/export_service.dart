@@ -19,16 +19,16 @@ class ExportService {
 
   /// Dati minimi di una nota per l'archivio (vedi [ExportNote]).
   static ExportNote _toExportNote(NoteModel n) => (
-        id: n.id,
-        title: n.title,
-        content: n.content,
-        folderId: n.folderId,
-        isFavorite: n.isFavorite,
-        isPinned: n.isPinned,
-        orderIndex: n.orderIndex,
-        createdAtMs: n.createdAt.toUtc().millisecondsSinceEpoch,
-        updatedAtMs: n.updatedAt.toUtc().millisecondsSinceEpoch,
-      );
+    id: n.id,
+    title: n.title,
+    content: n.content,
+    folderId: n.folderId,
+    isFavorite: n.isFavorite,
+    isPinned: n.isPinned,
+    orderIndex: n.orderIndex,
+    createdAtMs: n.createdAt.toUtc().millisecondsSinceEpoch,
+    updatedAtMs: n.updatedAt.toUtc().millisecondsSinceEpoch,
+  );
 
   /// Le preferenze di aspetto viaggiano solo nel backup completo. Il formato
   /// è lo stesso DTO usato dalla sync, così import/export non divergono.
@@ -38,8 +38,8 @@ class ExportService {
       theme: s.themeMode == ThemeMode.dark
           ? 'dark'
           : s.themeMode == ThemeMode.light
-              ? 'light'
-              : 'system',
+          ? 'light'
+          : 'system',
       colorScheme: s.selectedThemeId,
       language: s.locale?.languageCode ?? 'it',
       fontFamily: s.fontFamily,
@@ -76,7 +76,8 @@ class ExportService {
             dir = await getDownloadsDirectory();
           } catch (_) {}
         }
-        dir ??= await getExternalStorageDirectory() ??
+        dir ??=
+            await getExternalStorageDirectory() ??
             await getApplicationDocumentsDirectory();
 
         final file = File('${dir.path}/$fileName');
@@ -89,9 +90,12 @@ class ExportService {
 
   /// Export a single note as Markdown (.md)
   static Future<void> exportNoteAsMarkdown(
-      BuildContext context, NoteModel note) async {
-    final title =
-        note.title.trim().isEmpty ? 'Nota_senza_titolo' : note.title.trim();
+    BuildContext context,
+    NoteModel note,
+  ) async {
+    final title = note.title.trim().isEmpty
+        ? 'Nota_senza_titolo'
+        : note.title.trim();
     final fileName = '${_sanitizeFileName(title)}.md';
 
     final bytes = Uint8List.fromList(
@@ -130,7 +134,10 @@ class ExportService {
 
   /// Export a folder and all its subfolders and notes as a ZIP archive
   static Future<void> exportFolderAsZip(
-      BuildContext context, WidgetRef ref, FolderNode rootFolder) async {
+    BuildContext context,
+    WidgetRef ref,
+    FolderNode rootFolder,
+  ) async {
     final folderName = _sanitizeFileName(rootFolder.name);
     final zipFileName = '$folderName.zip';
 
@@ -150,10 +157,11 @@ class ExportService {
       // Codifica ZIP CPU-bound eseguita su isolate dedicato (vedi
       // `buildNotesZip`): non blocca il thread della UI, stesso pattern
       // già usato per la decompressione in fase di importazione.
-      final result = await compute(
-        buildNotesZip,
-        (folders: folders, notes: notes, settings: null),
-      );
+      final result = await compute(buildNotesZip, (
+        folders: folders,
+        notes: notes,
+        settings: null,
+      ));
 
       final saved = await _saveExportFile(
         fileName: zipFileName,
@@ -167,7 +175,8 @@ class ExportService {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Cartella esportata con successo (${result.noteCount} note in $zipFileName)'),
+              'Cartella esportata con successo (${result.noteCount} note in $zipFileName)',
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -187,7 +196,9 @@ class ExportService {
 
   /// Export ALL notes in all folders as a complete backup ZIP
   static Future<void> exportAllAsZip(
-      BuildContext context, WidgetRef ref) async {
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
     final now = DateTime.now();
     final zipFileName =
         'Scripta_Backup_${now.year}_${now.month}_${now.day}.zip';
@@ -198,14 +209,11 @@ class ExportService {
 
       // Vedi commento analogo in exportFolderAsZip: codifica su isolate
       // dedicato per non bloccare la UI durante backup voluminosi.
-      final result = await compute(
-        buildNotesZip,
-        (
-          folders: flattenFolderTree(folderState.rootFolders),
-          notes: [for (final n in allNotes) _toExportNote(n)],
-          settings: _settingsSnapshot(ref),
-        ),
-      );
+      final result = await compute(buildNotesZip, (
+        folders: flattenFolderTree(folderState.rootFolders),
+        notes: [for (final n in allNotes) _toExportNote(n)],
+        settings: _settingsSnapshot(ref),
+      ));
 
       final saved = await _saveExportFile(
         fileName: zipFileName,
@@ -219,7 +227,8 @@ class ExportService {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Backup completato (${result.noteCount} note esportate in $zipFileName)'),
+              'Backup completato (${result.noteCount} note esportate in $zipFileName)',
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );

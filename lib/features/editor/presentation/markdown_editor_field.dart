@@ -110,7 +110,8 @@ class _SelectionHapticBinder {
       return;
     }
 
-    final selectionChanged = selection.start != _lastSelection.start ||
+    final selectionChanged =
+        selection.start != _lastSelection.start ||
         selection.end != _lastSelection.end;
 
     HapticsHelper.reportSelectionState(isCollapsed: isCollapsedNow);
@@ -223,8 +224,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     );
 
     if (widget.activeSearchMatch != null) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _scrollToActiveMatch());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToActiveMatch(),
+      );
     }
   }
 
@@ -275,8 +277,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     // sia una transizione da "nessuna occorrenza attiva" a "una c'è".
     if (widget.activeSearchMatch != null &&
         widget.activeSearchMatch != oldWidget.activeSearchMatch) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _scrollToActiveMatch());
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToActiveMatch(),
+      );
     }
   }
 
@@ -316,8 +319,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     if (viewportBox is! RenderBox || !viewportBox.attached) return;
     if (fieldBox is! RenderBox || !fieldBox.attached) return;
 
-    final fieldTopInViewport =
-        fieldBox.localToGlobal(Offset.zero, ancestor: viewportBox).dy;
+    final fieldTopInViewport = fieldBox
+        .localToGlobal(Offset.zero, ancestor: viewportBox)
+        .dy;
     final fieldTopAbsolute = _scrollController.offset + fieldTopInViewport;
 
     final settings = ref.read(settingsProvider);
@@ -345,10 +349,11 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     // Centra l'occorrenza leggermente sopra al centro della viewport
     // (30% dall'alto), invece che esattamente al bordo superiore: lascia
     // un po' di contesto visibile sopra al risultato trovato.
-    final target = (fieldTopAbsolute +
-            matchOffsetWithinField -
-            viewportBox.size.height * 0.3)
-        .clamp(0.0, _scrollController.position.maxScrollExtent);
+    final target =
+        (fieldTopAbsolute +
+                matchOffsetWithinField -
+                viewportBox.size.height * 0.3)
+            .clamp(0.0, _scrollController.position.maxScrollExtent);
 
     _scrollController.animateTo(
       target,
@@ -409,8 +414,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
                   decoration: InputDecoration(
                     hintText: l10n.untitledNote,
                     hintStyle: titleStyle.copyWith(
-                      color:
-                          theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                      color: theme.colorScheme.onSurface.withValues(
+                        alpha: 0.35,
+                      ),
                     ),
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.zero,
@@ -438,8 +444,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
                     decoration: InputDecoration(
                       hintText: l10n.writeMarkdownHere,
                       hintStyle: contentStyle.copyWith(
-                        color:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.35),
+                        color: theme.colorScheme.onSurface.withValues(
+                          alpha: 0.35,
+                        ),
                       ),
                       border: InputBorder.none,
                       contentPadding: EdgeInsets.zero,

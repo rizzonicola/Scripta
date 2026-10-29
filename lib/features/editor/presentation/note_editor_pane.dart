@@ -166,8 +166,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     // sincronamente DURANTE il build di questo widget rischierebbe un
     // "setState durante il build" in quel campo — `ref.listen` esegue
     // invece il callback subito DOPO che il build corrente è completato.
-    ref.listen<NoteSearchHighlightData>(noteSearchHighlightDataProvider,
-        (previous, next) {
+    ref.listen<NoteSearchHighlightData>(noteSearchHighlightDataProvider, (
+      previous,
+      next,
+    ) {
       _contentController.setMatches(next.$1, next.$2);
     });
 
@@ -196,8 +198,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
       _ensureControllersMatchNote(activeNoteId);
     }
     final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
-    final isNoteSearchActive =
-        ref.watch(noteSearchProvider.select((s) => s.isActive));
+    final isNoteSearchActive = ref.watch(
+      noteSearchProvider.select((s) => s.isActive),
+    );
     final activeSearchMatch = ref.watch(activeNoteSearchMatchProvider);
 
     final l10n = AppLocalizations.of(context);
@@ -238,10 +241,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     // `MarkdownToolbar.onContentChanged` per il perché è indispensabile
     // anche per i pulsanti della toolbar, non solo per la digitazione).
     void handleContentChanged(String val) {
-      ref.read(notesProvider.notifier).updateNote(
-            activeNoteId,
-            content: val,
-          );
+      ref.read(notesProvider.notifier).updateNote(activeNoteId, content: val);
       ref.read(syncProvider.notifier).notifyEditorActivity();
     }
 
@@ -260,36 +260,33 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     final formattingBindings = <ShortcutActivator, VoidCallback>{
       if (editorMode == EditorMode.edit) ...{
         editorActivatorFor(EditorCommand.bold): () => formatShortcut(
-              () => MarkdownToolbarActions.wrapSelection(
-                _contentController,
-                '**',
-                '**',
-                defaultText: 'bold text',
-              ),
-            ),
+          () => MarkdownToolbarActions.wrapSelection(
+            _contentController,
+            '**',
+            '**',
+            defaultText: 'bold text',
+          ),
+        ),
         editorActivatorFor(EditorCommand.italic): () => formatShortcut(
-              () => MarkdownToolbarActions.wrapSelection(
-                _contentController,
-                '*',
-                '*',
-                defaultText: 'italic text',
-              ),
-            ),
+          () => MarkdownToolbarActions.wrapSelection(
+            _contentController,
+            '*',
+            '*',
+            defaultText: 'italic text',
+          ),
+        ),
         editorActivatorFor(EditorCommand.link): () => formatShortcut(
-              () => MarkdownToolbarActions.insertLink(_contentController),
-            ),
+          () => MarkdownToolbarActions.insertLink(_contentController),
+        ),
         editorActivatorFor(EditorCommand.heading1): () => formatShortcut(
-              () =>
-                  MarkdownToolbarActions.prependLine(_contentController, '# '),
-            ),
+          () => MarkdownToolbarActions.prependLine(_contentController, '# '),
+        ),
         editorActivatorFor(EditorCommand.heading2): () => formatShortcut(
-              () =>
-                  MarkdownToolbarActions.prependLine(_contentController, '## '),
-            ),
+          () => MarkdownToolbarActions.prependLine(_contentController, '## '),
+        ),
         editorActivatorFor(EditorCommand.heading3): () => formatShortcut(
-              () => MarkdownToolbarActions.prependLine(
-                  _contentController, '### '),
-            ),
+          () => MarkdownToolbarActions.prependLine(_contentController, '### '),
+        ),
       },
     };
 
@@ -326,10 +323,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                         contentFocusNode: _contentFocusNode,
                         activeSearchMatch: activeSearchMatch,
                         onTitleChanged: (val) {
-                          ref.read(notesProvider.notifier).updateNote(
-                                activeNoteId,
-                                title: val,
-                              );
+                          ref
+                              .read(notesProvider.notifier)
+                              .updateNote(activeNoteId, title: val);
                           ref
                               .read(syncProvider.notifier)
                               .notifyEditorActivity();
@@ -342,11 +338,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 
           // Discrete Floating Exit Button when in Focus Mode
           if (isFocusMode)
-            const Positioned(
-              top: 24,
-              right: 24,
-              child: FocusModeExitButton(),
-            ),
+            const Positioned(top: 24, right: 24, child: FocusModeExitButton()),
         ],
       ),
     );
@@ -369,8 +361,9 @@ class _ReadOnlyNoteView extends ConsumerWidget {
     // modello — a valle, `MarkdownRenderedView`/`NoteSearchHighlightedView`
     // restano comunque gli unici responsabili di riparsing/caching pesanti.
     final activeNoteTitleContent = ref.watch(
-      activeNoteProvider
-          .select((n) => n == null ? null : (n.id, n.title, n.content)),
+      activeNoteProvider.select(
+        (n) => n == null ? null : (n.id, n.title, n.content),
+      ),
     );
     if (activeNoteTitleContent == null) return const SizedBox.shrink();
     final (noteId, title, content) = activeNoteTitleContent;

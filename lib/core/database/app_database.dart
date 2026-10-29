@@ -106,7 +106,8 @@ class AppDatabase {
       // Vedi sopra: il chiamante successivo di `db` riprova e lo riceve. Qui
       // basta una traccia per chi guarda il log all'avvio.
       debugPrint(
-          'AppDatabase.warmUp: apertura anticipata fallita ($e); riproverà il primo chiamante di db.');
+        'AppDatabase.warmUp: apertura anticipata fallita ($e); riproverà il primo chiamante di db.',
+      );
     }
   }
 
@@ -122,7 +123,8 @@ class AppDatabase {
   }
 
   Future<Database> _open() async {
-    final path = debugDatabasePathOverride ??
+    final path =
+        debugDatabasePathOverride ??
         p.join((await getApplicationSupportDirectory()).path, 'scripta.db');
 
     return openDatabase(
@@ -172,10 +174,12 @@ class AppDatabase {
             dirty       INTEGER NOT NULL DEFAULT 1
           )
         ''');
-        await db
-            .execute('CREATE INDEX idx_folders_parent ON folders(parent_id)');
-        await db
-            .execute('CREATE INDEX idx_folders_updated ON folders(updated_at)');
+        await db.execute(
+          'CREATE INDEX idx_folders_parent ON folders(parent_id)',
+        );
+        await db.execute(
+          'CREATE INDEX idx_folders_updated ON folders(updated_at)',
+        );
 
         await db.execute('''
           CREATE TABLE notes (
@@ -218,32 +222,45 @@ class AppDatabase {
   /// schema dalla versione N-1 alla N, in ordine, dentro la transazione di
   /// upgrade di sqflite (se un blocco lancia, l'upgrade viene annullato).
   static Future<void> _onUpgrade(
-      Database db, int oldVersion, int newVersion) async {
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
     if (oldVersion < 2) {
       await db.execute(
-          'ALTER TABLE folders ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1');
+        'ALTER TABLE folders ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1',
+      );
       await db.execute(
-          'ALTER TABLE notes ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1');
+        'ALTER TABLE notes ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1',
+      );
 
       // Stessa semantica della versione precedente: era "da inviare" ciò che
       // aveva updated_at > cursore. Le righe più vecchie del cursore sono già
       // sul server: pulite. Nessun re-upload di massa.
-      final cursorRows = await db.query('sync_meta',
-          where: 'key = ?', whereArgs: ['last_synced_at'], limit: 1);
+      final cursorRows = await db.query(
+        'sync_meta',
+        where: 'key = ?',
+        whereArgs: ['last_synced_at'],
+        limit: 1,
+      );
       final cursor = cursorRows.isEmpty
           ? 0
           : (int.tryParse(cursorRows.first['value'] as String) ?? 0);
       await db.rawUpdate(
-          'UPDATE folders SET dirty = CASE WHEN updated_at > ? THEN 1 ELSE 0 END',
-          [cursor]);
+        'UPDATE folders SET dirty = CASE WHEN updated_at > ? THEN 1 ELSE 0 END',
+        [cursor],
+      );
       await db.rawUpdate(
-          'UPDATE notes SET dirty = CASE WHEN updated_at > ? THEN 1 ELSE 0 END',
-          [cursor]);
+        'UPDATE notes SET dirty = CASE WHEN updated_at > ? THEN 1 ELSE 0 END',
+        [cursor],
+      );
 
       await db.execute(
-          'CREATE INDEX IF NOT EXISTS idx_notes_dirty ON notes(dirty)');
+        'CREATE INDEX IF NOT EXISTS idx_notes_dirty ON notes(dirty)',
+      );
       await db.execute(
-          'CREATE INDEX IF NOT EXISTS idx_folders_dirty ON folders(dirty)');
+        'CREATE INDEX IF NOT EXISTS idx_folders_dirty ON folders(dirty)',
+      );
     }
 
     if (oldVersion < 3) {

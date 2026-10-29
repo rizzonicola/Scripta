@@ -33,23 +33,22 @@ class SecureStorageService {
   final bool? _fallbackEnabledOverride;
 
   const SecureStorageService([FlutterSecureStorage? storage])
-      : _storage = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(
-                resetOnError: true,
-              ),
-              iOptions: IOSOptions(
-                accessibility: KeychainAccessibility.first_unlock,
-              ),
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            aOptions: AndroidOptions(resetOnError: true),
+            iOptions: IOSOptions(
+              accessibility: KeychainAccessibility.first_unlock,
             ),
-        _fallbackEnabledOverride = null;
+          ),
+      _fallbackEnabledOverride = null;
 
   @visibleForTesting
   const SecureStorageService.withFallback(
     FlutterSecureStorage storage, {
     required bool fallbackEnabled,
-  })  : _storage = storage,
-        _fallbackEnabledOverride = fallbackEnabled;
+  }) : _storage = storage,
+       _fallbackEnabledOverride = fallbackEnabled;
 
   /// Prefisso delle chiavi usate SOLO dal fallback su SharedPreferences.
   static const _fallbackPrefix = 'scripta_secure_fallback_';
@@ -66,7 +65,8 @@ class SecureStorageService {
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
       debugPrint(
-          'SecureStorage: Keychain non disponibile ($e), uso il fallback.');
+        'SecureStorage: Keychain non disponibile ($e), uso il fallback.',
+      );
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('$_fallbackPrefix$key', value);
     }
@@ -79,7 +79,8 @@ class SecureStorageService {
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
       debugPrint(
-          'SecureStorage: Keychain non disponibile ($e), uso il fallback.');
+        'SecureStorage: Keychain non disponibile ($e), uso il fallback.',
+      );
     }
     // Keychain vuoto o non accessibile: controlla un eventuale valore salvato
     // dal fallback in una sessione precedente.
@@ -114,7 +115,8 @@ class SecureStorageService {
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
       debugPrint(
-          'SecureStorage: Keychain non disponibile ($e): token solo in memoria.');
+        'SecureStorage: Keychain non disponibile ($e): token solo in memoria.',
+      );
       _memoryOnlyToken = token;
       // Se il Keychain è tornato accessibile in lettura, al prossimo avvio
       // vincerebbe il vecchio token rimasto lì: prova a rimuoverlo. Se anche
@@ -158,7 +160,8 @@ class SecureStorageService {
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
       debugPrint(
-          'SecureStorage: Keychain non disponibile ($e): refresh token solo in memoria.');
+        'SecureStorage: Keychain non disponibile ($e): refresh token solo in memoria.',
+      );
       _memoryOnlyRefreshToken = token;
       try {
         await _storage.delete(key: _refreshTokenKey);

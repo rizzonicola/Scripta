@@ -82,17 +82,17 @@ class _FakeDao implements NotesDao {
 }
 
 NoteRow _row(String id, int order, {String? folder}) => NoteRow(
-      id: id,
-      title: id,
-      content: '',
-      folderId: folder,
-      isFavorite: false,
-      isPinned: false,
-      orderIndex: order,
-      createdAt: 1000,
-      updatedAt: 1000,
-      deletedAt: null,
-    );
+  id: id,
+  title: id,
+  content: '',
+  folderId: folder,
+  isFavorite: false,
+  isPinned: false,
+  orderIndex: order,
+  createdAt: 1000,
+  updatedAt: 1000,
+  deletedAt: null,
+);
 
 List<String> _ids(NotesNotifier n) => n.state.notes.map((e) => e.id).toList();
 
@@ -110,42 +110,45 @@ void main() {
 
   group('NotesNotifier.reorderNotes', () {
     test(
-        'con una cartella selezionata sposta la nota trascinata, non un\'altra',
-        () async {
-      final dao = _FakeDao()
-        ..rows.addAll({
-          'P1': _row('P1', 0),
-          'W1': _row('W1', 1, folder: 'w'),
-          'P2': _row('P2', 2),
-          'W2': _row('W2', 3, folder: 'w'),
-          'W3': _row('W3', 4, folder: 'w'),
-        });
-      final notifier = await _customNotifier(dao);
-      expect(_ids(notifier), ['P1', 'W1', 'P2', 'W2', 'W3']);
+      'con una cartella selezionata sposta la nota trascinata, non un\'altra',
+      () async {
+        final dao = _FakeDao()
+          ..rows.addAll({
+            'P1': _row('P1', 0),
+            'W1': _row('W1', 1, folder: 'w'),
+            'P2': _row('P2', 2),
+            'W2': _row('W2', 3, folder: 'w'),
+            'W3': _row('W3', 4, folder: 'w'),
+          });
+        final notifier = await _customNotifier(dao);
+        expect(_ids(notifier), ['P1', 'W1', 'P2', 'W2', 'W3']);
 
-      // Vista cartella "w": [W1, W2, W3]. Si trascina W3 in cima.
-      notifier.reorderNotes(2, 0, visibleIds: ['W1', 'W2', 'W3']);
+        // Vista cartella "w": [W1, W2, W3]. Si trascina W3 in cima.
+        notifier.reorderNotes(2, 0, visibleIds: ['W1', 'W2', 'W3']);
 
-      // W3 sale nel primo slot occupato dalle note della cartella; le note
-      // fuori cartella (P1, P2) restano ferme dove sono.
-      expect(_ids(notifier), ['P1', 'W3', 'P2', 'W1', 'W2']);
-      expect(notifier.state.notes.map((n) => n.orderIndex), [0, 1, 2, 3, 4]);
-    });
+        // W3 sale nel primo slot occupato dalle note della cartella; le note
+        // fuori cartella (P1, P2) restano ferme dove sono.
+        expect(_ids(notifier), ['P1', 'W3', 'P2', 'W1', 'W2']);
+        expect(notifier.state.notes.map((n) => n.orderIndex), [0, 1, 2, 3, 4]);
+      },
+    );
 
-    test('senza visibleIds riordina l\'intera lista (comportamento classico)',
-        () async {
-      final dao = _FakeDao()
-        ..rows.addAll({
-          'A': _row('A', 0),
-          'B': _row('B', 1),
-          'C': _row('C', 2),
-        });
-      final notifier = await _customNotifier(dao);
+    test(
+      'senza visibleIds riordina l\'intera lista (comportamento classico)',
+      () async {
+        final dao = _FakeDao()
+          ..rows.addAll({
+            'A': _row('A', 0),
+            'B': _row('B', 1),
+            'C': _row('C', 2),
+          });
+        final notifier = await _customNotifier(dao);
 
-      // Convenzione ReorderableListView: newIndex è pre-rimozione.
-      notifier.reorderNotes(0, 3);
-      expect(_ids(notifier), ['B', 'C', 'A']);
-    });
+        // Convenzione ReorderableListView: newIndex è pre-rimozione.
+        notifier.reorderNotes(0, 3);
+        expect(_ids(notifier), ['B', 'C', 'A']);
+      },
+    );
 
     test('persiste solo le note il cui order_index è cambiato', () async {
       final dao = _FakeDao()
@@ -169,15 +172,17 @@ void main() {
       expect(dao.rows['B']!.orderIndex, 2);
     });
 
-    test('una lista visibile obsoleta viene ignorata senza spostare altro',
-        () async {
-      final dao = _FakeDao()
-        ..rows.addAll({'A': _row('A', 0), 'B': _row('B', 1)});
-      final notifier = await _customNotifier(dao);
+    test(
+      'una lista visibile obsoleta viene ignorata senza spostare altro',
+      () async {
+        final dao = _FakeDao()
+          ..rows.addAll({'A': _row('A', 0), 'B': _row('B', 1)});
+        final notifier = await _customNotifier(dao);
 
-      notifier.reorderNotes(0, 2, visibleIds: ['A', 'B', 'ghost']);
-      expect(_ids(notifier), ['A', 'B']);
-    });
+        notifier.reorderNotes(0, 2, visibleIds: ['A', 'B', 'ghost']);
+        expect(_ids(notifier), ['A', 'B']);
+      },
+    );
 
     test('il nuovo ordine sopravvive a un riavvio (ricarica dal DB)', () async {
       final dao = _FakeDao()
@@ -235,25 +240,27 @@ void main() {
   });
 
   group('NotesNotifier.refreshFromDb', () {
-    test('non annulla un riordino fatto mentre la lettura DB è in corso',
-        () async {
-      final dao = _FakeDao()
-        ..rows.addAll({
-          'A': _row('A', 0),
-          'B': _row('B', 1),
-          'C': _row('C', 2),
-        });
-      final notifier = await _customNotifier(dao);
+    test(
+      'non annulla un riordino fatto mentre la lettura DB è in corso',
+      () async {
+        final dao = _FakeDao()
+          ..rows.addAll({
+            'A': _row('A', 0),
+            'B': _row('B', 1),
+            'C': _row('C', 2),
+          });
+        final notifier = await _customNotifier(dao);
 
-      dao.getActiveDelay = const Duration(milliseconds: 60);
-      final refresh = notifier.refreshFromDb(); // legge lo snapshot VECCHIO
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      notifier.reorderNotes(2, 0); // riordino durante la lettura
-      final afterReorder = _ids(notifier);
-      await refresh;
+        dao.getActiveDelay = const Duration(milliseconds: 60);
+        final refresh = notifier.refreshFromDb(); // legge lo snapshot VECCHIO
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        notifier.reorderNotes(2, 0); // riordino durante la lettura
+        final afterReorder = _ids(notifier);
+        await refresh;
 
-      expect(_ids(notifier), afterReorder);
-    });
+        expect(_ids(notifier), afterReorder);
+      },
+    );
 
     test('preserva il testo in debounce durante il refresh', () async {
       final dao = _FakeDao()..rows.addAll({'A': _row('A', 0)});
@@ -268,35 +275,39 @@ void main() {
   });
 
   group('NotesNotifier - scritture in debounce vs metadati', () {
-    test('spostare una nota subito dopo aver digitato non la riporta indietro',
-        () async {
-      final dao = _FakeDao()
-        ..rows.addAll({'A': _row('A', 0, folder: 'origine')});
-      final notifier = await _customNotifier(dao);
+    test(
+      'spostare una nota subito dopo aver digitato non la riporta indietro',
+      () async {
+        final dao = _FakeDao()
+          ..rows.addAll({'A': _row('A', 0, folder: 'origine')});
+        final notifier = await _customNotifier(dao);
 
-      notifier.updateNote('A', content: 'testo digitato'); // debounce 500ms
-      notifier.moveNote('A', 'destinazione'); // entro i 500ms
+        notifier.updateNote('A', content: 'testo digitato'); // debounce 500ms
+        notifier.moveNote('A', 'destinazione'); // entro i 500ms
 
-      // Lascia scattare il timer di autosave e tutte le scritture.
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      await notifier.flushPendingSaves();
+        // Lascia scattare il timer di autosave e tutte le scritture.
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        await notifier.flushPendingSaves();
 
-      expect(dao.rows['A']!.folderId, 'destinazione');
-      expect(dao.rows['A']!.content, 'testo digitato');
-    });
+        expect(dao.rows['A']!.folderId, 'destinazione');
+        expect(dao.rows['A']!.content, 'testo digitato');
+      },
+    );
 
-    test('cancellare una nota subito dopo aver digitato non la fa risorgere',
-        () async {
-      final dao = _FakeDao()..rows.addAll({'A': _row('A', 0)});
-      final notifier = await _customNotifier(dao);
+    test(
+      'cancellare una nota subito dopo aver digitato non la fa risorgere',
+      () async {
+        final dao = _FakeDao()..rows.addAll({'A': _row('A', 0)});
+        final notifier = await _customNotifier(dao);
 
-      notifier.updateNote('A', content: 'testo digitato');
-      notifier.deleteNote('A');
+        notifier.updateNote('A', content: 'testo digitato');
+        notifier.deleteNote('A');
 
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      await notifier.flushPendingSaves();
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        await notifier.flushPendingSaves();
 
-      expect(dao.rows['A']!.isDeleted, isTrue);
-    });
+        expect(dao.rows['A']!.isDeleted, isTrue);
+      },
+    );
   });
 }

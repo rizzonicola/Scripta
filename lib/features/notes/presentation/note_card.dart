@@ -49,7 +49,10 @@ class NoteCard extends ConsumerWidget {
   /// Dialog "Sposta in cartella": pubblico perché usato anche dal menu
   /// contestuale e dalla scorciatoia Ctrl+Shift+M.
   static void showMoveNoteDialog(
-      BuildContext context, WidgetRef ref, NoteModel note) {
+    BuildContext context,
+    WidgetRef ref,
+    NoteModel note,
+  ) {
     // Notifier e messenger si leggono PRIMA di aprire il dialog: dopo la
     // scelta non si usa più `ref`/`context` (la card potrebbe nel frattempo
     // essere stata ricostruita o rimossa dalla lista).
@@ -213,14 +216,12 @@ class NoteCard extends ConsumerWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
-    final isCreatedSort = sortOrder == NoteSortOrder.createdDesc ||
+    final isCreatedSort =
+        sortOrder == NoteSortOrder.createdDesc ||
         sortOrder == NoteSortOrder.createdAsc;
     final dateLabel =
         '${isCreatedSort ? ds.noteCreatedLabel : ds.noteUpdatedLabel} '
-        '${_formatDate(
-      isCreatedSort ? note.createdAt : note.updatedAt,
-      Localizations.localeOf(context).toString(),
-    )}';
+        '${_formatDate(isCreatedSort ? note.createdAt : note.updatedAt, Localizations.localeOf(context).toString())}';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -388,8 +389,8 @@ class _NoteDragHandle extends StatelessWidget {
     final bgColor = isSelected
         ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.08)
         : (isDark
-            ? Colors.white.withValues(alpha: 0.03)
-            : Colors.black.withValues(alpha: 0.02));
+              ? Colors.white.withValues(alpha: 0.03)
+              : Colors.black.withValues(alpha: 0.02));
     final iconColor = isSelected
         ? theme.colorScheme.primary
         : theme.colorScheme.onSurface.withValues(alpha: 0.3);

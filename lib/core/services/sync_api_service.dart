@@ -24,14 +24,19 @@ class SyncApiException implements Exception {
   /// (secondi): il ritentativo non deve partire prima (Y-11).
   final Duration? retryAfter;
 
-  const SyncApiException(this.message,
-      [this.statusCode, this.rejected = const [], this.code])
-      : retryAfter = null;
+  const SyncApiException(
+    this.message, [
+    this.statusCode,
+    this.rejected = const [],
+    this.code,
+  ]) : retryAfter = null;
 
   const SyncApiException.withRetryAfter(
-      this.message, this.statusCode, this.retryAfter,
-      {this.code})
-      : rejected = const [];
+    this.message,
+    this.statusCode,
+    this.retryAfter, {
+    this.code,
+  }) : rejected = const [];
 
   @override
   String toString() =>
@@ -109,10 +114,11 @@ class SyncApiService {
   final http.Client _client;
   final SyncTimeouts _timeouts;
 
-  SyncApiService(
-      [http.Client? client, SyncTimeouts timeouts = const SyncTimeouts()])
-      : _client = client ?? http.Client(),
-        _timeouts = timeouts;
+  SyncApiService([
+    http.Client? client,
+    SyncTimeouts timeouts = const SyncTimeouts(),
+  ]) : _client = client ?? http.Client(),
+       _timeouts = timeouts;
 
   /// Identificativo dell'app inviato nell'header `X-Scripta-Client`. Il server
   /// lo usa SOLO nei log (non cambia nessun comportamento). Tenere allineato
@@ -170,7 +176,9 @@ class SyncApiService {
       // stessa richiesta non può migliorare nulla. 502 = risposta del server
       // non valida (e NON transitoria, vedi SyncNotifier).
       throw const SyncApiException(
-          'Risposta del server non valida (JSON malformato)', 502);
+        'Risposta del server non valida (JSON malformato)',
+        502,
+      );
     }
   }
 
@@ -198,7 +206,9 @@ class SyncApiService {
         !(uri.scheme == 'http' || uri.scheme == 'https') ||
         uri.host.isEmpty) {
       throw const SyncApiException(
-          'URL del server non valido: usa https://', 400);
+        'URL del server non valido: usa https://',
+        400,
+      );
     }
     // Il token viaggia nell'header Authorization: su http in chiaro può essere
     // letto da chiunque sulla rete. Consentiamo http solo verso il loopback
@@ -222,8 +232,9 @@ class SyncApiService {
     try {
       final clean = _cleanUrl(baseUrl); // URL non valido -> catch -> false
       final uri = Uri.parse('$clean/healthz');
-      final response =
-          await _client.get(uri).timeout(const Duration(seconds: 4));
+      final response = await _client
+          .get(uri)
+          .timeout(const Duration(seconds: 4));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -246,19 +257,17 @@ class SyncApiService {
             uri,
             headers: {
               'Content-Type': 'application/json',
-              'X-Scripta-Client': clientHeaderValue
+              'X-Scripta-Client': clientHeaderValue,
             },
-            body: json.encode({
-              'username': username,
-              'password': password,
-            }),
+            body: json.encode({'username': username, 'password': password}),
           )
           .timeout(const Duration(seconds: 10));
     } on TimeoutException {
       // Il chiamante distingue un timeout da una risposta HTTP: senza status
       // code il login può ritentare dentro il proprio budget.
       throw const SyncApiException(
-          'Tempo scaduto durante la connessione al server');
+        'Tempo scaduto durante la connessione al server',
+      );
     } on Exception {
       // SocketException, ClientException, TLS...: la richiesta non ha prodotto
       // una risposta HTTP. Non esporre dettagli potenzialmente sensibili.
@@ -273,15 +282,21 @@ class SyncApiService {
         // 502 = risposta non valida, non transitoria: ritentare la stessa
         // richiesta non può migliorare il JSON.
         throw const SyncApiException(
-            'Risposta del server non valida (JSON malformato)', 502);
+          'Risposta del server non valida (JSON malformato)',
+          502,
+        );
       }
     } else {
       final body = bodyText(response);
       final message = _extractError(body, 'Errore durante l\'autenticazione');
       final code = _extractErrorCode(body);
       if (response.statusCode == 401) {
-        throw SyncApiException('Credenziali non valide', 401, const [],
-            code ?? 'invalid_credentials');
+        throw SyncApiException(
+          'Credenziali non valide',
+          401,
+          const [],
+          code ?? 'invalid_credentials',
+        );
       }
       if (response.statusCode == 403 && code == 'account_blocked') {
         throw const SyncApiException(
@@ -304,8 +319,11 @@ class SyncApiService {
         final retryAfter = parseRetryAfter(response.headers['retry-after']);
         if (retryAfter != null) {
           throw SyncApiException.withRetryAfter(
-              message, response.statusCode, retryAfter,
-              code: code ?? 'service_unavailable');
+            message,
+            response.statusCode,
+            retryAfter,
+            code: code ?? 'service_unavailable',
+          );
         }
       }
       throw SyncApiException(message, response.statusCode, const [], code);
@@ -336,7 +354,8 @@ class SyncApiService {
           .timeout(const Duration(seconds: 10));
     } on TimeoutException {
       throw const SyncApiException(
-          'Tempo scaduto durante il rinnovo della sessione');
+        'Tempo scaduto durante il rinnovo della sessione',
+      );
     } on Exception {
       throw const SyncApiException('Impossibile connettersi al server');
     }
@@ -347,7 +366,9 @@ class SyncApiService {
         return LoginResponseDto.fromJson(decoded);
       } catch (_) {
         throw const SyncApiException(
-            'Risposta del server non valida (JSON malformato)', 502);
+          'Risposta del server non valida (JSON malformato)',
+          502,
+        );
       }
     }
     throw _apiError(response, 'Impossibile rinnovare la sessione');
@@ -391,13 +412,15 @@ class SyncApiService {
   }) async {
     try {
       final clean = _cleanUrl(baseUrl);
-      final response = await _client.post(
-        Uri.parse('$clean/api/v1/auth/logout-all'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'X-Scripta-Client': clientHeaderValue,
-        },
-      ).timeout(const Duration(seconds: 10));
+      final response = await _client
+          .post(
+            Uri.parse('$clean/api/v1/auth/logout-all'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'X-Scripta-Client': clientHeaderValue,
+            },
+          )
+          .timeout(const Duration(seconds: 10));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -412,13 +435,15 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/user/settings');
 
-    final response = await _client.get(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      },
-    ).timeout(const Duration(seconds: 10));
+    final response = await _client
+        .get(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
@@ -470,27 +495,30 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/sync');
 
-    final payload =
-        SyncRequest(lastSyncedAt: lastSyncedAt, folders: folders, notes: notes);
+    final payload = SyncRequest(
+      lastSyncedAt: lastSyncedAt,
+      folders: folders,
+      notes: notes,
+    );
     final requestBody = await _encodeSyncBody(payload);
 
-    final response = await _postWithProgressTimeout(
-      uri,
-      {
-        'Authorization': 'Bearer $token',
-        // charset esplicito: è ciò che `http.post(body: String)` inviava già.
-        'Content-Type': 'application/json; charset=utf-8',
-        'X-Scripta-Client': clientHeaderValue,
-      },
-      const Utf8Encoder().convert(requestBody),
-    );
+    final response = await _postWithProgressTimeout(uri, {
+      'Authorization': 'Bearer $token',
+      // charset esplicito: è ciò che `http.post(body: String)` inviava già.
+      'Content-Type': 'application/json; charset=utf-8',
+      'X-Scripta-Client': clientHeaderValue,
+    }, const Utf8Encoder().convert(requestBody));
 
     if (response.statusCode == 200) {
       return _decodeSyncResponse(response);
     } else if (response.statusCode == 401) {
       final body = bodyText(response);
-      throw SyncApiException('Sessione scaduta o non autorizzata', 401,
-          const [], _extractErrorCode(body) ?? 'unauthorized');
+      throw SyncApiException(
+        'Sessione scaduta o non autorizzata',
+        401,
+        const [],
+        _extractErrorCode(body) ?? 'unauthorized',
+      );
     } else if (response.statusCode == 403) {
       final body = bodyText(response);
       final code = _extractErrorCode(body);
@@ -502,8 +530,12 @@ class SyncApiService {
           'account_blocked',
         );
       }
-      throw SyncApiException(_extractError(body, 'Accesso negato dal server'),
-          403, const [], code);
+      throw SyncApiException(
+        _extractError(body, 'Accesso negato dal server'),
+        403,
+        const [],
+        code,
+      );
     } else if (response.statusCode == 429) {
       final body = bodyText(response);
       throw SyncApiException.withRetryAfter(
@@ -530,17 +562,19 @@ class SyncApiService {
             .toList();
       } catch (_) {}
       throw SyncApiException(
-          'Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)',
-          422,
-          rejected,
-          'validation_failed');
+        'Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)',
+        422,
+        rejected,
+        'validation_failed',
+      );
     } else {
       final body = bodyText(response);
       throw SyncApiException(
-          _extractError(body, 'Errore durante la sincronizzazione'),
-          response.statusCode,
-          const [],
-          _extractErrorCode(body));
+        _extractError(body, 'Errore durante la sincronizzazione'),
+        response.statusCode,
+        const [],
+        _extractErrorCode(body),
+      );
     }
   }
 
@@ -555,7 +589,10 @@ class SyncApiService {
   /// connessione. L'invio fermo non è annullabile con `http.Client`: come
   /// prima, resta in sospeso finché il sistema operativo non lo chiude.
   Future<http.Response> _postWithProgressTimeout(
-      Uri uri, Map<String, String> headers, Uint8List body) {
+    Uri uri,
+    Map<String, String> headers,
+    Uint8List body,
+  ) {
     final t = _timeouts;
     final failure = Completer<http.Response>();
     Timer? watchdog;
@@ -569,7 +606,8 @@ class SyncApiService {
       final sub = subscription;
       if (sub != null) unawaited(sub.cancel());
       failure.completeError(
-          TimeoutException('Sync senza progressi: $what', limit));
+        TimeoutException('Sync senza progressi: $what', limit),
+      );
     }
 
     void arm(Duration limit, String what) {
@@ -578,8 +616,10 @@ class SyncApiService {
       watchdog = Timer(limit, () => fail(limit, what));
     }
 
-    final totalTimer =
-        Timer(t.total, () => fail(t.total, 'tempo totale superato'));
+    final totalTimer = Timer(
+      t.total,
+      () => fail(t.total, 'tempo totale superato'),
+    );
     final request = _ProgressRequest(
       'POST',
       uri,

@@ -136,8 +136,9 @@ class _NoteSearchHighlightedViewState
     );
 
     final normalHighlight =
-        (isDark ? Colors.amber.shade700 : Colors.amber.shade300)
-            .withValues(alpha: 0.55);
+        (isDark ? Colors.amber.shade700 : Colors.amber.shade300).withValues(
+          alpha: 0.55,
+        );
     const activeHighlight = Color(0xFFFB923C); // Orange 400, alto contrasto
 
     final text = widget.content;
@@ -152,7 +153,8 @@ class _NoteSearchHighlightedViewState
 
       if (start > cursor) {
         spans.add(
-            TextSpan(text: text.substring(cursor, start), style: baseStyle));
+          TextSpan(text: text.substring(cursor, start), style: baseStyle),
+        );
       }
 
       final matchText = text.substring(start, end);
@@ -160,13 +162,17 @@ class _NoteSearchHighlightedViewState
       // viene copiato. L'evidenziazione della occorrenza attiva è un normale
       // TextSpan; la posizione per lo scroll è calcolata sotto col TextPainter
       // e materializzata in un anchor invisibile fuori dalla selezione.
-      spans.add(TextSpan(
-        text: matchText,
-        style: baseStyle.copyWith(
-          backgroundColor: i == activeIndex ? activeHighlight : normalHighlight,
-          color: i == activeIndex ? Colors.black : null,
+      spans.add(
+        TextSpan(
+          text: matchText,
+          style: baseStyle.copyWith(
+            backgroundColor: i == activeIndex
+                ? activeHighlight
+                : normalHighlight,
+            color: i == activeIndex ? Colors.black : null,
+          ),
         ),
-      ));
+      );
       cursor = end;
     }
     if (cursor < text.length) {

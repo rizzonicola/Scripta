@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
 import '../constants/app_constants.dart';
 
-enum DeviceScreenType {
-  mobile,
-  tablet,
-  desktop,
-}
+enum DeviceScreenType { mobile, tablet, desktop }
 
 class ResponsiveBreakpoints {
   static DeviceScreenType getScreenType(BuildContext context) {

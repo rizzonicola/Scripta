@@ -95,11 +95,11 @@ class NotesState {
 
   @override
   int get hashCode => Object.hash(
-        identityHashCode(notes),
-        searchQuery,
-        activeNoteId,
-        sortOrder,
-      );
+    identityHashCode(notes),
+    searchQuery,
+    activeNoteId,
+    sortOrder,
+  );
 }
 
 /// Gestisce l'elenco delle note sopra il database locale SQLite ([NotesDao]).
@@ -194,7 +194,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
     };
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
-        AppConstants.prefCustomOrderByScope, jsonEncode(cleaned));
+      AppConstants.prefCustomOrderByScope,
+      jsonEncode(cleaned),
+    );
   }
 
   /// La nota con modifiche testuali non ancora scritte su SQLite, catturata
@@ -272,17 +274,19 @@ class NotesNotifier extends StateNotifier<NotesState> {
       }
     }();
     _inflightWrites.add(f);
-    unawaited(f.then(
-      (_) => _inflightWrites.remove(f),
-      onError: (_) => _inflightWrites.remove(f),
-    ));
+    unawaited(
+      f.then(
+        (_) => _inflightWrites.remove(f),
+        onError: (_) => _inflightWrites.remove(f),
+      ),
+    );
     return f;
   }
 
   NotesNotifier({NotesDao? dao, String? initialActiveNoteId})
-      : _dao = dao ?? NotesDao(),
-        _restoreActiveNoteId = initialActiveNoteId,
-        super(const NotesState()) {
+    : _dao = dao ?? NotesDao(),
+      _restoreActiveNoteId = initialActiveNoteId,
+      super(const NotesState()) {
     PerfMarks.timeAsync('notes.load', _loadFromDb);
   }
 
@@ -316,7 +320,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     // Valore globale delle versioni precedenti: resta solo come ripiego per le
     // viste che non hanno ancora un ordinamento proprio.
-    _defaultSort = _parseSort(prefs.getString(AppConstants.prefSortMode)) ??
+    _defaultSort =
+        _parseSort(prefs.getString(AppConstants.prefSortMode)) ??
         NoteSortOrder.updatedDesc;
 
     final rawModes = prefs.getString(AppConstants.prefSortModeByScope);
@@ -344,13 +349,16 @@ class NotesNotifier extends StateNotifier<NotesState> {
           decoded.forEach((k, v) {
             if (v is List) {
               _folderCustomOrders.putIfAbsent(
-                  k as String, () => v.whereType<String>().toList());
+                k as String,
+                () => v.whereType<String>().toList(),
+              );
             }
           });
         }
       } catch (e) {
         debugPrint(
-            'NotesNotifier: ordini manuali per cartella non leggibili: $e');
+          'NotesNotifier: ordini manuali per cartella non leggibili: $e',
+        );
       }
     }
 
@@ -380,8 +388,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final String? initialActiveId = loadedActiveStillExists
         ? activeBeforeLoad
         : (restoredStillExists
-            ? restoreId
-            : (sorted.isNotEmpty ? sorted.first.id : null));
+              ? restoreId
+              : (sorted.isNotEmpty ? sorted.first.id : null));
 
     state = state.copyWith(
       notes: sorted,
@@ -521,9 +529,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
         // viene cancellato subito dopo.
       }
     }
-    await Future.wait(List<Future<void>>.of(_inflightWrites).map(
-      (f) => f.catchError((_) {}),
-    ));
+    await Future.wait(
+      List<Future<void>>.of(_inflightWrites).map((f) => f.catchError((_) {})),
+    );
     _pendingWrite = null;
     _restoreActiveNoteId = null;
     _folderCustomOrders.clear();
@@ -551,7 +559,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// nell'elenco seguono la posizione salvata; quelle assenti (nuove, spostate
   /// o importate) vanno in cima, tra loro per `order_index`.
   static int _compareByFolderPosition(
-      NoteModel a, NoteModel b, Map<String, int> pos) {
+    NoteModel a,
+    NoteModel b,
+    Map<String, int> pos,
+  ) {
     final pa = pos[a.id];
     final pb = pos[b.id];
     if (pa != null && pb != null) return pa.compareTo(pb);
@@ -623,8 +634,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // `toLowerCase()` allocava una nuova stringa O(n log n) volte.
     final Map<String, String> titleKeys =
         order == NoteSortOrder.titleAsc || order == NoteSortOrder.titleDesc
-            ? <String, String>{for (final n in sorted) n.id: n.titleLower}
-            : const <String, String>{};
+        ? <String, String>{for (final n in sorted) n.id: n.titleLower}
+        : const <String, String>{};
     sorted.sort((a, b) {
       if (order != NoteSortOrder.custom) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
@@ -635,13 +646,18 @@ class NotesNotifier extends StateNotifier<NotesState> {
         NoteSortOrder.updatedAsc => a.updatedAt.compareTo(b.updatedAt),
         NoteSortOrder.createdDesc => b.createdAt.compareTo(a.createdAt),
         NoteSortOrder.createdAsc => a.createdAt.compareTo(b.createdAt),
-        NoteSortOrder.titleAsc =>
-          _compareNaturalTitles(titleKeys[a.id]!, titleKeys[b.id]!),
-        NoteSortOrder.titleDesc =>
-          _compareNaturalTitles(titleKeys[b.id]!, titleKeys[a.id]!),
-        NoteSortOrder.custom => folderPos == null
-            ? a.orderIndex.compareTo(b.orderIndex)
-            : _compareByFolderPosition(a, b, folderPos),
+        NoteSortOrder.titleAsc => _compareNaturalTitles(
+          titleKeys[a.id]!,
+          titleKeys[b.id]!,
+        ),
+        NoteSortOrder.titleDesc => _compareNaturalTitles(
+          titleKeys[b.id]!,
+          titleKeys[a.id]!,
+        ),
+        NoteSortOrder.custom =>
+          folderPos == null
+              ? a.orderIndex.compareTo(b.orderIndex)
+              : _compareByFolderPosition(a, b, folderPos),
       };
       if (primary != 0) return primary;
 
@@ -725,8 +741,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
           }
         }
         if (changed.isNotEmpty) {
-          unawaited(_persist(
-              () => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+          unawaited(
+            _persist(
+              () => _dao.upsertBatch(changed.map((n) => n.toRow()).toList()),
+            ),
+          );
         }
       } else if ((_folderCustomOrders[_scope] ?? const <String>[]).isEmpty) {
         // Cartella senza ordine manuale salvato: lo si inizializza dall'ordine
@@ -825,8 +844,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
       unawaited(_persistSortModes());
     }
     if (changed.isNotEmpty) {
-      unawaited(_persist(
-          () => _dao.upsertBatch(changed.map((n) => n.toRow()).toList())));
+      unawaited(
+        _persist(
+          () => _dao.upsertBatch(changed.map((n) => n.toRow()).toList()),
+        ),
+      );
     }
   }
 
@@ -878,34 +900,37 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final baseIndex = state.notes.isEmpty
         ? 0
         : state.notes.map((n) => n.orderIndex).reduce((a, b) => a > b ? a : b) +
-            1;
+              1;
     final newNotes = <NoteModel>[];
     for (var i = 0; i < items.length; i++) {
       // Senza manifest, istanti DISTINTI (1 ms l'uno dall'altro, l'ultimo =
       // now): con un unico `now` tutte le note importate avevano la stessa
       // data di creazione/modifica e il loro ordine reciproco era deciso
       // dall'UUID casuale, diverso a ogni avvio.
-      final fallback =
-          now.subtract(Duration(milliseconds: items.length - 1 - i));
+      final fallback = now.subtract(
+        Duration(milliseconds: items.length - 1 - i),
+      );
       // Il manifest è in UTC; il modello di dominio usa sempre DateTime
       // locali (come NoteModel.fromRow). Se manca createdAt si usa updatedAt
       // e, in ogni caso, la creazione non può superare l'ultima modifica.
-      final updatedAt =
-          (items[i].updatedAt ?? items[i].createdAt ?? fallback).toLocal();
+      final updatedAt = (items[i].updatedAt ?? items[i].createdAt ?? fallback)
+          .toLocal();
       var createdAt = (items[i].createdAt ?? updatedAt).toLocal();
       if (createdAt.isAfter(updatedAt)) createdAt = updatedAt;
 
-      newNotes.add(NoteModel(
-        id: _uuid.v4(),
-        title: items[i].title,
-        content: items[i].content,
-        folderId: items[i].folderId,
-        createdAt: createdAt,
-        updatedAt: updatedAt,
-        isFavorite: items[i].isFavorite,
-        isPinned: items[i].isPinned,
-        orderIndex: items[i].orderIndex ?? baseIndex + i,
-      ));
+      newNotes.add(
+        NoteModel(
+          id: _uuid.v4(),
+          title: items[i].title,
+          content: items[i].content,
+          folderId: items[i].folderId,
+          createdAt: createdAt,
+          updatedAt: updatedAt,
+          isFavorite: items[i].isFavorite,
+          isPinned: items[i].isPinned,
+          orderIndex: items[i].orderIndex ?? baseIndex + i,
+        ),
+      );
     }
 
     final previousNotes = state.notes;
@@ -915,7 +940,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     try {
       await _persistStrict(
-          () => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList()));
+        () => _dao.upsertBatch(newNotes.map((n) => n.toRow()).toList()),
+      );
     } catch (_) {
       // Niente falsi successi: se SQLite non ha accettato il batch, le note
       // non esistono davvero e vanno tolte anche dallo stato in memoria.
@@ -937,7 +963,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final newOrderIndex = state.notes.isEmpty
         ? 0
         : state.notes.map((n) => n.orderIndex).reduce((a, b) => a < b ? a : b) -
-            1;
+              1;
     final newNote = NoteModel(
       id: _uuid.v4(),
       title: '',
@@ -1039,8 +1065,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     final previousNotes = state.notes;
     final previousActiveId = state.activeNoteId;
-    state =
-        state.copyWith(notes: updatedList, activeNoteId: () => nextActiveId);
+    state = state.copyWith(
+      notes: updatedList,
+      activeNoteId: () => nextActiveId,
+    );
     try {
       await _persistStrict(() => _dao.upsert(tombstoneRow));
     } catch (_) {
@@ -1077,7 +1105,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     final existing = state.notes[index];
     final updatedNote = existing.copyWith(
-        isPinned: !existing.isPinned, updatedAt: DateTime.now());
+      isPinned: !existing.isPinned,
+      updatedAt: DateTime.now(),
+    );
 
     final updatedList = List<NoteModel>.from(state.notes);
     updatedList[index] = updatedNote;
@@ -1125,15 +1155,17 @@ class NotesNotifier extends StateNotifier<NotesState> {
     final nextOrder = orderIndex ?? existing.orderIndex;
     final nextCreatedAt = (createdAt ?? existing.createdAt).toLocal();
 
-    final syncChanged = nextFavorite != existing.isFavorite ||
+    final syncChanged =
+        nextFavorite != existing.isFavorite ||
         nextPinned != existing.isPinned ||
         nextOrder != existing.orderIndex ||
         nextCreatedAt != existing.createdAt;
     if (!syncChanged) return;
 
     final now = DateTime.now();
-    final normalizedCreatedAt =
-        nextCreatedAt.isAfter(now) ? now : nextCreatedAt;
+    final normalizedCreatedAt = nextCreatedAt.isAfter(now)
+        ? now
+        : nextCreatedAt;
     final updatedNote = existing.copyWith(
       isFavorite: nextFavorite,
       isPinned: nextPinned,
@@ -1200,15 +1232,17 @@ class _SearchMatchCache {
     }
     final cached = _matches[note];
     if (cached != null) return cached;
-    final result = note.titleLower.contains(lowerQuery) ||
+    final result =
+        note.titleLower.contains(lowerQuery) ||
         note.contentLower.contains(lowerQuery);
     _matches[note] = result;
     return result;
   }
 }
 
-final _searchMatchCacheProvider =
-    Provider<_SearchMatchCache>((ref) => _SearchMatchCache());
+final _searchMatchCacheProvider = Provider<_SearchMatchCache>(
+  (ref) => _SearchMatchCache(),
+);
 
 /// Provider for filtered notes based on folder and search query.
 ///
@@ -1218,8 +1252,9 @@ final _searchMatchCacheProvider =
 /// non possano mai disallinearsi tra loro.
 final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
   final notes = ref.watch(notesProvider.select((s) => s.notes));
-  final selectedFolderId =
-      ref.watch(folderProvider.select((s) => s.selectedFolderId));
+  final selectedFolderId = ref.watch(
+    folderProvider.select((s) => s.selectedFolderId),
+  );
   final searchQuery = ref.watch(notesProvider.select((s) => s.searchQuery));
 
   var filtered = notes;
@@ -1232,8 +1267,10 @@ final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
     // già le sottocartelle annidate visivamente sotto il genitore, non come
     // sezioni indipendenti.
     final rootFolders = ref.watch(folderProvider.select((s) => s.rootFolders));
-    final scopeIds =
-        FolderNode.collectSubtreeIds(rootFolders, selectedFolderId);
+    final scopeIds = FolderNode.collectSubtreeIds(
+      rootFolders,
+      selectedFolderId,
+    );
     filtered = filtered
         .where((n) => n.folderId != null && scopeIds.contains(n.folderId))
         .toList();

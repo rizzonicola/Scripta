@@ -90,8 +90,9 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     with SingleTickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
-  final FocusNode _selectionFocusNode =
-      FocusNode(debugLabel: 'markdown-selection');
+  final FocusNode _selectionFocusNode = FocusNode(
+    debugLabel: 'markdown-selection',
+  );
 
   // Il gruppo coordina la selezione "anchored al modello" del corpo
   // (`MarkdownSelectionController`, sotto) con la selezione nativa e
@@ -147,8 +148,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // long-press" (soglia di spostamento + soglia di durata), usando le stesse
   // costanti che userebbe Flutter internamente.
   static const double _tapTouchSlop = kTouchSlop; // ~18px
-  static const Duration _tapMaxDuration =
-      Duration(milliseconds: 500); // ~kLongPressTimeout
+  static const Duration _tapMaxDuration = Duration(
+    milliseconds: 500,
+  ); // ~kLongPressTimeout
   final Map<int, _PendingTap> _pendingTapPointers = <int, _PendingTap>{};
 
   // --- Richiamo: long-press DENTRO la selezione = maniglie e menù ----------
@@ -184,19 +186,19 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // (callback) rieseguita a ogni aggiornamento del widget.
   late final Map<Type, GestureRecognizerFactory> _recallGestures =
       <Type, GestureRecognizerFactory>{
-    _SelectionRecallRecognizer:
-        GestureRecognizerFactoryWithHandlers<_SelectionRecallRecognizer>(
-      () => _SelectionRecallRecognizer(
-        shouldClaim: _claimsRecallAt,
-        stillClaimable: _stillClaimsRecallAt,
-      ),
-      (instance) {
-        instance
-          ..onLongPressStart = _handleRecallLongPressStart
-          ..onLongPressEnd = _handleRecallLongPressEnd;
-      },
-    ),
-  };
+        _SelectionRecallRecognizer:
+            GestureRecognizerFactoryWithHandlers<_SelectionRecallRecognizer>(
+              () => _SelectionRecallRecognizer(
+                shouldClaim: _claimsRecallAt,
+                stillClaimable: _stillClaimsRecallAt,
+              ),
+              (instance) {
+                instance
+                  ..onLongPressStart = _handleRecallLongPressStart
+                  ..onLongPressEnd = _handleRecallLongPressEnd;
+              },
+            ),
+      };
 
   // --- Inseguimento: il menù Copia / Seleziona tutto segue la selezione ----
   // Il PERCHÉ (contenuto che si aggiorna da solo, coordinate di CONTENUTO,
@@ -239,9 +241,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   final ValueNotifier<int> _toolbarTrackRevision = ValueNotifier<int>(0);
 
   // Un'unica istanza: il `ListenableBuilder` si iscrive una volta sola.
-  late final Listenable _toolbarTrackListenable = Listenable.merge(
-    <Listenable>[_scrollController, _toolbarTrackRevision],
-  );
+  late final Listenable _toolbarTrackListenable = Listenable.merge(<Listenable>[
+    _scrollController,
+    _toolbarTrackRevision,
+  ]);
 
   TextSelectionControls get _platformSelectionControls {
     switch (defaultTargetPlatform) {
@@ -421,13 +424,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // separato per ciascuno come nel vecchio `MarkdownStyleSheet`): stessa
     // tinta usata prima per lo sfondo dei blocchi di codice, che resta
     // l'elemento visivamente più caratterizzato.
-    final surfaceColor =
-        isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F5);
+    final surfaceColor = isDark
+        ? const Color(0xFF1E1E1E)
+        : const Color(0xFFF5F5F5);
     // Sfondo del testo monospace (inline e a blocco condividono lo stesso
     // campo in questa versione del pacchetto): tinta leggermente più chiara,
     // vicina a quella usata prima solo per il code inline.
-    final monospaceBackgroundColor =
-        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEFEFEF);
+    final monospaceBackgroundColor = isDark
+        ? const Color(0xFF2D2D2D)
+        : const Color(0xFFEFEFEF);
 
     _codeSurfaceColor = surfaceColor;
     _mathTextStyle = TextStyle(
@@ -649,8 +654,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // è realmente visibile), o `null` se non ancora disponibile.
   Rect? _viewportGlobalRect() {
     if (!_scrollController.hasClients) return null;
-    final box =
-        _scrollController.position.context.storageContext.findRenderObject();
+    final box = _scrollController.position.context.storageContext
+        .findRenderObject();
     if (box is! RenderBox || !box.attached || !box.hasSize) return null;
     return box.localToGlobal(Offset.zero) & box.size;
   }
@@ -919,12 +924,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final viewport = offset == null ? null : _viewportGlobalRect();
     final measured = _measureSelectionExtent();
     final remembered = _trackedExtent;
-    final extent = measured ??
+    final extent =
+        measured ??
         (remembered != null && remembered.selection == selection
             ? remembered
             : null);
     _trackedExtent = extent;
-    _trackBelow = extent != null &&
+    _trackBelow =
+        extent != null &&
         offset != null &&
         viewport != null &&
         _wantsBelowPlacement(extent, viewport, offset);
@@ -1086,10 +1093,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// [redecide]: ridecidi il lato sopra/sotto («posizione naturale»: richiamo,
   /// Seleziona tutto, schermo). [replace]: sostituisci le coordinate invece di
   /// unirle alle note (schermo: il testo può essere andato a capo altrove).
-  void _scheduleToolbarRefresh({
-    bool redecide = false,
-    bool replace = false,
-  }) {
+  void _scheduleToolbarRefresh({bool redecide = false, bool replace = false}) {
     if (redecide) _trackRedecidePending = true;
     if (replace) _trackReplacePending = true;
     if (_toolbarRefreshScheduled) return;
@@ -1129,7 +1133,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     if (measured == null) return;
 
     final previous = _trackedExtent;
-    final next = (previous != null &&
+    final next =
+        (previous != null &&
             previous.selection == measured.selection &&
             !replace)
         ? previous.unionWith(measured)
@@ -1161,8 +1166,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       _pendingTapPointers.remove(event.pointer);
       return;
     }
-    _pendingTapPointers[event.pointer] =
-        _PendingTap(event.position, DateTime.now());
+    _pendingTapPointers[event.pointer] = _PendingTap(
+      event.position,
+      DateTime.now(),
+    );
   }
 
   void _handleBackgroundPointerMove(PointerMoveEvent event) {
@@ -1209,9 +1216,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     if (_pendingTapPointers.keys.any((other) => other != pointer)) return false;
     final selection = _selectionController.selection;
     if (selection == null || selection.isCollapsed) return false;
-    return _selectionController
-        .globalSelectionRects()
-        .any((rect) => rect.inflate(_recallTouchTolerance).contains(position));
+    return _selectionController.globalSelectionRects().any(
+      (rect) => rect.inflate(_recallTouchTolerance).contains(position),
+    );
   }
 
   // Il layer più alto colpito dal tocco appartiene a QUESTA vista? Le maniglie
@@ -1272,10 +1279,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   bool _claimsRecallAt(PointerDownEvent event) => _failSafe(
-        () =>
-            _isRecallCandidate(event.position, event.pointer) &&
-            _isTopHitInsideThisView(event),
-      );
+    () =>
+        _isRecallCandidate(event.position, event.pointer) &&
+        _isTopHitInsideThisView(event),
+  );
 
   // Ricontrollo alla scadenza del long-press (la selezione o un secondo dito
   // possono essere comparsi nei 480 ms di attesa).
@@ -1572,7 +1579,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 class _NoGlowScrollBehavior extends ScrollBehavior {
   @override
   Widget buildOverscrollIndicator(
-      BuildContext context, Widget child, ScrollableDetails details) {
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
     return child;
   }
 }
@@ -1661,9 +1671,9 @@ class _SelectionRecallRecognizer extends LongPressGestureRecognizer {
     required this.shouldClaim,
     required this.stillClaimable,
   }) : super(
-          duration: _recallLongPressDuration,
-          supportedDevices: const <PointerDeviceKind>{PointerDeviceKind.touch},
-        );
+         duration: _recallLongPressDuration,
+         supportedDevices: const <PointerDeviceKind>{PointerDeviceKind.touch},
+       );
 
   /// Decide, al `PointerDown`, se il tocco va reclamato.
   final bool Function(PointerDownEvent event) shouldClaim;
@@ -1775,9 +1785,9 @@ class _TrackedExtent {
   /// Il centro orizzontale resta quello della prima misura, per non far
   /// muovere il menù di lato durante lo scroll.
   _TrackedExtent unionWith(_TrackedExtent other) => _TrackedExtent(
-        selection: other.selection,
-        top: top < other.top ? top : other.top,
-        bottom: bottom > other.bottom ? bottom : other.bottom,
-        centerX: centerX,
-      );
+    selection: other.selection,
+    top: top < other.top ? top : other.top,
+    bottom: bottom > other.bottom ? bottom : other.bottom,
+    centerX: centerX,
+  );
 }

@@ -61,8 +61,8 @@ class NoteSearchNotifier extends Notifier<NoteSearchState> {
 
 final noteSearchProvider =
     NotifierProvider<NoteSearchNotifier, NoteSearchState>(
-  NoteSearchNotifier.new,
-);
+      NoteSearchNotifier.new,
+    );
 
 /// Elenco delle occorrenze (case-insensitive, non sovrapposte) del termine
 /// cercato all'interno del CONTENUTO della nota attualmente attiva.
@@ -120,8 +120,9 @@ final noteSearchActiveMatchIndexProvider = Provider<int>((ref) {
   final matches = ref.watch(noteSearchMatchesProvider);
   if (matches.isEmpty) return -1;
 
-  final requested =
-      ref.watch(noteSearchProvider.select((s) => s.currentMatchIndex));
+  final requested = ref.watch(
+    noteSearchProvider.select((s) => s.currentMatchIndex),
+  );
   if (requested < 0) return 0;
   return requested % matches.length;
 });
@@ -144,8 +145,9 @@ final activeNoteSearchMatchProvider = Provider<TextRange?>((ref) {
 /// essere applicati atomicamente insieme.
 typedef NoteSearchHighlightData = (List<TextRange>, int);
 
-final noteSearchHighlightDataProvider =
-    Provider<NoteSearchHighlightData>((ref) {
+final noteSearchHighlightDataProvider = Provider<NoteSearchHighlightData>((
+  ref,
+) {
   final matches = ref.watch(noteSearchMatchesProvider);
   final activeIndex = ref.watch(noteSearchActiveMatchIndexProvider);
   return (matches, activeIndex);

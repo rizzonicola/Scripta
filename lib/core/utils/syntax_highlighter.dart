@@ -78,7 +78,7 @@ class ScriptaCodeHighlighter {
     'package',
     'public',
     'private',
-    'protected'
+    'protected',
   };
 
   static const Set<String> _commonTypes = {
@@ -120,7 +120,7 @@ class ScriptaCodeHighlighter {
     'Double',
     'Array',
     'Promise',
-    'Record'
+    'Record',
   };
 
   static TextSpan highlight({
@@ -147,17 +147,26 @@ class ScriptaCodeHighlighter {
     final Color commentColor = isDark
         ? const Color(0xFF8B949E)
         : const Color(0xFF6A737D); // Muted Slate
-    final Color propertyColor =
-        isDark ? const Color(0xFFD2A8FF) : const Color(0xFF6F42C1); // Purple
+    final Color propertyColor = isDark
+        ? const Color(0xFFD2A8FF)
+        : const Color(0xFF6F42C1); // Purple
     final Color functionColor = isDark
         ? const Color(0xFFD2A8FF)
         : const Color(0xFF6F42C1); // Lavender / Violet
-    final Color punctuationColor =
-        isDark ? const Color(0xFFC9D1D9) : const Color(0xFF24292E);
+    final Color punctuationColor = isDark
+        ? const Color(0xFFC9D1D9)
+        : const Color(0xFF24292E);
 
     if (lang == 'json') {
-      return _highlightJson(code, baseStyle, propertyColor, stringGreen,
-          numberColor, keywordColor, punctuationColor);
+      return _highlightJson(
+        code,
+        baseStyle,
+        propertyColor,
+        stringGreen,
+        numberColor,
+        keywordColor,
+        punctuationColor,
+      );
     }
 
     // Generic Lexer / Tokenizer for C-like, Dart, Python, JS, TS, Shell, etc.
@@ -180,11 +189,15 @@ class ScriptaCodeHighlighter {
         while (i < length && code[i] != '\n') {
           i++;
         }
-        spans.add(TextSpan(
-          text: code.substring(start, i),
-          style: baseStyle.copyWith(
-              color: commentColor, fontStyle: FontStyle.italic),
-        ));
+        spans.add(
+          TextSpan(
+            text: code.substring(start, i),
+            style: baseStyle.copyWith(
+              color: commentColor,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        );
         continue;
       }
 
@@ -199,11 +212,15 @@ class ScriptaCodeHighlighter {
           }
           i++;
         }
-        spans.add(TextSpan(
-          text: code.substring(start, i),
-          style: baseStyle.copyWith(
-              color: commentColor, fontStyle: FontStyle.italic),
-        ));
+        spans.add(
+          TextSpan(
+            text: code.substring(start, i),
+            style: baseStyle.copyWith(
+              color: commentColor,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        );
         continue;
       }
 
@@ -226,10 +243,12 @@ class ScriptaCodeHighlighter {
           }
           i++;
         }
-        spans.add(TextSpan(
-          text: code.substring(start, i),
-          style: baseStyle.copyWith(color: stringGreen),
-        ));
+        spans.add(
+          TextSpan(
+            text: code.substring(start, i),
+            style: baseStyle.copyWith(color: stringGreen),
+          ),
+        );
         continue;
       }
 
@@ -246,10 +265,12 @@ class ScriptaCodeHighlighter {
                 _isHex(code[i]))) {
           i++;
         }
-        spans.add(TextSpan(
-          text: code.substring(start, i),
-          style: baseStyle.copyWith(color: numberColor),
-        ));
+        spans.add(
+          TextSpan(
+            text: code.substring(start, i),
+            style: baseStyle.copyWith(color: numberColor),
+          ),
+        );
         continue;
       }
 
@@ -273,39 +294,53 @@ class ScriptaCodeHighlighter {
         final isFunction = peek < length && code[peek] == '(';
 
         if (_commonKeywords.contains(token)) {
-          spans.add(TextSpan(
-            text: token,
-            style: baseStyle.copyWith(
-                color: keywordColor, fontWeight: FontWeight.w600),
-          ));
+          spans.add(
+            TextSpan(
+              text: token,
+              style: baseStyle.copyWith(
+                color: keywordColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          );
         } else if (_commonTypes.contains(token) ||
             (token.length > 1 &&
                 token[0] == token[0].toUpperCase() &&
                 token[1] == token[1].toLowerCase())) {
-          spans.add(TextSpan(
-            text: token,
-            style: baseStyle.copyWith(
-                color: typeColor, fontWeight: FontWeight.w600),
-          ));
+          spans.add(
+            TextSpan(
+              text: token,
+              style: baseStyle.copyWith(
+                color: typeColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          );
         } else if (isFunction) {
-          spans.add(TextSpan(
-            text: token,
-            style: baseStyle.copyWith(color: functionColor),
-          ));
+          spans.add(
+            TextSpan(
+              text: token,
+              style: baseStyle.copyWith(color: functionColor),
+            ),
+          );
         } else {
-          spans.add(TextSpan(
-            text: token,
-            style: baseStyle.copyWith(color: punctuationColor),
-          ));
+          spans.add(
+            TextSpan(
+              text: token,
+              style: baseStyle.copyWith(color: punctuationColor),
+            ),
+          );
         }
         continue;
       }
 
       // 6. Punctuations & Whitespace
-      spans.add(TextSpan(
-        text: char,
-        style: baseStyle.copyWith(color: punctuationColor),
-      ));
+      spans.add(
+        TextSpan(
+          text: char,
+          style: baseStyle.copyWith(color: punctuationColor),
+        ),
+      );
       i++;
     }
 
@@ -356,13 +391,15 @@ class ScriptaCodeHighlighter {
         }
         final isKey = peek < length && code[peek] == ':';
 
-        spans.add(TextSpan(
-          text: str,
-          style: baseStyle.copyWith(
-            color: isKey ? keyColor : stringColor,
-            fontWeight: isKey ? FontWeight.w600 : FontWeight.normal,
+        spans.add(
+          TextSpan(
+            text: str,
+            style: baseStyle.copyWith(
+              color: isKey ? keyColor : stringColor,
+              fontWeight: isKey ? FontWeight.w600 : FontWeight.normal,
+            ),
           ),
-        ));
+        );
         continue;
       }
 
@@ -377,10 +414,12 @@ class ScriptaCodeHighlighter {
                 code[i] == 'E')) {
           i++;
         }
-        spans.add(TextSpan(
-          text: code.substring(start, i),
-          style: baseStyle.copyWith(color: numberColor),
-        ));
+        spans.add(
+          TextSpan(
+            text: code.substring(start, i),
+            style: baseStyle.copyWith(color: numberColor),
+          ),
+        );
         continue;
       }
 
@@ -392,25 +431,33 @@ class ScriptaCodeHighlighter {
         }
         final word = code.substring(start, i);
         if (word == 'true' || word == 'false' || word == 'null') {
-          spans.add(TextSpan(
-            text: word,
-            style: baseStyle.copyWith(
-                color: boolColor, fontWeight: FontWeight.w600),
-          ));
+          spans.add(
+            TextSpan(
+              text: word,
+              style: baseStyle.copyWith(
+                color: boolColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          );
         } else {
-          spans.add(TextSpan(
-            text: word,
-            style: baseStyle.copyWith(color: punctColor),
-          ));
+          spans.add(
+            TextSpan(
+              text: word,
+              style: baseStyle.copyWith(color: punctColor),
+            ),
+          );
         }
         continue;
       }
 
       // Punctuations
-      spans.add(TextSpan(
-        text: char,
-        style: baseStyle.copyWith(color: punctColor),
-      ));
+      spans.add(
+        TextSpan(
+          text: char,
+          style: baseStyle.copyWith(color: punctColor),
+        ),
+      );
       i++;
     }
 

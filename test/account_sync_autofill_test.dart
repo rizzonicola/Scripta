@@ -37,35 +37,37 @@ void main() {
   });
 
   testWidgets(
-      'i campi di login sync espongono gli hint per il password manager',
-      (tester) async {
-    final container = ProviderContainer(
-      overrides: [
-        secureStorageProvider.overrideWithValue(_MemorySecureStorage()),
-      ],
-    );
-    addTearDown(container.dispose);
+    'i campi di login sync espongono gli hint per il password manager',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          secureStorageProvider.overrideWithValue(_MemorySecureStorage()),
+        ],
+      );
+      addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: const MaterialApp(
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: SingleChildScrollView(child: AccountSyncSection()),
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(child: AccountSyncSection()),
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    expect(find.byType(AutofillGroup), findsOneWidget);
-    final fields =
-        tester.widgetList<TextField>(find.byType(TextField)).toList();
-    expect(fields, hasLength(3));
-    expect(fields[0].autofillHints, contains(AutofillHints.url));
-    expect(fields[1].autofillHints, contains(AutofillHints.username));
-    expect(fields[2].autofillHints, contains(AutofillHints.password));
-  });
+      expect(find.byType(AutofillGroup), findsOneWidget);
+      final fields = tester
+          .widgetList<TextField>(find.byType(TextField))
+          .toList();
+      expect(fields, hasLength(3));
+      expect(fields[0].autofillHints, contains(AutofillHints.url));
+      expect(fields[1].autofillHints, contains(AutofillHints.username));
+      expect(fields[2].autofillHints, contains(AutofillHints.password));
+    },
+  );
 }

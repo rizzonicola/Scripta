@@ -57,12 +57,12 @@ class AppSettings {
 
   @override
   int get hashCode => Object.hash(
-        themeMode,
-        selectedThemeId,
-        locale,
-        fontFamily,
-        fontSize,
-        lineHeight,
-        hapticIntensity,
-      );
+    themeMode,
+    selectedThemeId,
+    locale,
+    fontFamily,
+    fontSize,
+    lineHeight,
+    hapticIntensity,
+  );
 }

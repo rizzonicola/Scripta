@@ -29,8 +29,8 @@ class _FocusModeExitButtonState extends ConsumerState<FocusModeExitButton> {
       opacity: isHighlighted
           ? 1.0
           : isDesktopPlatform
-              ? 0.58
-              : 0.82,
+          ? 0.58
+          : 0.82,
       child: Tooltip(
         message: l10n.exitFocusMode,
         child: AnimatedContainer(
@@ -42,15 +42,17 @@ class _FocusModeExitButtonState extends ConsumerState<FocusModeExitButton> {
                 (isDark ? const Color(0xFF222533) : theme.colorScheme.surface)
                     .withValues(alpha: isDark ? 0.68 : 0.78),
             border: Border.all(
-              color: theme.colorScheme.outline
-                  .withValues(alpha: isHighlighted ? 0.5 : 0.3),
+              color: theme.colorScheme.outline.withValues(
+                alpha: isHighlighted ? 0.5 : 0.3,
+              ),
               width: 1,
             ),
             boxShadow: isHighlighted
                 ? [
                     BoxShadow(
-                      color:
-                          Colors.black.withValues(alpha: isDark ? 0.28 : 0.12),
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.28 : 0.12,
+                      ),
                       blurRadius: 14,
                       offset: const Offset(0, 4),
                     ),

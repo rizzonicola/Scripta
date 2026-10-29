@@ -30,8 +30,9 @@ import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart
 import 'package:shared_preferences/shared_preferences.dart';
 
 const Size _kPhone = Size(400, 800);
-const ValueKey<String> _kListKey =
-    ValueKey<String>('markdown-formatted-listview');
+const ValueKey<String> _kListKey = ValueKey<String>(
+  'markdown-formatted-listview',
+);
 
 // ---------------------------------------------------------------------------
 // Utilita'
@@ -81,8 +82,10 @@ _PlatformCalls _mockPlatform(WidgetTester tester) {
     },
   );
   addTearDown(
-    () => tester.binding.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null),
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
   );
   return calls;
 }
@@ -110,10 +113,8 @@ Future<void> _pumpView(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 100));
 }
 
-MarkdownSelectionScopeState _scope(WidgetTester tester) =>
-    tester.state<MarkdownSelectionScopeState>(
-      find.byType(MarkdownSelectionScope),
-    );
+MarkdownSelectionScopeState _scope(WidgetTester tester) => tester
+    .state<MarkdownSelectionScopeState>(find.byType(MarkdownSelectionScope));
 
 /// Scrollable della ListView esterna (il primo in ordine di albero: il titolo,
 /// un SelectableText, ne contiene un altro al suo interno).
@@ -333,15 +334,19 @@ void main() {
 
           // Molto spazio sopra l'ancora (rispetto allo schermo): la toolbar sta
           // SOPRA l'ancora primaria, anche se cosi' esce dal "viewport" (y<300).
-          final above =
-              await place(const Offset(200, 310), const Offset(200, 360));
+          final above = await place(
+            const Offset(200, 310),
+            const Offset(200, 360),
+          );
           expect(above.bottom, lessThanOrEqualTo(310.0));
           expect(above.top, lessThan(300.0));
 
           // Ancora vicina al bordo ALTO DELLO SCHERMO: non c'e' spazio sopra e
           // la toolbar passa SOTTO l'ancora secondaria.
-          final below =
-              await place(const Offset(200, 20), const Offset(200, 70));
+          final below = await place(
+            const Offset(200, 20),
+            const Offset(200, 70),
+          );
           expect(below.top, greaterThanOrEqualTo(70.0));
         });
       },

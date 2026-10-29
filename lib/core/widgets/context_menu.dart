@@ -31,29 +31,29 @@ class ContextMenuEntry {
     this.isDestructive = false,
     this.isChecked = false,
     this.description,
-  })  : isHeader = false,
-        isDivider = false;
+  }) : isHeader = false,
+       isDivider = false;
 
   const ContextMenuEntry.header(this.label)
-      : icon = null,
-        onSelected = null,
-        shortcut = null,
-        isDestructive = false,
-        isChecked = false,
-        description = null,
-        isHeader = true,
-        isDivider = false;
+    : icon = null,
+      onSelected = null,
+      shortcut = null,
+      isDestructive = false,
+      isChecked = false,
+      description = null,
+      isHeader = true,
+      isDivider = false;
 
   const ContextMenuEntry.divider()
-      : label = '',
-        icon = null,
-        onSelected = null,
-        shortcut = null,
-        isDestructive = false,
-        isChecked = false,
-        description = null,
-        isHeader = false,
-        isDivider = true;
+    : label = '',
+      icon = null,
+      onSelected = null,
+      shortcut = null,
+      isDestructive = false,
+      isChecked = false,
+      description = null,
+      isHeader = false,
+      isDivider = true;
 }
 
 /// Mostra [entries] come menu a comparsa ancorato a [globalPosition]
@@ -78,13 +78,15 @@ Future<void> showContextMenu(
   for (var i = 0; i < entries.length; i++) {
     final e = entries[i];
     if (e.isDivider) {
-      items.add(PopupMenuDivider(
-        height: 9,
-        thickness: 1,
-        indent: 8,
-        endIndent: 8,
-        color: theme.colorScheme.outline.withValues(alpha: 0.45),
-      ));
+      items.add(
+        PopupMenuDivider(
+          height: 9,
+          thickness: 1,
+          indent: 8,
+          endIndent: 8,
+          color: theme.colorScheme.outline.withValues(alpha: 0.45),
+        ),
+      );
       continue;
     }
     if (e.isHeader) {
@@ -178,13 +180,13 @@ class _ContextMenuActionState extends State<_ContextMenuAction> {
     final labelColor = !enabled
         ? theme.subtleTextColor
         : entry.isDestructive
-            ? theme.dangerColor
-            : theme.colorScheme.onSurface;
+        ? theme.dangerColor
+        : theme.colorScheme.onSurface;
     final iconColor = !enabled
         ? theme.subtleTextColor
         : entry.isDestructive
-            ? theme.dangerColor
-            : theme.colorScheme.primary;
+        ? theme.dangerColor
+        : theme.colorScheme.primary;
     final radius = BorderRadius.circular(10);
 
     return Padding(
@@ -196,11 +198,13 @@ class _ContextMenuActionState extends State<_ContextMenuAction> {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap:
-                enabled ? () => Navigator.of(context).pop(widget.index) : null,
+            onTap: enabled
+                ? () => Navigator.of(context).pop(widget.index)
+                : null,
             borderRadius: radius,
             hoverColor: theme.colorScheme.primary.withValues(
-                alpha: theme.brightness == Brightness.dark ? 0.1 : 0.06),
+              alpha: theme.brightness == Brightness.dark ? 0.1 : 0.06,
+            ),
             focusColor: theme.colorScheme.primary.withValues(alpha: 0.12),
             child: Container(
               height: entry.description == null ? 38 : 50,
@@ -281,7 +285,8 @@ class _ShortcutHint extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         color: theme.colorScheme.onSurface.withValues(
-            alpha: theme.brightness == Brightness.dark ? 0.06 : 0.045),
+          alpha: theme.brightness == Brightness.dark ? 0.06 : 0.045,
+        ),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: theme.colorScheme.outline.withValues(alpha: 0.28),
@@ -354,7 +359,10 @@ class ContextMenuRegion extends StatelessWidget {
               onLongPressStart: (details) {
                 onOpen?.call();
                 showContextMenu(
-                    context, details.globalPosition, entriesBuilder(context));
+                  context,
+                  details.globalPosition,
+                  entriesBuilder(context),
+                );
               },
               child: child,
             )

@@ -180,8 +180,10 @@ class AppThemePalettes {
     solarizedLight,
   ];
 
-  static AppThemePalette getById(String? id,
-      {required Brightness fallbackBrightness}) {
+  static AppThemePalette getById(
+    String? id, {
+    required Brightness fallbackBrightness,
+  }) {
     if (id != null) {
       for (final p in all) {
         if (p.id == id) return p;

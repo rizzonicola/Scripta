@@ -228,38 +228,49 @@ void main() {
   }
 
   Future<bool> loginFuture(SyncNotifier notifier) => notifier.login(
-        serverUrl: 'http://localhost:8080',
-        username: 'mario',
-        password: 'password',
-      );
+    serverUrl: 'http://localhost:8080',
+    username: 'mario',
+    password: 'password',
+  );
 
   group('login interattivo', () {
-    test('senza rete ritenta entro il budget e consente il retry manuale',
-        () async {
-      final server = _FakeServer()..loginOffline = true;
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
+    test(
+      'senza rete ritenta entro il budget e consente il retry manuale',
+      () async {
+        final server = _FakeServer()..loginOffline = true;
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
 
-      expect(await loginFuture(notifier), isFalse);
-      expect(server.loginCalls, 3,
-          reason: 'un errore di trasporto è transitorio: 3 tentativi');
-      expect(container.read(syncProvider).isSyncing, isFalse,
-          reason: 'il pulsante deve tornare attivo');
-      expect(container.read(syncProvider).isAuthenticated, isFalse);
-      expect(container.read(syncProvider).isOnline, isFalse);
-      expect(
-        container.read(syncProvider).lastError,
-        contains('Impossibile connettersi'),
-      );
+        expect(await loginFuture(notifier), isFalse);
+        expect(
+          server.loginCalls,
+          3,
+          reason: 'un errore di trasporto è transitorio: 3 tentativi',
+        );
+        expect(
+          container.read(syncProvider).isSyncing,
+          isFalse,
+          reason: 'il pulsante deve tornare attivo',
+        );
+        expect(container.read(syncProvider).isAuthenticated, isFalse);
+        expect(container.read(syncProvider).isOnline, isFalse);
+        expect(
+          container.read(syncProvider).lastError,
+          contains('Impossibile connettersi'),
+        );
 
-      server.loginOffline = false;
-      expect(await loginFuture(notifier), isTrue,
-          reason: 'un nuovo tentativo manuale deve poter riuscire');
-      expect(server.loginCalls, 4);
-      expect(container.read(syncProvider).isAuthenticated, isTrue);
-      expect(container.read(syncProvider).isSyncing, isFalse);
-    });
+        server.loginOffline = false;
+        expect(
+          await loginFuture(notifier),
+          isTrue,
+          reason: 'un nuovo tentativo manuale deve poter riuscire',
+        );
+        expect(server.loginCalls, 4);
+        expect(container.read(syncProvider).isAuthenticated, isTrue);
+        expect(container.read(syncProvider).isSyncing, isFalse);
+      },
+    );
 
     test('un 401 non viene ritentato e resta Online', () async {
       final server = _FakeServer()
@@ -270,10 +281,16 @@ void main() {
       await notifier.initialized;
 
       expect(await loginFuture(notifier), isFalse);
-      expect(server.loginCalls, 1,
-          reason: 'le credenziali errate non sono un errore transitorio');
-      expect(container.read(syncProvider).isOnline, isTrue,
-          reason: 'il server ha risposto: non è Offline');
+      expect(
+        server.loginCalls,
+        1,
+        reason: 'le credenziali errate non sono un errore transitorio',
+      );
+      expect(
+        container.read(syncProvider).isOnline,
+        isTrue,
+        reason: 'il server ha risposto: non è Offline',
+      );
       expect(container.read(syncProvider).isSyncing, isFalse);
       expect(
         container.read(syncProvider).lastError,
@@ -281,29 +298,34 @@ void main() {
       );
     });
 
-    test('un account bloccato ha un messaggio distinto e non viene ritentato',
-        () async {
-      final server = _FakeServer()
-        ..loginFailuresRemaining = 1
-        ..loginFailureStatus = 403
-        ..loginFailureCode = 'account_blocked';
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
+    test(
+      'un account bloccato ha un messaggio distinto e non viene ritentato',
+      () async {
+        final server = _FakeServer()
+          ..loginFailuresRemaining = 1
+          ..loginFailureStatus = 403
+          ..loginFailureCode = 'account_blocked';
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
 
-      expect(await loginFuture(notifier), isFalse);
-      expect(server.loginCalls, 1,
-          reason: 'un account bloccato non è un errore transitorio');
-      expect(container.read(syncProvider).isAuthenticated, isFalse);
-      expect(
-        container.read(syncProvider).lastError,
-        contains('Account bloccato'),
-      );
-      expect(
-        container.read(syncProvider).lastError,
-        isNot(contains('Credenziali non valide')),
-      );
-    });
+        expect(await loginFuture(notifier), isFalse);
+        expect(
+          server.loginCalls,
+          1,
+          reason: 'un account bloccato non è un errore transitorio',
+        );
+        expect(container.read(syncProvider).isAuthenticated, isFalse);
+        expect(
+          container.read(syncProvider).lastError,
+          contains('Account bloccato'),
+        );
+        expect(
+          container.read(syncProvider).lastError,
+          isNot(contains('Credenziali non valide')),
+        );
+      },
+    );
 
     test('un 429 al login mostra il messaggio rate limit', () async {
       final server = _FakeServer()
@@ -315,8 +337,11 @@ void main() {
       await notifier.initialized;
 
       expect(await loginFuture(notifier), isFalse);
-      expect(server.loginCalls, 3,
-          reason: 'il 429 è transitorio e viene ritentato');
+      expect(
+        server.loginCalls,
+        3,
+        reason: 'il 429 è transitorio e viene ritentato',
+      );
       expect(
         container.read(syncProvider).lastError,
         contains('Troppi tentativi'),
@@ -356,23 +381,28 @@ void main() {
       );
     });
 
-    test('una risposta 200 malformata non viene ritentata e resta Online',
-        () async {
-      final server = _FakeServer()..loginMalformed = true;
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
+    test(
+      'una risposta 200 malformata non viene ritentata e resta Online',
+      () async {
+        final server = _FakeServer()..loginMalformed = true;
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
 
-      expect(await loginFuture(notifier), isFalse);
-      expect(server.loginCalls, 1,
-          reason: 'un JSON malformato non migliora ritentando');
-      expect(container.read(syncProvider).isOnline, isTrue);
-      expect(container.read(syncProvider).isSyncing, isFalse);
-      expect(
-        container.read(syncProvider).lastError,
-        contains('Risposta del server non valida'),
-      );
-    });
+        expect(await loginFuture(notifier), isFalse);
+        expect(
+          server.loginCalls,
+          1,
+          reason: 'un JSON malformato non migliora ritentando',
+        );
+        expect(container.read(syncProvider).isOnline, isTrue);
+        expect(container.read(syncProvider).isSyncing, isFalse);
+        expect(
+          container.read(syncProvider).lastError,
+          contains('Risposta del server non valida'),
+        );
+      },
+    );
 
     test('il budget complessivo ferma un login che non risponde', () async {
       final server = _FakeServer()..loginGate = Completer<void>();
@@ -388,14 +418,14 @@ void main() {
       stopwatch.stop();
 
       expect(server.loginCalls, 1);
-      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)),
-          reason: 'il timeout complessivo deve fermare il login');
+      expect(
+        stopwatch.elapsed,
+        lessThan(const Duration(seconds: 2)),
+        reason: 'il timeout complessivo deve fermare il login',
+      );
       expect(container.read(syncProvider).isOnline, isFalse);
       expect(container.read(syncProvider).isSyncing, isFalse);
-      expect(
-        container.read(syncProvider).lastError,
-        contains('Tempo scaduto'),
-      );
+      expect(container.read(syncProvider).lastError, contains('Tempo scaduto'));
 
       server.loginGate!.complete();
       await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -404,35 +434,40 @@ void main() {
 
   group('coalescing dei trigger di sync', () {
     test(
-        'i trigger arrivati durante una sync producono un solo giro di recupero',
-        () async {
-      final server = _FakeServer()..firstSyncGate = Completer<void>();
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
+      'i trigger arrivati durante una sync producono un solo giro di recupero',
+      () async {
+        final server = _FakeServer()..firstSyncGate = Completer<void>();
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
 
-      final login = loginFuture(notifier);
-      await server.firstSyncReceived.future
-          .timeout(const Duration(seconds: 10));
-      expect(container.read(syncProvider).isSyncing, isTrue);
+        final login = loginFuture(notifier);
+        await server.firstSyncReceived.future.timeout(
+          const Duration(seconds: 10),
+        );
+        expect(container.read(syncProvider).isSyncing, isTrue);
 
-      // Tre trigger mentre la prima sync è ancora in volo: nessuno parte in
-      // parallelo, ma la richiesta viene ricordata.
-      expect(await notifier.triggerSync(), isFalse);
-      expect(await notifier.triggerSync(), isFalse);
-      notifier.onAppPaused();
+        // Tre trigger mentre la prima sync è ancora in volo: nessuno parte in
+        // parallelo, ma la richiesta viene ricordata.
+        expect(await notifier.triggerSync(), isFalse);
+        expect(await notifier.triggerSync(), isFalse);
+        notifier.onAppPaused();
 
-      server.firstSyncGate!.complete();
-      expect(await login, isTrue);
+        server.firstSyncGate!.complete();
+        expect(await login, isTrue);
 
-      expect(server.syncCalls, 2,
-          reason: '1 giro iniziale + 1 solo giro di recupero');
-      expect(container.read(syncProvider).isSyncing, isFalse);
+        expect(
+          server.syncCalls,
+          2,
+          reason: '1 giro iniziale + 1 solo giro di recupero',
+        );
+        expect(container.read(syncProvider).isSyncing, isFalse);
 
-      // Nessuna richiesta residua: una sync successiva fa un solo giro.
-      expect(await notifier.triggerSync(), isTrue);
-      expect(server.syncCalls, 3);
-    });
+        // Nessuna richiesta residua: una sync successiva fa un solo giro.
+        expect(await notifier.triggerSync(), isTrue);
+        expect(server.syncCalls, 3);
+      },
+    );
 
     test('dopo una sync fallita non si insiste con giri di recupero', () async {
       final server = _FakeServer()
@@ -443,110 +478,127 @@ void main() {
       await notifier.initialized;
 
       final login = loginFuture(notifier);
-      await server.firstSyncReceived.future
-          .timeout(const Duration(seconds: 10));
+      await server.firstSyncReceived.future.timeout(
+        const Duration(seconds: 10),
+      );
 
       expect(await notifier.triggerSync(), isFalse);
 
       server.firstSyncGate!.complete();
       expect(await login, isTrue);
 
-      expect(server.syncCalls, 1,
-          reason: 'con il server in errore non si riprova subito');
+      expect(
+        server.syncCalls,
+        1,
+        reason: 'con il server in errore non si riprova subito',
+      );
       expect(container.read(syncProvider).isSyncing, isFalse);
     });
   });
 
   group('errori account e rate limit durante la sync', () {
-    test('un account bloccato chiude la sessione con un messaggio distinto',
-        () async {
-      final server = _FakeServer();
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
-      expect(await loginFuture(notifier), isTrue);
+    test(
+      'un account bloccato chiude la sessione con un messaggio distinto',
+      () async {
+        final server = _FakeServer();
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
+        expect(await loginFuture(notifier), isTrue);
 
-      server
-        ..syncStatus = 403
-        ..syncFailureCode = 'account_blocked';
-      expect(await notifier.triggerSync(), isFalse);
+        server
+          ..syncStatus = 403
+          ..syncFailureCode = 'account_blocked';
+        expect(await notifier.triggerSync(), isFalse);
 
-      final state = container.read(syncProvider);
-      expect(state.isAuthenticated, isFalse);
-      expect(state.isOnline, isTrue,
-          reason: 'il server ha risposto con un 403');
-      expect(state.lastSyncMessage, contains('Account bloccato'));
-      expect(state.lastError, contains('Account bloccato'));
-    });
+        final state = container.read(syncProvider);
+        expect(state.isAuthenticated, isFalse);
+        expect(
+          state.isOnline,
+          isTrue,
+          reason: 'il server ha risposto con un 403',
+        );
+        expect(state.lastSyncMessage, contains('Account bloccato'));
+        expect(state.lastError, contains('Account bloccato'));
+      },
+    );
 
-    test('un 429 persistente mostra il limite di richieste senza sloggare',
-        () async {
-      final server = _FakeServer();
-      final container = containerFor(server);
-      final notifier = container.read(syncProvider.notifier);
-      await notifier.initialized;
-      expect(await loginFuture(notifier), isTrue);
+    test(
+      'un 429 persistente mostra il limite di richieste senza sloggare',
+      () async {
+        final server = _FakeServer();
+        final container = containerFor(server);
+        final notifier = container.read(syncProvider.notifier);
+        await notifier.initialized;
+        expect(await loginFuture(notifier), isTrue);
 
-      server
-        ..syncStatus = 429
-        ..syncFailureCode = 'rate_limited';
-      expect(await notifier.triggerSync(), isFalse);
+        server
+          ..syncStatus = 429
+          ..syncFailureCode = 'rate_limited';
+        expect(await notifier.triggerSync(), isFalse);
 
-      final state = container.read(syncProvider);
-      expect(state.isAuthenticated, isTrue,
-          reason: 'il rate limit è temporaneo, non invalida il token');
-      expect(state.lastSyncMessage, contains('limite di richieste'));
-      expect(state.lastError, isNot(contains('Account bloccato')));
-    });
+        final state = container.read(syncProvider);
+        expect(
+          state.isAuthenticated,
+          isTrue,
+          reason: 'il rate limit è temporaneo, non invalida il token',
+        );
+        expect(state.lastSyncMessage, contains('limite di richieste'));
+        expect(state.lastError, isNot(contains('Account bloccato')));
+      },
+    );
   });
 
   group('invio remoto delle impostazioni', () {
-    test('modifiche ravvicinate producono una sola PUT con l\'ultimo valore',
-        () async {
-      final server = _FakeServer();
-      final container = containerFor(server);
-      final sync = container.read(syncProvider.notifier);
-      await sync.initialized;
-      expect(await loginFuture(sync), isTrue);
+    test(
+      'modifiche ravvicinate producono una sola PUT con l\'ultimo valore',
+      () async {
+        final server = _FakeServer();
+        final container = containerFor(server);
+        final sync = container.read(syncProvider.notifier);
+        await sync.initialized;
+        expect(await loginFuture(sync), isTrue);
 
-      final settings = container.read(settingsProvider.notifier);
-      await settings.setFontSize(18);
-      await settings.setFontSize(19);
-      await settings.setFontSize(20);
+        final settings = container.read(settingsProvider.notifier);
+        await settings.setFontSize(18);
+        await settings.setFontSize(19);
+        await settings.setFontSize(20);
 
-      await _waitUntil(
-        () => server.settingsPuts.isNotEmpty,
-        reason: 'la PUT delle impostazioni non è mai partita',
-      );
-      // Margine ben oltre il debounce: non devono arrivarne altre.
-      await Future<void>.delayed(const Duration(milliseconds: 800));
+        await _waitUntil(
+          () => server.settingsPuts.isNotEmpty,
+          reason: 'la PUT delle impostazioni non è mai partita',
+        );
+        // Margine ben oltre il debounce: non devono arrivarne altre.
+        await Future<void>.delayed(const Duration(milliseconds: 800));
 
-      expect(server.settingsPuts.length, 1);
-      expect(server.settingsPuts.single['font_size'], 20);
-    });
+        expect(server.settingsPuts.length, 1);
+        expect(server.settingsPuts.single['font_size'], 20);
+      },
+    );
 
     test(
-        'andando in background l\'invio in attesa parte subito e una volta sola',
-        () async {
-      final server = _FakeServer();
-      final container = containerFor(server);
-      final sync = container.read(syncProvider.notifier);
-      await sync.initialized;
-      expect(await loginFuture(sync), isTrue);
+      'andando in background l\'invio in attesa parte subito e una volta sola',
+      () async {
+        final server = _FakeServer();
+        final container = containerFor(server);
+        final sync = container.read(syncProvider.notifier);
+        await sync.initialized;
+        expect(await loginFuture(sync), isTrue);
 
-      final settings = container.read(settingsProvider.notifier);
-      await settings.setFontSize(22);
-      sync.onAppPaused();
+        final settings = container.read(settingsProvider.notifier);
+        await settings.setFontSize(22);
+        sync.onAppPaused();
 
-      await _waitUntil(
-        () => server.settingsPuts.isNotEmpty,
-        reason: 'la PUT non è partita al passaggio in background',
-      );
-      // Oltre la scadenza originaria del debounce: nessun secondo invio.
-      await Future<void>.delayed(const Duration(milliseconds: 800));
+        await _waitUntil(
+          () => server.settingsPuts.isNotEmpty,
+          reason: 'la PUT non è partita al passaggio in background',
+        );
+        // Oltre la scadenza originaria del debounce: nessun secondo invio.
+        await Future<void>.delayed(const Duration(milliseconds: 800));
 
-      expect(server.settingsPuts.length, 1);
-      expect(server.settingsPuts.single['font_size'], 22);
-    });
+        expect(server.settingsPuts.length, 1);
+        expect(server.settingsPuts.single['font_size'], 22);
+      },
+    );
   });
 }

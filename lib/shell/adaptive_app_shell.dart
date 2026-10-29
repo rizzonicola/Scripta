@@ -17,10 +17,7 @@ import '../features/sync/providers/sync_provider.dart';
 import 'app_shortcuts_scope.dart';
 import 'top_app_bar.dart';
 
-enum MobileActiveView {
-  notesList,
-  editor,
-}
+enum MobileActiveView { notesList, editor }
 
 class AdaptiveAppShell extends ConsumerStatefulWidget {
   const AdaptiveAppShell({super.key});
@@ -33,9 +30,7 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     with WidgetsBindingObserver {
   /// Pannello cartelle a scomparsa, identico su tablet e mobile.
   static const Widget _folderDrawer = Drawer(
-    child: SafeArea(
-      child: FolderTreeView(),
-    ),
+    child: SafeArea(child: FolderTreeView()),
   );
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -110,14 +105,14 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<String?>(
-      notesProvider.select((s) => s.activeNoteId),
-      (previous, next) {
-        if (previous != null && next != null && previous != next) {
-          ref.read(syncProvider.notifier).onNoteChangedOrClosed();
-        }
-      },
-    );
+    ref.listen<String?>(notesProvider.select((s) => s.activeNoteId), (
+      previous,
+      next,
+    ) {
+      if (previous != null && next != null && previous != next) {
+        ref.read(syncProvider.notifier).onNoteChangedOrClosed();
+      }
+    });
 
     ref.listen<bool?>(onboardingProvider, (previous, next) {
       if (next == false && !_hasCheckedOnboarding) {
@@ -130,8 +125,9 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       }
     });
 
-    final editorFocusMode =
-        ref.watch(editorProvider.select((s) => s.isFocusMode));
+    final editorFocusMode = ref.watch(
+      editorProvider.select((s) => s.isFocusMode),
+    );
     final screenType = ResponsiveBreakpoints.getScreenType(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -141,8 +137,9 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
       statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
       systemNavigationBarColor: theme.colorScheme.surface,
-      systemNavigationBarIconBrightness:
-          isDark ? Brightness.light : Brightness.dark,
+      systemNavigationBarIconBrightness: isDark
+          ? Brightness.light
+          : Brightness.dark,
     );
 
     // Il focus mode ha la precedenza su qualunque layout: scrittura o lettura
@@ -163,8 +160,9 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
         // Layout mobile a pannello singolo: mostra l'editor quando un
         // comando crea o duplica una nota.
         onEditorRequested: _showMobileEditor,
-        onNotesListRequested:
-            screenType == DeviceScreenType.mobile ? _showMobileNotesList : null,
+        onNotesListRequested: screenType == DeviceScreenType.mobile
+            ? _showMobileNotesList
+            : null,
         child: shellContent,
       ),
     );
@@ -172,11 +170,7 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
 
   /// Focus mode: scrittura o lettura a tutto schermo, senza distrazioni.
   Widget _buildFocusLayout() {
-    return const Scaffold(
-      body: SafeArea(
-        child: NoteEditorPane(),
-      ),
-    );
+    return const Scaffold(body: SafeArea(child: NoteEditorPane()));
   }
 
   /// Desktop: 3 colonne (cartelle + lista note + editor).
@@ -190,13 +184,8 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
             width: AppConstants.folderSidebarWidth,
             child: FolderTreeView(),
           ),
-          SizedBox(
-            width: AppConstants.notesListWidth,
-            child: NotesListView(),
-          ),
-          Expanded(
-            child: NoteEditorPane(),
-          ),
+          SizedBox(width: AppConstants.notesListWidth, child: NotesListView()),
+          Expanded(child: NoteEditorPane()),
         ],
       ),
     );
@@ -210,13 +199,8 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       drawer: _folderDrawer,
       body: const Row(
         children: [
-          SizedBox(
-            width: AppConstants.notesListWidth,
-            child: NotesListView(),
-          ),
-          Expanded(
-            child: NoteEditorPane(),
-          ),
+          SizedBox(width: AppConstants.notesListWidth, child: NotesListView()),
+          Expanded(child: NoteEditorPane()),
         ],
       ),
     );
@@ -250,13 +234,16 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
             transitionBuilder: (child, animation) {
               final isEditor =
                   child.key == const ValueKey('mobile_editor_pane');
-              final begin =
-                  isEditor ? const Offset(0.08, 0) : const Offset(-0.08, 0);
+              final begin = isEditor
+                  ? const Offset(0.08, 0)
+                  : const Offset(-0.08, 0);
               return FadeTransition(
                 opacity: animation,
                 child: SlideTransition(
-                  position: Tween<Offset>(begin: begin, end: Offset.zero)
-                      .animate(animation),
+                  position: Tween<Offset>(
+                    begin: begin,
+                    end: Offset.zero,
+                  ).animate(animation),
                   child: child,
                 ),
               );

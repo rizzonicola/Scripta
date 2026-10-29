@@ -46,9 +46,11 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
     // solo nella vista editor su mobile (`showBackButton` è vero
     // esattamente in quel caso, vedi `AdaptiveAppShell`).
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
-    final isNoteSearchActive =
-        ref.watch(noteSearchProvider.select((s) => s.isActive));
-    final showNoteSearchButton = activeNoteId != null &&
+    final isNoteSearchActive = ref.watch(
+      noteSearchProvider.select((s) => s.isActive),
+    );
+    final showNoteSearchButton =
+        activeNoteId != null &&
         (screenType != DeviceScreenType.mobile || showBackButton);
 
     return Container(
@@ -151,8 +153,9 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     ),
                     tooltip: l10n.searchInNote,
                     visualDensity: VisualDensity.compact,
-                    color:
-                        isNoteSearchActive ? theme.colorScheme.primary : null,
+                    color: isNoteSearchActive
+                        ? theme.colorScheme.primary
+                        : null,
                     onPressed: () {
                       if (isNoteSearchActive) {
                         ref.read(noteSearchProvider.notifier).close();
@@ -183,20 +186,24 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     // ora presente su SyncConfig, `.select` qui evita anche
                     // il rebuild "silenzioso" che il poll di connettività
                     // periodico altrimenti causerebbe ad ogni ciclo.
-                    final isAuthenticated = ref
-                        .watch(syncProvider.select((s) => s.isAuthenticated));
-                    final isSyncing =
-                        ref.watch(syncProvider.select((s) => s.isSyncing));
-                    final isOnline =
-                        ref.watch(syncProvider.select((s) => s.isOnline));
+                    final isAuthenticated = ref.watch(
+                      syncProvider.select((s) => s.isAuthenticated),
+                    );
+                    final isSyncing = ref.watch(
+                      syncProvider.select((s) => s.isSyncing),
+                    );
+                    final isOnline = ref.watch(
+                      syncProvider.select((s) => s.isOnline),
+                    );
 
                     if (!isAuthenticated) {
                       return IconButton(
                         icon: Icon(
                           Icons.cloud_off_outlined,
                           size: 19,
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.6),
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.6,
+                          ),
                         ),
                         tooltip: 'Account non connesso',
                         visualDensity: VisualDensity.compact,
@@ -219,8 +226,9 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                             ? Icons.cloud_done_outlined
                             : Icons.cloud_off_outlined,
                         size: 19,
-                        color:
-                            isOnline ? theme.successColor : theme.warningColor,
+                        color: isOnline
+                            ? theme.successColor
+                            : theme.warningColor,
                       ),
                       tooltip: isOnline
                           ? 'Sincronizzato: Online (Tocca per sincronizzare)'
@@ -298,8 +306,9 @@ class _ModeToggleSegment extends StatelessWidget {
                         size: 15,
                         color: isSelected
                             ? selectedColor
-                            : theme.colorScheme.onSurface
-                                .withValues(alpha: 0.65),
+                            : theme.colorScheme.onSurface.withValues(
+                                alpha: 0.65,
+                              ),
                       ),
                       if (title != null) ...[
                         const SizedBox(width: 6),
@@ -311,8 +320,9 @@ class _ModeToggleSegment extends StatelessWidget {
                                 : FontWeight.normal,
                             color: isSelected
                                 ? selectedColor
-                                : theme.colorScheme.onSurface
-                                    .withValues(alpha: 0.65),
+                                : theme.colorScheme.onSurface.withValues(
+                                    alpha: 0.65,
+                                  ),
                           ),
                         ),
                       ],

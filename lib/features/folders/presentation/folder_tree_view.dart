@@ -21,8 +21,9 @@ class FolderTreeView extends ConsumerWidget {
     // il singolo `_FolderNodeView`, vedi sotto), solo quando cambia
     // l'insieme delle cartelle radice o si passa a/da "Tutte le note".
     final rootFolders = ref.watch(folderProvider.select((s) => s.rootFolders));
-    final isAllNotesSelected =
-        ref.watch(folderProvider.select((s) => s.selectedFolderId == null));
+    final isAllNotesSelected = ref.watch(
+      folderProvider.select((s) => s.selectedFolderId == null),
+    );
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
 
@@ -64,8 +65,10 @@ class FolderTreeView extends ConsumerWidget {
                     ),
                   ),
                   IconButton(
-                    icon:
-                        const Icon(Icons.create_new_folder_outlined, size: 20),
+                    icon: const Icon(
+                      Icons.create_new_folder_outlined,
+                      size: 20,
+                    ),
                     tooltip: l10n.newFolder,
                     onPressed: () => showAddFolderDialog(context, ref),
                   ),
@@ -176,11 +179,7 @@ class _FolderNodeView extends ConsumerWidget {
   final FolderNode node;
   final int depth;
 
-  const _FolderNodeView({
-    super.key,
-    required this.node,
-    required this.depth,
-  });
+  const _FolderNodeView({super.key, required this.node, required this.depth});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

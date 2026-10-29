@@ -14,8 +14,11 @@ void main() {
         for (final a in activators) {
           final id =
               '${a.trigger.keyId}-${a.control}-${a.meta}-${a.alt}-${a.shift}';
-          expect(seen.add(id), isTrue,
-              reason: 'duplicate activator: ${command.name}');
+          expect(
+            seen.add(id),
+            isTrue,
+            reason: 'duplicate activator: ${command.name}',
+          );
         }
       }
     });
@@ -42,8 +45,9 @@ void main() {
   });
 
   group('ContextMenuRegion', () {
-    testWidgets('right click opens menu and runs the selected action',
-        (tester) async {
+    testWidgets('right click opens menu and runs the selected action', (
+      tester,
+    ) async {
       var selected = 0;
       await tester.pumpWidget(
         MaterialApp(
@@ -57,7 +61,10 @@ void main() {
                   const ContextMenuEntry(label: 'Disabled'),
                 ],
                 child: const SizedBox(
-                    width: 200, height: 100, child: Text('target')),
+                  width: 200,
+                  height: 100,
+                  child: Text('target'),
+                ),
               ),
             ),
           ),
@@ -97,7 +104,10 @@ void main() {
                     ContextMenuEntry(label: 'Inner', onSelected: () => inner++),
                   ],
                   child: const SizedBox(
-                      width: 100, height: 50, child: Text('card')),
+                    width: 100,
+                    height: 50,
+                    child: Text('card'),
+                  ),
                 ),
               ),
             ),

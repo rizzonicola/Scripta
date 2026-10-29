@@ -101,12 +101,14 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_bold_rounded,
               tooltip: l10n.bold,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.wrapSelection(
-                      contentController,
-                      '**',
-                      '**',
-                      defaultText: 'bold text',
-                    ));
+                runAndPersist(
+                  () => MarkdownToolbarActions.wrapSelection(
+                    contentController,
+                    '**',
+                    '**',
+                    defaultText: 'bold text',
+                  ),
+                );
               },
             ),
 
@@ -115,12 +117,14 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_italic_rounded,
               tooltip: l10n.italic,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.wrapSelection(
-                      contentController,
-                      '*',
-                      '*',
-                      defaultText: 'italic text',
-                    ));
+                runAndPersist(
+                  () => MarkdownToolbarActions.wrapSelection(
+                    contentController,
+                    '*',
+                    '*',
+                    defaultText: 'italic text',
+                  ),
+                );
               },
             ),
 
@@ -131,24 +135,36 @@ class MarkdownToolbar extends ConsumerWidget {
               label: 'H1',
               tooltip: l10n.heading1,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.prependLine(
-                    contentController, '# '));
+                runAndPersist(
+                  () => MarkdownToolbarActions.prependLine(
+                    contentController,
+                    '# ',
+                  ),
+                );
               },
             ),
             _ToolbarButton(
               label: 'H2',
               tooltip: l10n.heading2,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.prependLine(
-                    contentController, '## '));
+                runAndPersist(
+                  () => MarkdownToolbarActions.prependLine(
+                    contentController,
+                    '## ',
+                  ),
+                );
               },
             ),
             _ToolbarButton(
               label: 'H3',
               tooltip: l10n.heading3,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.prependLine(
-                    contentController, '### '));
+                runAndPersist(
+                  () => MarkdownToolbarActions.prependLine(
+                    contentController,
+                    '### ',
+                  ),
+                );
               },
             ),
 
@@ -159,8 +175,12 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_list_bulleted_rounded,
               tooltip: l10n.bulletList,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.prependLine(
-                    contentController, '- '));
+                runAndPersist(
+                  () => MarkdownToolbarActions.prependLine(
+                    contentController,
+                    '- ',
+                  ),
+                );
               },
             ),
 
@@ -169,8 +189,12 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.format_list_numbered_rounded,
               tooltip: l10n.numberedList,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.prependLine(
-                    contentController, '1. '));
+                runAndPersist(
+                  () => MarkdownToolbarActions.prependLine(
+                    contentController,
+                    '1. ',
+                  ),
+                );
               },
             ),
 
@@ -179,8 +203,12 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.check_box_outlined,
               tooltip: l10n.taskList,
               onPressed: () {
-                runAndPersist(() => MarkdownToolbarActions.prependLine(
-                    contentController, '- [ ] '));
+                runAndPersist(
+                  () => MarkdownToolbarActions.prependLine(
+                    contentController,
+                    '- [ ] ',
+                  ),
+                );
               },
             ),
 
@@ -191,8 +219,10 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.code_rounded,
               tooltip: l10n.codeBlock,
               onPressed: () {
-                runAndPersist(() =>
-                    MarkdownToolbarActions.insertCodeBlock(contentController));
+                runAndPersist(
+                  () =>
+                      MarkdownToolbarActions.insertCodeBlock(contentController),
+                );
               },
             ),
 
@@ -202,7 +232,8 @@ class MarkdownToolbar extends ConsumerWidget {
               tooltip: l10n.link,
               onPressed: () {
                 runAndPersist(
-                    () => MarkdownToolbarActions.insertLink(contentController));
+                  () => MarkdownToolbarActions.insertLink(contentController),
+                );
               },
             ),
 
@@ -211,8 +242,9 @@ class MarkdownToolbar extends ConsumerWidget {
               icon: Icons.table_chart_outlined,
               tooltip: l10n.table,
               onPressed: () {
-                runAndPersist(() =>
-                    MarkdownToolbarActions.insertTable(contentController));
+                runAndPersist(
+                  () => MarkdownToolbarActions.insertTable(contentController),
+                );
               },
             ),
 
@@ -284,8 +316,9 @@ class _ToolbarButton extends StatelessWidget {
                     label ?? '',
                     style: theme.textTheme.labelMedium?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color:
-                          theme.colorScheme.onSurface.withValues(alpha: 0.85),
+                      color: theme.colorScheme.onSurface.withValues(
+                        alpha: 0.85,
+                      ),
                     ),
                   ),
           ),

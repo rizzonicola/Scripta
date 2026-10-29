@@ -28,63 +28,66 @@ void main() {
     });
 
     test(
-        'FolderChangeDto round-trips a non-null parentId and deletedAt (tombstone)',
-        () {
-      const change = FolderChangeDto(
-        id: 'folder-2',
-        name: 'Sottocartella',
-        parentId: 'folder-1',
-        updatedAt: 1756900000000,
-        deletedAt: 1756999999000,
-      );
+      'FolderChangeDto round-trips a non-null parentId and deletedAt (tombstone)',
+      () {
+        const change = FolderChangeDto(
+          id: 'folder-2',
+          name: 'Sottocartella',
+          parentId: 'folder-1',
+          updatedAt: 1756900000000,
+          deletedAt: 1756999999000,
+        );
 
-      final jsonMap = change.toJson();
-      expect(jsonMap['parent_id'], 'folder-1');
-      expect(jsonMap['deleted_at'], 1756999999000);
+        final jsonMap = change.toJson();
+        expect(jsonMap['parent_id'], 'folder-1');
+        expect(jsonMap['deleted_at'], 1756999999000);
 
-      final fromJson = FolderChangeDto.fromJson(jsonMap);
-      expect(fromJson.parentId, 'folder-1');
-      expect(fromJson.deletedAt, 1756999999000);
-    });
+        final fromJson = FolderChangeDto.fromJson(jsonMap);
+        expect(fromJson.parentId, 'folder-1');
+        expect(fromJson.deletedAt, 1756999999000);
+      },
+    );
 
-    test('NoteChangeDto serializes and deserializes properly, content included',
-        () {
-      const change = NoteChangeDto(
-        id: 'note-1',
-        title: 'Titolo',
-        content: '# Titolo\nContenuto',
-        folderId: 'folder-1',
-        isFavorite: false,
-        isPinned: false,
-        orderIndex: 0,
-        createdAt: 1756900000000,
-        updatedAt: 1756900000000,
-        deletedAt: null,
-      );
+    test(
+      'NoteChangeDto serializes and deserializes properly, content included',
+      () {
+        const change = NoteChangeDto(
+          id: 'note-1',
+          title: 'Titolo',
+          content: '# Titolo\nContenuto',
+          folderId: 'folder-1',
+          isFavorite: false,
+          isPinned: false,
+          orderIndex: 0,
+          createdAt: 1756900000000,
+          updatedAt: 1756900000000,
+          deletedAt: null,
+        );
 
-      final jsonMap = change.toJson();
-      expect(jsonMap['id'], 'note-1');
-      expect(jsonMap['title'], 'Titolo');
-      expect(jsonMap['content'], '# Titolo\nContenuto');
-      expect(jsonMap['folder_id'], 'folder-1');
-      expect(jsonMap['is_favorite'], false);
-      expect(jsonMap['is_pinned'], false);
-      expect(jsonMap['order_index'], 0);
-      expect(jsonMap['created_at'], 1756900000000);
-      expect(jsonMap['updated_at'], 1756900000000);
-      expect(jsonMap['deleted_at'], isNull);
+        final jsonMap = change.toJson();
+        expect(jsonMap['id'], 'note-1');
+        expect(jsonMap['title'], 'Titolo');
+        expect(jsonMap['content'], '# Titolo\nContenuto');
+        expect(jsonMap['folder_id'], 'folder-1');
+        expect(jsonMap['is_favorite'], false);
+        expect(jsonMap['is_pinned'], false);
+        expect(jsonMap['order_index'], 0);
+        expect(jsonMap['created_at'], 1756900000000);
+        expect(jsonMap['updated_at'], 1756900000000);
+        expect(jsonMap['deleted_at'], isNull);
 
-      final fromJson = NoteChangeDto.fromJson(jsonMap);
-      expect(fromJson.id, change.id);
-      expect(fromJson.title, change.title);
-      expect(fromJson.content, change.content);
-      expect(fromJson.folderId, change.folderId);
-      expect(fromJson.isFavorite, change.isFavorite);
-      expect(fromJson.isPinned, change.isPinned);
-      expect(fromJson.orderIndex, change.orderIndex);
-      expect(fromJson.createdAt, change.createdAt);
-      expect(fromJson.updatedAt, change.updatedAt);
-    });
+        final fromJson = NoteChangeDto.fromJson(jsonMap);
+        expect(fromJson.id, change.id);
+        expect(fromJson.title, change.title);
+        expect(fromJson.content, change.content);
+        expect(fromJson.folderId, change.folderId);
+        expect(fromJson.isFavorite, change.isFavorite);
+        expect(fromJson.isPinned, change.isPinned);
+        expect(fromJson.orderIndex, change.orderIndex);
+        expect(fromJson.createdAt, change.createdAt);
+        expect(fromJson.updatedAt, change.updatedAt);
+      },
+    );
 
     test('NoteChangeDto senza created_at usa updated_at (server vecchio)', () {
       final dto = NoteChangeDto.fromJson({
@@ -104,42 +107,44 @@ void main() {
     });
 
     test(
-        'NoteChangeDto round-trips isPinned=true through toJson/fromJson (regressione bug pin)',
-        () {
-      const pinned = NoteChangeDto(
-        id: 'note-pinned',
-        title: 'Nota fissata',
-        content: 'contenuto',
-        folderId: null,
-        isFavorite: true,
-        isPinned: true,
-        orderIndex: 2,
-        createdAt: 1756900000000,
-        updatedAt: 1756900000000,
-        deletedAt: null,
-      );
+      'NoteChangeDto round-trips isPinned=true through toJson/fromJson (regressione bug pin)',
+      () {
+        const pinned = NoteChangeDto(
+          id: 'note-pinned',
+          title: 'Nota fissata',
+          content: 'contenuto',
+          folderId: null,
+          isFavorite: true,
+          isPinned: true,
+          orderIndex: 2,
+          createdAt: 1756900000000,
+          updatedAt: 1756900000000,
+          deletedAt: null,
+        );
 
-      final jsonMap = pinned.toJson();
-      expect(jsonMap['is_pinned'], true);
-      expect(jsonMap['is_favorite'], true);
-      expect(jsonMap['order_index'], 2);
+        final jsonMap = pinned.toJson();
+        expect(jsonMap['is_pinned'], true);
+        expect(jsonMap['is_favorite'], true);
+        expect(jsonMap['order_index'], 2);
 
-      final fromJson = NoteChangeDto.fromJson(jsonMap);
-      expect(fromJson.isPinned, true);
-      expect(fromJson.isFavorite, true);
-      expect(fromJson.orderIndex, 2);
-    });
+        final fromJson = NoteChangeDto.fromJson(jsonMap);
+        expect(fromJson.isPinned, true);
+        expect(fromJson.isFavorite, true);
+        expect(fromJson.orderIndex, 2);
+      },
+    );
 
     test('SyncRequest carries the cursor plus dirty folders and notes', () {
       const request = SyncRequest(
         lastSyncedAt: 1000,
         folders: [
           FolderChangeDto(
-              id: 'f1',
-              name: 'F1',
-              parentId: null,
-              updatedAt: 1200,
-              deletedAt: null),
+            id: 'f1',
+            name: 'F1',
+            parentId: null,
+            updatedAt: 1200,
+            deletedAt: null,
+          ),
         ],
         notes: [
           NoteChangeDto(
@@ -173,7 +178,7 @@ void main() {
             'parent_id': null,
             'updated_at': 1500,
             'deleted_at': null,
-          }
+          },
         ],
         'notes': [
           {
@@ -183,7 +188,7 @@ void main() {
             'folder_id': 'folder-remote',
             'updated_at': 1756950000000,
             'deleted_at': null,
-          }
+          },
         ],
       };
 
@@ -238,7 +243,7 @@ void main() {
         'token': 'jwt.token.here',
         'expires_at': 1767225600,
         'user_id': 'usr_123',
-        'username': 'mario.rossi'
+        'username': 'mario.rossi',
       };
 
       final dto = LoginResponseDto.fromJson(jsonMap);

@@ -62,13 +62,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('readAppSettingsFromPrefs', () {
-    test('senza nulla di salvato restituisce i default di AppSettings',
-        () async {
-      SharedPreferences.setMockInitialValues({});
-      final prefs = await SharedPreferences.getInstance();
+    test(
+      'senza nulla di salvato restituisce i default di AppSettings',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
 
-      expect(readAppSettingsFromPrefs(prefs), const AppSettings());
-    });
+        expect(readAppSettingsFromPrefs(prefs), const AppSettings());
+      },
+    );
 
     test('legge tutti e 7 i campi dalle chiavi dei setter', () async {
       _seedSavedSettings();
@@ -77,20 +79,22 @@ void main() {
       expect(readAppSettingsFromPrefs(prefs), _saved);
     });
 
-    test('valori sconosciuti o vuoti ripiegano sui default, come prima',
-        () async {
-      SharedPreferences.setMockInitialValues({
-        AppConstants.prefThemeMode: 'altro',
-        AppConstants.prefLocale: '',
-        AppConstants.prefHapticIntensity: 'inesistente',
-      });
-      final prefs = await SharedPreferences.getInstance();
+    test(
+      'valori sconosciuti o vuoti ripiegano sui default, come prima',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          AppConstants.prefThemeMode: 'altro',
+          AppConstants.prefLocale: '',
+          AppConstants.prefHapticIntensity: 'inesistente',
+        });
+        final prefs = await SharedPreferences.getInstance();
 
-      final s = readAppSettingsFromPrefs(prefs);
-      expect(s.themeMode, ThemeMode.system);
-      expect(s.locale, isNull);
-      expect(s.hapticIntensity, HapticIntensity.light);
-    });
+        final s = readAppSettingsFromPrefs(prefs);
+        expect(s.themeMode, ThemeMode.system);
+        expect(s.locale, isNull);
+        expect(s.hapticIntensity, HapticIntensity.light);
+      },
+    );
   });
 
   group('loadSettingsSnapshot', () {
@@ -130,73 +134,81 @@ void main() {
     });
 
     test(
-        'con l\'istantanea non arriva un secondo stato (una sola costruzione dei temi)',
-        () async {
-      _seedSavedSettings();
-      final container = ProviderContainer(
-        overrides: [settingsSnapshotProvider.overrideWithValue(_saved)],
-      );
-      addTearDown(container.dispose);
+      'con l\'istantanea non arriva un secondo stato (una sola costruzione dei temi)',
+      () async {
+        _seedSavedSettings();
+        final container = ProviderContainer(
+          overrides: [settingsSnapshotProvider.overrideWithValue(_saved)],
+        );
+        addTearDown(container.dispose);
 
-      var emissions = 0;
-      container.listen<AppSettings>(
-          settingsProvider, (previous, next) => emissions++);
-      container.read(settingsProvider);
+        var emissions = 0;
+        container.listen<AppSettings>(
+          settingsProvider,
+          (previous, next) => emissions++,
+        );
+        container.read(settingsProvider);
 
-      // Margine ampio: un eventuale caricamento asincrono (che rileggerebbe
-      // gli stessi valori) emetterebbe il suo stato in pochi millisecondi.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      expect(emissions, 0);
-    });
+        // Margine ampio: un eventuale caricamento asincrono (che rileggerebbe
+        // gli stessi valori) emetterebbe il suo stato in pochi millisecondi.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(emissions, 0);
+      },
+    );
 
     test(
-        'senza istantanea parte dai default e poi carica (comportamento di prima)',
-        () async {
-      _seedSavedSettings();
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
+      'senza istantanea parte dai default e poi carica (comportamento di prima)',
+      () async {
+        _seedSavedSettings();
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
 
-      expect(container.read(settingsProvider), const AppSettings());
-      await _waitUntil(
-        () => container.read(settingsProvider) == _saved,
-        reason: 'il caricamento asincrono delle impostazioni non è avvenuto',
-      );
-    });
+        expect(container.read(settingsProvider), const AppSettings());
+        await _waitUntil(
+          () => container.read(settingsProvider) == _saved,
+          reason: 'il caricamento asincrono delle impostazioni non è avvenuto',
+        );
+      },
+    );
 
-    test('istantanea e caricamento asincrono producono LO STESSO stato',
-        () async {
-      _seedSavedSettings();
-      final snapshot = await loadSettingsSnapshot();
+    test(
+      'istantanea e caricamento asincrono producono LO STESSO stato',
+      () async {
+        _seedSavedSettings();
+        final snapshot = await loadSettingsSnapshot();
 
-      final asyncContainer = ProviderContainer();
-      addTearDown(asyncContainer.dispose);
-      asyncContainer.read(settingsProvider);
-      await _waitUntil(
-        () => asyncContainer.read(settingsProvider) != const AppSettings(),
-        reason: 'il caricamento asincrono delle impostazioni non è avvenuto',
-      );
+        final asyncContainer = ProviderContainer();
+        addTearDown(asyncContainer.dispose);
+        asyncContainer.read(settingsProvider);
+        await _waitUntil(
+          () => asyncContainer.read(settingsProvider) != const AppSettings(),
+          reason: 'il caricamento asincrono delle impostazioni non è avvenuto',
+        );
 
-      expect(asyncContainer.read(settingsProvider), snapshot);
-    });
+        expect(asyncContainer.read(settingsProvider), snapshot);
+      },
+    );
 
-    test('i setter continuano a funzionare partendo dall\'istantanea',
-        () async {
-      _seedSavedSettings();
-      final container = ProviderContainer(
-        overrides: [settingsSnapshotProvider.overrideWithValue(_saved)],
-      );
-      addTearDown(container.dispose);
+    test(
+      'i setter continuano a funzionare partendo dall\'istantanea',
+      () async {
+        _seedSavedSettings();
+        final container = ProviderContainer(
+          overrides: [settingsSnapshotProvider.overrideWithValue(_saved)],
+        );
+        addTearDown(container.dispose);
 
-      await container
-          .read(settingsProvider.notifier)
-          .setThemeMode(ThemeMode.light);
+        await container
+            .read(settingsProvider.notifier)
+            .setThemeMode(ThemeMode.light);
 
-      expect(container.read(settingsProvider).themeMode, ThemeMode.light);
-      // Il resto dello stato resta quello dell'istantanea.
-      expect(container.read(settingsProvider).selectedThemeId, 'nord');
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString(AppConstants.prefThemeMode), 'light');
-    });
+        expect(container.read(settingsProvider).themeMode, ThemeMode.light);
+        // Il resto dello stato resta quello dell'istantanea.
+        expect(container.read(settingsProvider).selectedThemeId, 'nord');
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString(AppConstants.prefThemeMode), 'light');
+      },
+    );
   });
 
   // Il test più "esposto" del file: pompa l'app intera come `widget_test.dart`
@@ -222,46 +234,47 @@ void main() {
     });
 
     testWidgets(
-        'usa già tema, modalità e lingua salvati e non ricostruisce i temi dopo',
-        (tester) async {
-      const savedLight = AppSettings(
-        themeMode: ThemeMode.light,
-        selectedThemeId: 'solarized_light',
-        locale: Locale('en'),
-      );
-      final savedPalette = AppThemePalettes.getById(
-        savedLight.selectedThemeId,
-        fallbackBrightness: Brightness.light,
-      );
-      final defaultPalette = AppThemePalettes.getById(
-        const AppSettings().selectedThemeId,
-        fallbackBrightness: Brightness.light,
-      );
-      // Premessa del test: il tema salvato è davvero diverso da quello di default.
-      expect(savedPalette.primary, isNot(defaultPalette.primary));
+      'usa già tema, modalità e lingua salvati e non ricostruisce i temi dopo',
+      (tester) async {
+        const savedLight = AppSettings(
+          themeMode: ThemeMode.light,
+          selectedThemeId: 'solarized_light',
+          locale: Locale('en'),
+        );
+        final savedPalette = AppThemePalettes.getById(
+          savedLight.selectedThemeId,
+          fallbackBrightness: Brightness.light,
+        );
+        final defaultPalette = AppThemePalettes.getById(
+          const AppSettings().selectedThemeId,
+          fallbackBrightness: Brightness.light,
+        );
+        // Premessa del test: il tema salvato è davvero diverso da quello di default.
+        expect(savedPalette.primary, isNot(defaultPalette.primary));
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [settingsSnapshotProvider.overrideWithValue(savedLight)],
-          child: const ScriptaApp(),
-        ),
-      );
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [settingsSnapshotProvider.overrideWithValue(savedLight)],
+            child: const ScriptaApp(),
+          ),
+        );
 
-      // Un solo pumpWidget e nessun pump successivo: questo È il primo frame.
-      final first = tester.widget<MaterialApp>(find.byType(MaterialApp));
-      expect(first.themeMode, ThemeMode.light);
-      expect(first.locale, const Locale('en'));
-      expect(first.theme!.colorScheme.primary, savedPalette.primary);
+        // Un solo pumpWidget e nessun pump successivo: questo È il primo frame.
+        final first = tester.widget<MaterialApp>(find.byType(MaterialApp));
+        expect(first.themeMode, ThemeMode.light);
+        expect(first.locale, const Locale('en'));
+        expect(first.theme!.colorScheme.primary, savedPalette.primary);
 
-      await tester.pumpAndSettle();
+        await tester.pumpAndSettle();
 
-      // Nessuno scatto dopo: stessa modalità, stessa lingua e SOLTANTO lo
-      // stesso oggetto ThemeData (nessuna seconda costruzione dei temi).
-      final settled = tester.widget<MaterialApp>(find.byType(MaterialApp));
-      expect(settled.themeMode, ThemeMode.light);
-      expect(settled.locale, const Locale('en'));
-      expect(identical(settled.theme, first.theme), isTrue);
-      expect(identical(settled.darkTheme, first.darkTheme), isTrue);
-    });
+        // Nessuno scatto dopo: stessa modalità, stessa lingua e SOLTANTO lo
+        // stesso oggetto ThemeData (nessuna seconda costruzione dei temi).
+        final settled = tester.widget<MaterialApp>(find.byType(MaterialApp));
+        expect(settled.themeMode, ThemeMode.light);
+        expect(settled.locale, const Locale('en'));
+        expect(identical(settled.theme, first.theme), isTrue);
+        expect(identical(settled.darkTheme, first.darkTheme), isTrue);
+      },
+    );
   });
 }

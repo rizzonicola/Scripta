@@ -16,7 +16,9 @@ import 'folder_dialogs.dart';
 
 /// Menu di "Tutte le note" / spazio vuoto della barra laterale.
 List<ContextMenuEntry> workspaceMenuEntries(
-    BuildContext context, WidgetRef ref) {
+  BuildContext context,
+  WidgetRef ref,
+) {
   final l10n = AppLocalizations.of(context);
   final ds = DesktopStrings.of(context);
   return [

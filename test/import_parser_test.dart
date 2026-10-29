@@ -6,20 +6,28 @@ import 'package:scripta/core/services/import_parser.dart';
 /// Verifica che [mapZipEntryPath] traduca [entry] in [folders] + [fileName].
 void _expectZip(String entry, List<String> folders, String fileName) {
   final location = mapZipEntryPath(entry);
-  expect(location, isNotNull,
-      reason: 'la voce "$entry" non doveva essere ignorata');
+  expect(
+    location,
+    isNotNull,
+    reason: 'la voce "$entry" non doveva essere ignorata',
+  );
   expect(location!.folders, folders, reason: 'cartelle di "$entry"');
   expect(location.fileName, fileName, reason: 'nome file di "$entry"');
 }
 
 void main() {
   group('mapZipEntryPath: radice e Non_Catalogate', () {
-    test('le note di Non_Catalogate tornano alla radice (nessuna cartella)',
-        () {
-      _expectZip('$uncatalogedFolderName/A.md', const [], 'A.md');
-      _expectZip(
-          'Non_Catalogate/1 - Nome Nota.md', const [], '1 - Nome Nota.md');
-    });
+    test(
+      'le note di Non_Catalogate tornano alla radice (nessuna cartella)',
+      () {
+        _expectZip('$uncatalogedFolderName/A.md', const [], 'A.md');
+        _expectZip(
+          'Non_Catalogate/1 - Nome Nota.md',
+          const [],
+          '1 - Nome Nota.md',
+        );
+      },
+    );
 
     test('il confronto ignora maiuscole e spazi ai bordi', () {
       _expectZip('non_catalogate/A.md', const [], 'A.md');
@@ -30,15 +38,20 @@ void main() {
     test('una cartella vera resta una cartella, a ogni profondità', () {
       _expectZip('Reale/C.md', const ['Reale'], 'C.md');
       _expectZip('A/B/C/Nota.md', const ['A', 'B', 'C'], 'Nota.md');
-      _expectZip(
-          '2 - Progetti/1 - Nota.md', const ['2 - Progetti'], '1 - Nota.md');
+      _expectZip('2 - Progetti/1 - Nota.md', const [
+        '2 - Progetti',
+      ], '1 - Nota.md');
     });
 
     test('solo il livello più alto è il contenitore dell\'esportazione', () {
-      _expectZip('Lavoro/Non_Catalogate/x.md',
-          const ['Lavoro', 'Non_Catalogate'], 'x.md');
-      _expectZip('Non_Catalogate/Sotto/x.md', const ['Non_Catalogate', 'Sotto'],
-          'x.md');
+      _expectZip('Lavoro/Non_Catalogate/x.md', const [
+        'Lavoro',
+        'Non_Catalogate',
+      ], 'x.md');
+      _expectZip('Non_Catalogate/Sotto/x.md', const [
+        'Non_Catalogate',
+        'Sotto',
+      ], 'x.md');
     });
 
     test('un nome solo simile non è il contenitore', () {
@@ -47,12 +60,14 @@ void main() {
       _expectZip('Catalogate/A.md', const ['Catalogate'], 'A.md');
     });
 
-    test('isUncatalogedFolderName usa la stessa costante dell\'esportazione',
-        () {
-      expect(isUncatalogedFolderName(uncatalogedFolderName), isTrue);
-      expect(isUncatalogedFolderName('Lavoro'), isFalse);
-      expect(isUncatalogedFolderName(''), isFalse);
-    });
+    test(
+      'isUncatalogedFolderName usa la stessa costante dell\'esportazione',
+      () {
+        expect(isUncatalogedFolderName(uncatalogedFolderName), isTrue);
+        expect(isUncatalogedFolderName('Lavoro'), isFalse);
+        expect(isUncatalogedFolderName(''), isFalse);
+      },
+    );
   });
 
   group('mapZipEntryPath: piattaforme', () {
@@ -68,20 +83,21 @@ void main() {
     });
 
     test(
-        'voci fuori dalla gerarchia (path traversal, assoluti, unità) ignorate',
-        () {
-      for (final entry in [
-        '../evil.md',
-        'a/../../evil.md',
-        'a/..\\evil.md',
-        '/etc/evil.md',
-        'C:/evil.md',
-        r'C:\evil.md',
-        r'\\server\share\evil.md',
-      ]) {
-        expect(mapZipEntryPath(entry), isNull, reason: entry);
-      }
-    });
+      'voci fuori dalla gerarchia (path traversal, assoluti, unità) ignorate',
+      () {
+        for (final entry in [
+          '../evil.md',
+          'a/../../evil.md',
+          'a/..\\evil.md',
+          '/etc/evil.md',
+          'C:/evil.md',
+          r'C:\evil.md',
+          r'\\server\share\evil.md',
+        ]) {
+          expect(mapZipEntryPath(entry), isNull, reason: entry);
+        }
+      },
+    );
 
     test('il rumore degli ZIP di macOS non diventa note né cartelle', () {
       expect(mapZipEntryPath('__MACOSX/Lavoro/._A.md'), isNull);
@@ -107,8 +123,7 @@ void main() {
     });
   });
 
-  group('mapFileSystemPath (segmenti nativi, cartella scelta dall\'utente)',
-      () {
+  group('mapFileSystemPath (segmenti nativi, cartella scelta dall\'utente)', () {
     test('stessa mappatura dello ZIP', () {
       final root = mapFileSystemPath(const ['Non_Catalogate', 'A.md']);
       expect(root!.folders, isEmpty);
@@ -122,12 +137,13 @@ void main() {
     });
 
     test(
-        'un "\\" in un nome di file non è un separatore: qui è già stato spezzato',
-        () {
-      final location = mapFileSystemPath(const ['Lavoro', r'a\b.md']);
-      expect(location!.folders, ['Lavoro']);
-      expect(location.fileName, r'a\b.md');
-    });
+      'un "\\" in un nome di file non è un separatore: qui è già stato spezzato',
+      () {
+        final location = mapFileSystemPath(const ['Lavoro', r'a\b.md']);
+        expect(location!.folders, ['Lavoro']);
+        expect(location.fileName, r'a\b.md');
+      },
+    );
 
     test('scarta traversal, rumore macOS, file non-nota e liste vuote', () {
       expect(mapFileSystemPath(const ['..', 'x.md']), isNull);
@@ -183,30 +199,32 @@ void main() {
       expect(trailing!.folders, ['Lavoro']);
     });
 
-    test('POSIX (Linux, macOS, Android, iOS): "/" separa, "\\" è un carattere',
-        () {
-      final bucket = mapFilePath(
-        '/home/io/Backup/Non_Catalogate/A.md',
-        rootPath: '/home/io/Backup',
-        context: p.posix,
-      );
-      expect(bucket!.folders, isEmpty);
+    test(
+      'POSIX (Linux, macOS, Android, iOS): "/" separa, "\\" è un carattere',
+      () {
+        final bucket = mapFilePath(
+          '/home/io/Backup/Non_Catalogate/A.md',
+          rootPath: '/home/io/Backup',
+          context: p.posix,
+        );
+        expect(bucket!.folders, isEmpty);
 
-      final backslash = mapFilePath(
-        '/home/io/Backup/Lavoro/a\\b.md',
-        rootPath: '/home/io/Backup',
-        context: p.posix,
-      );
-      expect(backslash!.folders, ['Lavoro']);
-      expect(backslash.fileName, 'a\\b.md');
+        final backslash = mapFilePath(
+          '/home/io/Backup/Lavoro/a\\b.md',
+          rootPath: '/home/io/Backup',
+          context: p.posix,
+        );
+        expect(backslash!.folders, ['Lavoro']);
+        expect(backslash.fileName, 'a\\b.md');
 
-      final trailing = mapFilePath(
-        '/home/io/Backup/Lavoro/n.md',
-        rootPath: '/home/io/Backup/',
-        context: p.posix,
-      );
-      expect(trailing!.folders, ['Lavoro']);
-    });
+        final trailing = mapFilePath(
+          '/home/io/Backup/Lavoro/n.md',
+          rootPath: '/home/io/Backup/',
+          context: p.posix,
+        );
+        expect(trailing!.folders, ['Lavoro']);
+      },
+    );
 
     test('percorsi con spazi, accenti e prefissi numerici restano intatti', () {
       final windows = mapFilePath(
@@ -238,8 +256,11 @@ void main() {
 
     test('un file fuori dalla cartella scelta non entra nella gerarchia', () {
       expect(
-        mapFilePath('/home/io/Altro/n.md',
-            rootPath: '/home/io/Backup', context: p.posix),
+        mapFilePath(
+          '/home/io/Altro/n.md',
+          rootPath: '/home/io/Backup',
+          context: p.posix,
+        ),
         isNull,
       );
     });
@@ -265,50 +286,59 @@ void main() {
     ];
 
     test(
-        'esporta → importa: titolo e testo tornano identici (file reali di Scripta)',
-        () {
-      for (final title in numericTitles) {
-        for (final body in bodies) {
-          // Esattamente ciò che scrive `buildNotesZip`.
-          final exported = noteMarkdownContent(title, body);
-          final fileName = '${sanitizeFileName(title)}.md';
+      'esporta → importa: titolo e testo tornano identici (file reali di Scripta)',
+      () {
+        for (final title in numericTitles) {
+          for (final body in bodies) {
+            // Esattamente ciò che scrive `buildNotesZip`.
+            final exported = noteMarkdownContent(title, body);
+            final fileName = '${sanitizeFileName(title)}.md';
 
-          final parsed = parseNoteFile(exported, fileName);
+            final parsed = parseNoteFile(exported, fileName);
 
-          expect(parsed.title, title,
+            expect(
+              parsed.title,
+              title,
               reason:
-                  'titolo di "$title" con testo ${body.codeUnits.length} car.');
-          expect(parsed.content, body, reason: 'testo di "$title"');
+                  'titolo di "$title" con testo ${body.codeUnits.length} car.',
+            );
+            expect(parsed.content, body, reason: 'testo di "$title"');
+          }
         }
-      }
-    });
+      },
+    );
 
     test(
-        'regressione: "# Nome Nota" nel testo non cancella il "1 - " del titolo',
-        () {
-      final parsed = parseNoteFile('# Nome Nota\n\ncorpo', '1 - Nome Nota.md');
+      'regressione: "# Nome Nota" nel testo non cancella il "1 - " del titolo',
+      () {
+        final parsed = parseNoteFile(
+          '# Nome Nota\n\ncorpo',
+          '1 - Nome Nota.md',
+        );
 
-      expect(parsed.title, '1 - Nome Nota');
-      // L'intestazione è testo della nota: non va persa.
-      expect(parsed.content, '# Nome Nota\n\ncorpo');
-    });
+        expect(parsed.title, '1 - Nome Nota');
+        // L'intestazione è testo della nota: non va persa.
+        expect(parsed.content, '# Nome Nota\n\ncorpo');
+      },
+    );
 
     test(
-        'qualunque forma di prefisso numerico sopravvive a un H1 senza prefisso',
-        () {
-      for (final prefix in [
-        '1 - ',
-        '01. ',
-        '2024-01-05 ',
-        '3) ',
-        '007 ',
-        '10_'
-      ]) {
-        final fileName = '${prefix}Nome Nota.md';
-        final parsed = parseNoteFile('# Nome Nota\n\ncorpo', fileName);
-        expect(parsed.title, '${prefix}Nome Nota', reason: fileName);
-      }
-    });
+      'qualunque forma di prefisso numerico sopravvive a un H1 senza prefisso',
+      () {
+        for (final prefix in [
+          '1 - ',
+          '01. ',
+          '2024-01-05 ',
+          '3) ',
+          '007 ',
+          '10_',
+        ]) {
+          final fileName = '${prefix}Nome Nota.md';
+          final parsed = parseNoteFile('# Nome Nota\n\ncorpo', fileName);
+          expect(parsed.title, '${prefix}Nome Nota', reason: fileName);
+        }
+      },
+    );
 
     test('un H1 con altro testo non sostituisce mai un titolo numerato', () {
       final parsed = parseNoteFile('# Capitolo uno\n\ncorpo', '2 - Seconda.md');
@@ -316,23 +346,31 @@ void main() {
       expect(parsed.content, '# Capitolo uno\n\ncorpo');
     });
 
-    test('un H1 che contiene il prefisso (eco del titolo) viene riconosciuto',
-        () {
-      final parsed =
-          parseNoteFile('# 1 - Nome Nota\n\ncorpo', '1 - Nome Nota.md');
-      expect(parsed.title, '1 - Nome Nota');
-      expect(parsed.content, 'corpo');
-    });
+    test(
+      'un H1 che contiene il prefisso (eco del titolo) viene riconosciuto',
+      () {
+        final parsed = parseNoteFile(
+          '# 1 - Nome Nota\n\ncorpo',
+          '1 - Nome Nota.md',
+        );
+        expect(parsed.title, '1 - Nome Nota');
+        expect(parsed.content, 'corpo');
+      },
+    );
   });
 
   group('parseNoteFile: regole sul titolo', () {
-    test('senza H1 il titolo è il nome del file e il testo resta invariato',
-        () {
-      final parsed =
-          parseNoteFile('solo testo\nsecondo rigo', '1 - Nome Nota.md');
-      expect(parsed.title, '1 - Nome Nota');
-      expect(parsed.content, 'solo testo\nsecondo rigo');
-    });
+    test(
+      'senza H1 il titolo è il nome del file e il testo resta invariato',
+      () {
+        final parsed = parseNoteFile(
+          'solo testo\nsecondo rigo',
+          '1 - Nome Nota.md',
+        );
+        expect(parsed.title, '1 - Nome Nota');
+        expect(parsed.content, 'solo testo\nsecondo rigo');
+      },
+    );
 
     test('"#Titolo" senza spazio non è un titolo di primo livello', () {
       final parsed = parseNoteFile('#Titolo\ncorpo', 'Altro.md');
@@ -346,24 +384,26 @@ void main() {
       expect(parsed.content, '## Sezione\ncorpo');
     });
 
-    test('l\'eco del titolo conserva i caratteri illegali nei nomi di file',
-        () {
-      const title = 'Capitolo 1/2: "Intro"';
-      final exported = noteMarkdownContent(title, 'corpo');
-      final fileName =
-          '${sanitizeFileName(title)}.md'; // Capitolo 1_2_ _Intro_.md
+    test(
+      'l\'eco del titolo conserva i caratteri illegali nei nomi di file',
+      () {
+        const title = 'Capitolo 1/2: "Intro"';
+        final exported = noteMarkdownContent(title, 'corpo');
+        final fileName =
+            '${sanitizeFileName(title)}.md'; // Capitolo 1_2_ _Intro_.md
 
-      final parsed = parseNoteFile(exported, fileName);
+        final parsed = parseNoteFile(exported, fileName);
 
-      expect(parsed.title, title);
-      expect(parsed.content, 'corpo');
-    });
+        expect(parsed.title, title);
+        expect(parsed.content, 'corpo');
+      },
+    );
 
     test('il suffisso " (n)" delle collisioni non altera il titolo', () {
       for (final fileName in [
         'Riunione (2).md',
         'riunione (3).md',
-        'Riunione (12).md'
+        'Riunione (12).md',
       ]) {
         final parsed = parseNoteFile('# Riunione\n\nx', fileName);
         expect(parsed.title, 'Riunione', reason: fileName);
@@ -403,7 +443,7 @@ void main() {
         'Nota_1.md',
         'Nota_10.md',
         'Nota_abc.md',
-        'Nota_ab12cdef.md'
+        'Nota_ab12cdef.md',
       ]) {
         final parsed = parseNoteFile('# Altro\n\ncorpo', fileName);
         expect(parsed.title, fileName.replaceAll('.md', ''), reason: fileName);
@@ -426,18 +466,21 @@ void main() {
 
   group('parseNoteFile: corpo e formati', () {
     test(
-        'righe vuote prima dell\'H1 e una sola riga vuota dopo vengono assorbite',
-        () {
-      final parsed = parseNoteFile('\n\n# Titolo\n\ncorpo', 'Titolo.md');
-      expect(parsed.title, 'Titolo');
-      expect(parsed.content, 'corpo');
-    });
+      'righe vuote prima dell\'H1 e una sola riga vuota dopo vengono assorbite',
+      () {
+        final parsed = parseNoteFile('\n\n# Titolo\n\ncorpo', 'Titolo.md');
+        expect(parsed.title, 'Titolo');
+        expect(parsed.content, 'corpo');
+      },
+    );
 
-    test('dopo l\'H1 si assorbe UNA sola riga vuota: le altre sono del testo',
-        () {
-      final parsed = parseNoteFile('# T\n\n\ncorpo', 'T.md');
-      expect(parsed.content, '\ncorpo');
-    });
+    test(
+      'dopo l\'H1 si assorbe UNA sola riga vuota: le altre sono del testo',
+      () {
+        final parsed = parseNoteFile('# T\n\n\ncorpo', 'T.md');
+        expect(parsed.content, '\ncorpo');
+      },
+    );
 
     test('H1 rientrato', () {
       final parsed = parseNoteFile('  # Titolo\ncorpo', 'Titolo.md');
@@ -458,8 +501,10 @@ void main() {
     });
 
     test('BOM UTF-8 e CRLF (Blocco Note di Windows) vengono normalizzati', () {
-      final parsed =
-          parseNoteFile('\uFEFF# Titolo\r\n\r\ncorpo\r\nseconda', 'Titolo.md');
+      final parsed = parseNoteFile(
+        '\uFEFF# Titolo\r\n\r\ncorpo\r\nseconda',
+        'Titolo.md',
+      );
       expect(parsed.title, 'Titolo');
       expect(parsed.content, 'corpo\nseconda');
     });

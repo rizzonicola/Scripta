@@ -103,8 +103,10 @@ void showMoveFolderDialog(
           if (targetId == null) {
             message = 'Cartella "${nodeToMove.name}" spostata alla radice';
           } else {
-            final targetName =
-                destinations.firstWhere((d) => d.node.id == targetId).node.name;
+            final targetName = destinations
+                .firstWhere((d) => d.node.id == targetId)
+                .node
+                .name;
             message = 'Cartella "${nodeToMove.name}" spostata in "$targetName"';
           }
           messenger.showSnackBar(

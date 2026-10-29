@@ -18,12 +18,12 @@ class FolderChangeDto {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'parent_id': parentId,
-        'updated_at': updatedAt,
-        'deleted_at': deletedAt,
-      };
+    'id': id,
+    'name': name,
+    'parent_id': parentId,
+    'updated_at': updatedAt,
+    'deleted_at': deletedAt,
+  };
 
   factory FolderChangeDto.fromJson(Map<String, dynamic> json) =>
       FolderChangeDto(
@@ -75,17 +75,17 @@ class NoteChangeDto {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'title': title,
-        'content': content,
-        'folder_id': folderId,
-        'is_favorite': isFavorite,
-        'is_pinned': isPinned,
-        'order_index': orderIndex,
-        'created_at': createdAt,
-        'updated_at': updatedAt,
-        'deleted_at': deletedAt,
-      };
+    'id': id,
+    'title': title,
+    'content': content,
+    'folder_id': folderId,
+    'is_favorite': isFavorite,
+    'is_pinned': isPinned,
+    'order_index': orderIndex,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+    'deleted_at': deletedAt,
+  };
 
   factory NoteChangeDto.fromJson(Map<String, dynamic> json) {
     final updatedAt = (json['updated_at'] as num?)?.toInt() ?? 0;
@@ -127,10 +127,10 @@ class SyncRequest {
   });
 
   Map<String, dynamic> toJson() => {
-        'last_synced_at': lastSyncedAt,
-        'folders': folders.map((f) => f.toJson()).toList(),
-        'notes': notes.map((n) => n.toJson()).toList(),
-      };
+    'last_synced_at': lastSyncedAt,
+    'folders': folders.map((f) => f.toJson()).toList(),
+    'notes': notes.map((n) => n.toJson()).toList(),
+  };
 }
 
 /// Response body da POST /api/v1/sync — speculare a `models.SyncResponse`.
@@ -147,8 +147,11 @@ class SyncRejectedItem {
   final String id;
   final String reason; // es. "invalid_folder_id", "invalid_parent_id"
 
-  const SyncRejectedItem(
-      {required this.kind, required this.id, required this.reason});
+  const SyncRejectedItem({
+    required this.kind,
+    required this.id,
+    required this.reason,
+  });
 
   factory SyncRejectedItem.fromJson(Map<String, dynamic> json) =>
       SyncRejectedItem(
@@ -177,7 +180,9 @@ class ServerCaps {
       if (value is bool) flags[key] = value;
     });
     return ServerCaps(
-        proto: (json['proto'] as num?)?.toInt() ?? 1, flags: flags);
+      proto: (json['proto'] as num?)?.toInt() ?? 1,
+      flags: flags,
+    );
   }
 
   /// true solo se il server dichiara esplicitamente la funzione.
@@ -209,11 +214,13 @@ class SyncResponse {
     return SyncResponse(
       serverTime: (json['server_time'] as num?)?.toInt() ?? 0,
       fullResync: json['full_resync'] == true,
-      folders: (json['folders'] as List<dynamic>?)
+      folders:
+          (json['folders'] as List<dynamic>?)
               ?.map((e) => FolderChangeDto.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
-      notes: (json['notes'] as List<dynamic>?)
+      notes:
+          (json['notes'] as List<dynamic>?)
               ?.map((e) => NoteChangeDto.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
@@ -247,15 +254,15 @@ class UserSettingsDto {
   });
 
   Map<String, dynamic> toJson() => {
-        'theme': theme,
-        'color_scheme': colorScheme,
-        'language': language,
-        'font_family': fontFamily,
-        'font_size': fontSize,
-        'line_spacing': lineSpacing,
-        'layout': layout,
-        if (updatedAt != null) 'updated_at': updatedAt,
-      };
+    'theme': theme,
+    'color_scheme': colorScheme,
+    'language': language,
+    'font_family': fontFamily,
+    'font_size': fontSize,
+    'line_spacing': lineSpacing,
+    'layout': layout,
+    if (updatedAt != null) 'updated_at': updatedAt,
+  };
 
   factory UserSettingsDto.fromJson(Map<String, dynamic> json) =>
       UserSettingsDto(

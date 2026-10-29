@@ -112,8 +112,9 @@ class _OnboardingDialogState extends ConsumerState<OnboardingDialog> {
                           slide.description,
                           textAlign: TextAlign.center,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurface
-                                .withValues(alpha: 0.7),
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.7,
+                            ),
                             height: 1.45,
                           ),
                         ),
@@ -140,8 +141,9 @@ class _OnboardingDialogState extends ConsumerState<OnboardingDialog> {
                       duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOutCubic,
                       builder: (context, value, _) {
-                        final inactive =
-                            theme.colorScheme.outline.withValues(alpha: 0.4);
+                        final inactive = theme.colorScheme.outline.withValues(
+                          alpha: 0.4,
+                        );
                         return Center(
                           child: Transform.scale(
                             scale: 1 + (0.2 * value),

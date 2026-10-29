@@ -69,10 +69,7 @@ class ImportService {
   /// Mostra un piccolo selettore con le due modalità di importazione
   /// supportate (file ZIP o cartella), richiamato dalla voce "Importa" nel
   /// menu principale (tre punti) della sidebar delle cartelle.
-  static Future<void> showImportOptions(
-    BuildContext context,
-    WidgetRef ref,
-  ) {
+  static Future<void> showImportOptions(BuildContext context, WidgetRef ref) {
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -104,8 +101,9 @@ class ImportService {
               ListTile(
                 leading: const Icon(Icons.drive_folder_upload_outlined),
                 title: const Text('Da cartella'),
-                subtitle:
-                    const Text('Una cartella di file .md sul dispositivo'),
+                subtitle: const Text(
+                  'Una cartella di file .md sul dispositivo',
+                ),
                 onTap: () {
                   Navigator.of(sheetCtx).pop();
                   importFromFolder(context, ref);
@@ -144,13 +142,16 @@ class ImportService {
       // memoria; in assenza di path si applica comunque il controllo sui
       // byte letti (ripetuto in _extractFromZipBytes).
       final pickedPath = picked.path;
-      final pickedSize =
-          pickedPath != null ? await File(pickedPath).length() : null;
+      final pickedSize = pickedPath != null
+          ? await File(pickedPath).length()
+          : null;
       if (pickedSize != null && pickedSize > maxZipBytes) {
         if (context.mounted) {
           _showSnack(
-              context, 'File ZIP troppo grande (massimo ${_mb(maxZipBytes)}).',
-              isError: true);
+            context,
+            'File ZIP troppo grande (massimo ${_mb(maxZipBytes)}).',
+            isError: true,
+          );
         }
         return;
       }
@@ -159,22 +160,24 @@ class ImportService {
         bytes = await picked.readAsBytes();
       } catch (_) {
         if (context.mounted) {
-          _showSnack(context, 'Impossibile leggere il file selezionato.',
-              isError: true);
+          _showSnack(
+            context,
+            'Impossibile leggere il file selezionato.',
+            isError: true,
+          );
         }
         return;
       }
 
       if (!context.mounted) return;
-      await _runImport(
-        context,
-        ref,
-        () async => _extractFromZipBytes(bytes),
-      );
+      await _runImport(context, ref, () async => _extractFromZipBytes(bytes));
     } catch (e) {
       if (context.mounted) {
-        _showSnack(context, 'Errore durante la lettura dello ZIP: $e',
-            isError: true);
+        _showSnack(
+          context,
+          'Errore durante la lettura dello ZIP: $e',
+          isError: true,
+        );
       }
     }
   }
@@ -200,8 +203,11 @@ class ImportService {
       );
     } catch (e) {
       if (context.mounted) {
-        _showSnack(context, 'Errore durante la lettura della cartella: $e',
-            isError: true);
+        _showSnack(
+          context,
+          'Errore durante la lettura della cartella: $e',
+          isError: true,
+        );
       }
     }
   }
@@ -223,10 +229,7 @@ class ImportService {
 
       if (bundle.entries.isEmpty && bundle.emptyFolderPaths.isEmpty) {
         if (context.mounted) {
-          _showSnack(
-            context,
-            'Nessuna nota Markdown trovata da importare.',
-          );
+          _showSnack(context, 'Nessuna nota Markdown trovata da importare.');
         }
         return;
       }
@@ -241,8 +244,11 @@ class ImportService {
     } catch (e) {
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
-        _showSnack(context, 'Errore durante l\'importazione: $e',
-            isError: true);
+        _showSnack(
+          context,
+          'Errore durante l\'importazione: $e',
+          isError: true,
+        );
       }
     }
   }
@@ -267,8 +273,11 @@ class ImportService {
     );
   }
 
-  static void _showSnack(BuildContext context, String message,
-      {bool isError = false}) {
+  static void _showSnack(
+    BuildContext context,
+    String message, {
+    bool isError = false,
+  }) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -292,9 +301,7 @@ class ImportService {
   /// isolate dedicato, lasciando la UI reattiva; [decodeZipEntries] è
   /// un metodo statico (non una closure) proprio perché è questo il
   /// requisito di `compute` per poter essere invocato nel nuovo isolate.
-  static Future<ImportBundle> _extractFromZipBytes(
-    Uint8List bytes,
-  ) {
+  static Future<ImportBundle> _extractFromZipBytes(Uint8List bytes) {
     return compute(decodeZipBundle, bytes);
   }
 
@@ -341,11 +348,13 @@ class ImportService {
     }
     if (entries > maxZipEntries) {
       throw const FormatException(
-          'ZIP con troppe voci (massimo $maxZipEntries).');
+        'ZIP con troppe voci (massimo $maxZipEntries).',
+      );
     }
     if (cdOffset + cdSize > bytes.length) {
       throw const FormatException(
-          'ZIP non valido: central directory corrotta.');
+        'ZIP non valido: central directory corrotta.',
+      );
     }
 
     var position = cdOffset;
@@ -353,7 +362,8 @@ class ImportService {
     for (var i = 0; i < entries; i++) {
       if (position + 46 > bytes.length || _u32(bytes, position) != 0x02014b50) {
         throw const FormatException(
-            'ZIP non valido: voce del central directory corrotta.');
+          'ZIP non valido: voce del central directory corrotta.',
+        );
       }
 
       final madeBy = _u16(bytes, position + 4);
@@ -369,11 +379,13 @@ class ImportService {
       final nextPosition = nameStart + nameLength + extraLength + commentLength;
       if (nextPosition > bytes.length) {
         throw const FormatException(
-            'ZIP non valido: nome della voce fuori dai limiti.');
+          'ZIP non valido: nome della voce fuori dai limiti.',
+        );
       }
       if (compressedSize == 0xffffffff || uncompressedSize == 0xffffffff) {
         throw const FormatException(
-            'ZIP64 non supportato per l\'importazione.');
+          'ZIP64 non supportato per l\'importazione.',
+        );
       }
       if (flags & 0x0001 != 0) {
         throw const FormatException('ZIP cifrato non supportato.');
@@ -385,7 +397,8 @@ class ImportService {
       // Creatore Unix + permessi 0xA000: symlink. Non va mai importato.
       if (madeBy >> 8 == 3 && ((externalAttributes >> 16) & 0xf000) == 0xa000) {
         throw const FormatException(
-            'Il backup contiene un collegamento simbolico non supportato.');
+          'Il backup contiene un collegamento simbolico non supportato.',
+        );
       }
 
       final rawName = utf8.decode(
@@ -401,7 +414,8 @@ class ImportService {
       totalBytes += uncompressedSize;
       if (totalBytes > maxTotalUncompressedBytes) {
         throw FormatException(
-            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
+          'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).',
+        );
       }
       position = nextPosition;
     }
@@ -432,7 +446,8 @@ class ImportService {
     final archive = ZipDecoder().decodeBytes(bytes);
     if (archive.files.length > maxZipEntries) {
       throw const FormatException(
-          'ZIP con troppe voci (massimo $maxZipEntries).');
+        'ZIP con troppe voci (massimo $maxZipEntries).',
+      );
     }
     final entries = <ImportEntry>[];
     var totalBytes = 0;
@@ -456,7 +471,8 @@ class ImportService {
       totalBytes += contentBytes.length;
       if (totalBytes > maxTotalUncompressedBytes) {
         throw FormatException(
-            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
+          'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).',
+        );
       }
       final raw = utf8.decode(contentBytes, allowMalformed: true);
       try {
@@ -487,13 +503,15 @@ class ImportService {
       // note di `Non_Catalogate/` tornano alla radice (vedi import_parser).
       if (file.isSymbolicLink) {
         throw const FormatException(
-            'Il backup contiene un collegamento simbolico non supportato.');
+          'Il backup contiene un collegamento simbolico non supportato.',
+        );
       }
       final location = mapZipEntryPath(file.name);
       if (location == null) continue;
       if (location.folders.length > maxFolderDepth) {
         throw const FormatException(
-            'Percorso troppo profondo (massimo $maxFolderDepth livelli).');
+          'Percorso troppo profondo (massimo $maxFolderDepth livelli).',
+        );
       }
       final fileName = location.fileName;
 
@@ -501,32 +519,38 @@ class ImportService {
       // `file.content` (che è ciò che decomprime davvero il contenuto).
       if (entries.length >= maxImportedFiles) {
         throw const FormatException(
-            'Troppi file da importare (massimo $maxImportedFiles).');
+          'Troppi file da importare (massimo $maxImportedFiles).',
+        );
       }
       if (file.size > maxEntryBytes) {
         throw FormatException(
-            'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+          'Il file "$fileName" supera ${_mb(maxEntryBytes)}.',
+        );
       }
       final contentBytes = file.content as List<int>;
       // La dimensione dichiarata nell'header può mentire: si ricontrolla
       // quella effettiva.
       if (contentBytes.length > maxEntryBytes) {
         throw FormatException(
-            'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+          'Il file "$fileName" supera ${_mb(maxEntryBytes)}.',
+        );
       }
       totalBytes += contentBytes.length;
       if (totalBytes > maxTotalUncompressedBytes) {
         throw FormatException(
-            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).');
+          'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).',
+        );
       }
       final rawContent = utf8.decode(contentBytes, allowMalformed: true);
 
-      entries.add(ImportEntry(
-        folderPathSegments: location.folders,
-        fileName: fileName,
-        rawContent: rawContent,
-        manifestNote: notesByPath[_normalizeManifestPath(file.name)],
-      ));
+      entries.add(
+        ImportEntry(
+          folderPathSegments: location.folders,
+          fileName: fileName,
+          rawContent: rawContent,
+          manifestNote: notesByPath[_normalizeManifestPath(file.name)],
+        ),
+      );
     }
 
     return ImportBundle(
@@ -549,9 +573,7 @@ class ImportService {
   /// Legge ricorsivamente una cartella scelta dall'utente. Pubblica solo
   /// perché i test la invocano su una cartella temporanea reale.
   @visibleForTesting
-  static Future<List<ImportEntry>> extractFromDirectory(
-    Directory root,
-  ) async {
+  static Future<List<ImportEntry>> extractFromDirectory(Directory root) async {
     final entries = <ImportEntry>[];
     var totalBytes = 0;
 
@@ -570,7 +592,8 @@ class ImportService {
       if (location == null) continue;
       if (location.folders.length > maxFolderDepth) {
         throw const FormatException(
-            'Percorso troppo profondo (massimo $maxFolderDepth livelli).');
+          'Percorso troppo profondo (massimo $maxFolderDepth livelli).',
+        );
       }
       final fileName = location.fileName;
 
@@ -578,17 +601,20 @@ class ImportService {
       // di leggere il file.
       if (entries.length >= maxImportedFiles) {
         throw const FormatException(
-            'Troppi file da importare (massimo $maxImportedFiles).');
+          'Troppi file da importare (massimo $maxImportedFiles).',
+        );
       }
       final size = await entity.length();
       if (size > maxEntryBytes) {
         throw FormatException(
-            'Il file "$fileName" supera ${_mb(maxEntryBytes)}.');
+          'Il file "$fileName" supera ${_mb(maxEntryBytes)}.',
+        );
       }
       totalBytes += size;
       if (totalBytes > maxTotalUncompressedBytes) {
         throw FormatException(
-            'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).');
+          'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).',
+        );
       }
 
       String rawContent;
@@ -599,11 +625,13 @@ class ImportService {
         rawContent = utf8.decode(bytes, allowMalformed: true);
       }
 
-      entries.add(ImportEntry(
-        folderPathSegments: location.folders,
-        fileName: fileName,
-        rawContent: rawContent,
-      ));
+      entries.add(
+        ImportEntry(
+          folderPathSegments: location.folders,
+          fileName: fileName,
+          rawContent: rawContent,
+        ),
+      );
     }
 
     return entries;
@@ -692,25 +720,29 @@ class ImportService {
 
       final manifest = entry.manifestNote;
       if (manifest != null) {
-        notesToImport.add(ImportedNote(
-          title: manifest.title,
-          content: manifest.content,
-          folderId: folderId,
-          createdAt: manifest.createdAt,
-          updatedAt: manifest.updatedAt,
-          isFavorite: manifest.isFavorite,
-          isPinned: manifest.isPinned,
-          orderIndex: manifest.orderIndex,
-        ));
+        notesToImport.add(
+          ImportedNote(
+            title: manifest.title,
+            content: manifest.content,
+            folderId: folderId,
+            createdAt: manifest.createdAt,
+            updatedAt: manifest.updatedAt,
+            isFavorite: manifest.isFavorite,
+            isPinned: manifest.isPinned,
+            orderIndex: manifest.orderIndex,
+          ),
+        );
         continue;
       }
 
       final parsed = parseNoteFile(entry.rawContent, entry.fileName);
-      notesToImport.add(ImportedNote(
-        title: parsed.title,
-        content: parsed.content,
-        folderId: folderId,
-      ));
+      notesToImport.add(
+        ImportedNote(
+          title: parsed.title,
+          content: parsed.content,
+          folderId: folderId,
+        ),
+      );
     }
 
     final importedNotes = await notes.importNotesBulkDetailed(notesToImport);
@@ -733,15 +765,17 @@ class ImportService {
     if (segments.isEmpty) return null;
     if (segments.length > maxFolderDepth) {
       throw const FormatException(
-          'Percorso troppo profondo (massimo $maxFolderDepth livelli).');
+        'Percorso troppo profondo (massimo $maxFolderDepth livelli).',
+      );
     }
 
     String pathKey = '';
     String? parentId;
 
     for (final rawSegment in segments) {
-      final segment =
-          rawSegment.trim().isEmpty ? 'Senza nome' : rawSegment.trim();
+      final segment = rawSegment.trim().isEmpty
+          ? 'Senza nome'
+          : rawSegment.trim();
       pathKey = pathKey.isEmpty
           ? segment.toLowerCase()
           : '$pathKey/${segment.toLowerCase()}';
@@ -772,7 +806,8 @@ class ImportService {
       cache[pathKey] = resolvedId;
       if (cache.length > maxImportedFolders) {
         throw const FormatException(
-            'Troppe cartelle da importare (massimo $maxImportedFolders).');
+          'Troppe cartelle da importare (massimo $maxImportedFolders).',
+        );
       }
       parentId = resolvedId;
     }
@@ -781,7 +816,9 @@ class ImportService {
   }
 
   static List<FolderNode> _siblingsOf(
-      FolderNotifier folders, String? parentId) {
+    FolderNotifier folders,
+    String? parentId,
+  ) {
     if (parentId == null) return folders.rootFolders;
     final parent = folders.findNode(parentId);
     return parent?.children ?? const [];

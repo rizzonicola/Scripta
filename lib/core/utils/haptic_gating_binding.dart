@@ -50,8 +50,9 @@ class _HapticGatingBinaryMessenger implements BinaryMessenger {
   Future<ByteData?>? send(String channel, ByteData? message) {
     if (channel == _platformChannel && message != null) {
       try {
-        final MethodCall call =
-            SystemChannels.platform.codec.decodeMethodCall(message);
+        final MethodCall call = SystemChannels.platform.codec.decodeMethodCall(
+          message,
+        );
         if (call.method == _hapticMethod &&
             !HapticsHelper.gateNativeHapticCall()) {
           // Soppressa: rispondiamo subito con un "successo" vuoto senza

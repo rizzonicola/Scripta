@@ -4,8 +4,9 @@ import 'package:flutter/services.dart';
 import '../theme/color_schemes.dart';
 
 class WindowDecorationService {
-  static const MethodChannel _channel =
-      MethodChannel('io.github.scripta/window');
+  static const MethodChannel _channel = MethodChannel(
+    'io.github.scripta/window',
+  );
 
   // Stato del fullscreen tenuto lato Dart: è il canale stesso a fare da
   // sorgente di verità (il nativo non espone un metodo "getFullScreen"),
@@ -37,7 +38,9 @@ class WindowDecorationService {
   }
 
   static Future<void> updateTitleBarTheme(
-      AppThemePalette palette, Brightness effectiveBrightness) async {
+    AppThemePalette palette,
+    Brightness effectiveBrightness,
+  ) async {
     // La colorazione nativa della title bar è implementata sia su Linux
     // (GTK headerbar) sia su Windows (DWM caption color). Sulle altre
     // piattaforme il canale nativo non esiste: usciamo subito per evitare

@@ -39,13 +39,7 @@ SingleActivator _primary(
   bool alt = false,
 }) {
   final mac = isMacPlatform;
-  return SingleActivator(
-    key,
-    control: !mac,
-    meta: mac,
-    shift: shift,
-    alt: alt,
-  );
+  return SingleActivator(key, control: !mac, meta: mac, shift: shift, alt: alt);
 }
 
 /// Attivatori di [command]; il primo è quello mostrato nelle etichette.

@@ -36,8 +36,9 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
   @override
   void initState() {
     super.initState();
-    _queryController =
-        TextEditingController(text: ref.read(noteSearchProvider).query);
+    _queryController = TextEditingController(
+      text: ref.read(noteSearchProvider).query,
+    );
   }
 
   @override
@@ -92,8 +93,10 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
     // interferire con la digitazione dell'utente quando è lui/lei a
     // scrivere (in quel caso il valore combacia già, per costruzione, non
     // appena il debounce applica la stessa stringa al provider).
-    ref.listen<String>(noteSearchProvider.select((s) => s.query),
-        (previous, next) {
+    ref.listen<String>(noteSearchProvider.select((s) => s.query), (
+      previous,
+      next,
+    ) {
       if (next != _queryController.text) {
         _queryController.value = _queryController.value.copyWith(
           text: next,
@@ -161,8 +164,8 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
               child: Text(
                 hasQuery
                     ? (total == 0
-                        ? l10n.noMatchesFound
-                        : '${activeIndex + 1}/$total')
+                          ? l10n.noMatchesFound
+                          : '${activeIndex + 1}/$total')
                     : '',
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
@@ -176,8 +179,9 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
               tooltip: l10n.previousMatch,
               visualDensity: VisualDensity.compact,
               onPressed: total > 0
-                  ? () =>
-                      ref.read(noteSearchProvider.notifier).previousMatch(total)
+                  ? () => ref
+                        .read(noteSearchProvider.notifier)
+                        .previousMatch(total)
                   : null,
             ),
             IconButton(

@@ -163,17 +163,20 @@ ZipResult buildNotesZip(ZipRequest request) {
   for (final folder in request.folders) {
     final path = resolveFolderPath(folder.id);
     if (path == null) continue;
-    manifestFolders.add(BackupFolder(
-      id: folder.id,
-      name: folder.name,
-      parentId: folder.parentId,
-      path: path,
-    ));
+    manifestFolders.add(
+      BackupFolder(
+        id: folder.id,
+        name: folder.name,
+        parentId: folder.parentId,
+        path: path,
+      ),
+    );
   }
 
   for (final note in request.notes) {
     final folderId = note.folderId;
-    final dir = (folderId == null ? null : resolveFolderPath(folderId)) ??
+    final dir =
+        (folderId == null ? null : resolveFolderPath(folderId)) ??
         uncatalogedFolderName;
     final baseName = sanitizeFileName(
       note.title.trim().isEmpty ? 'Nota_${_shortId(note.id)}' : note.title,
@@ -182,20 +185,26 @@ ZipResult buildNotesZip(ZipRequest request) {
 
     final bytes = utf8.encode(noteMarkdownContent(note.title, note.content));
     archive.addFile(ArchiveFile(path, bytes.length, bytes));
-    manifestNotes.add(BackupNote(
-      path: path,
-      id: note.id,
-      title: note.title,
-      content: note.content,
-      folderId: note.folderId,
-      isFavorite: note.isFavorite,
-      isPinned: note.isPinned,
-      orderIndex: note.orderIndex,
-      createdAt:
-          DateTime.fromMillisecondsSinceEpoch(note.createdAtMs, isUtc: true),
-      updatedAt:
-          DateTime.fromMillisecondsSinceEpoch(note.updatedAtMs, isUtc: true),
-    ));
+    manifestNotes.add(
+      BackupNote(
+        path: path,
+        id: note.id,
+        title: note.title,
+        content: note.content,
+        folderId: note.folderId,
+        isFavorite: note.isFavorite,
+        isPinned: note.isPinned,
+        orderIndex: note.orderIndex,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(
+          note.createdAtMs,
+          isUtc: true,
+        ),
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(
+          note.updatedAtMs,
+          isUtc: true,
+        ),
+      ),
+    );
     noteCount++;
   }
 
@@ -209,11 +218,7 @@ ZipResult buildNotesZip(ZipRequest request) {
   );
   final manifestBytes = utf8.encode(manifest.encode());
   archive.addFile(
-    ArchiveFile(
-      backupManifestFileName,
-      manifestBytes.length,
-      manifestBytes,
-    ),
+    ArchiveFile(backupManifestFileName, manifestBytes.length, manifestBytes),
   );
 
   final encoded = ZipEncoder().encode(archive);

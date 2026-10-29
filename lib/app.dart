@@ -42,11 +42,13 @@ class ScriptaApp extends ConsumerWidget {
     // prima ne causavano comunque la ricostruzione completa a ogni tick,
     // con rigenerazione dei temi e chiamata al canale nativo della title bar.
     final themeMode = ref.watch(settingsProvider.select((s) => s.themeMode));
-    final themeId =
-        ref.watch(settingsProvider.select((s) => s.selectedThemeId));
+    final themeId = ref.watch(
+      settingsProvider.select((s) => s.selectedThemeId),
+    );
     final locale = ref.watch(settingsProvider.select((s) => s.locale));
-    final hapticIntensity =
-        ref.watch(settingsProvider.select((s) => s.hapticIntensity));
+    final hapticIntensity = ref.watch(
+      settingsProvider.select((s) => s.hapticIntensity),
+    );
     final themes = ref.watch(_appThemesProvider);
 
     // HapticsHelper vive fuori dall'albero dei widget (deve essere

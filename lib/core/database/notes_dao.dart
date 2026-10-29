@@ -34,30 +34,30 @@ class NoteRow {
   bool get isDeleted => deletedAt != null;
 
   factory NoteRow.fromMap(Map<String, Object?> m) => NoteRow(
-        id: m['id'] as String,
-        title: m['title'] as String,
-        content: m['content'] as String,
-        folderId: m['folder_id'] as String?,
-        isFavorite: (m['is_favorite'] as int) != 0,
-        isPinned: (m['is_pinned'] as int) != 0,
-        orderIndex: m['order_index'] as int,
-        createdAt: m['created_at'] as int,
-        updatedAt: m['updated_at'] as int,
-        deletedAt: m['deleted_at'] as int?,
-      );
+    id: m['id'] as String,
+    title: m['title'] as String,
+    content: m['content'] as String,
+    folderId: m['folder_id'] as String?,
+    isFavorite: (m['is_favorite'] as int) != 0,
+    isPinned: (m['is_pinned'] as int) != 0,
+    orderIndex: m['order_index'] as int,
+    createdAt: m['created_at'] as int,
+    updatedAt: m['updated_at'] as int,
+    deletedAt: m['deleted_at'] as int?,
+  );
 
   Map<String, Object?> toMap() => {
-        'id': id,
-        'title': title,
-        'content': content,
-        'folder_id': folderId,
-        'is_favorite': isFavorite ? 1 : 0,
-        'is_pinned': isPinned ? 1 : 0,
-        'order_index': orderIndex,
-        'created_at': createdAt,
-        'updated_at': updatedAt,
-        'deleted_at': deletedAt,
-      };
+    'id': id,
+    'title': title,
+    'content': content,
+    'folder_id': folderId,
+    'is_favorite': isFavorite ? 1 : 0,
+    'is_pinned': isPinned ? 1 : 0,
+    'order_index': orderIndex,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+    'deleted_at': deletedAt,
+  };
 
   NoteRow copyWith({
     String? title,
@@ -73,15 +73,17 @@ class NoteRow {
       id: id,
       title: title ?? this.title,
       content: content ?? this.content,
-      folderId:
-          identical(folderId, _unset) ? this.folderId : folderId as String?,
+      folderId: identical(folderId, _unset)
+          ? this.folderId
+          : folderId as String?,
       isFavorite: isFavorite ?? this.isFavorite,
       isPinned: isPinned ?? this.isPinned,
       orderIndex: orderIndex ?? this.orderIndex,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      deletedAt:
-          identical(deletedAt, _unset) ? this.deletedAt : deletedAt as int?,
+      deletedAt: identical(deletedAt, _unset)
+          ? this.deletedAt
+          : deletedAt as int?,
     );
   }
 }
@@ -105,15 +107,22 @@ class NotesDao {
   /// nessuna delle due interroga mai il DB con criteri diversi da questo.
   Future<List<NoteRow>> getActive() async {
     final db = await _db;
-    final rows = await db.query('notes',
-        where: 'deleted_at IS NULL', orderBy: 'updated_at DESC');
+    final rows = await db.query(
+      'notes',
+      where: 'deleted_at IS NULL',
+      orderBy: 'updated_at DESC',
+    );
     return rows.map(NoteRow.fromMap).toList();
   }
 
   Future<NoteRow?> getById(String id) async {
     final db = await _db;
-    final rows =
-        await db.query('notes', where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows = await db.query(
+      'notes',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return NoteRow.fromMap(rows.first);
   }
@@ -126,8 +135,10 @@ class NotesDao {
   /// inutilmente.
   Future<void> upsert(NoteRow row) async {
     final db = await _db;
-    await db.insert('notes', {...row.toMap(), 'dirty': 1},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('notes', {
+      ...row.toMap(),
+      'dirty': 1,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   static int _normalizeCreatedAt(int createdAt, int updatedAt) {
@@ -192,15 +203,20 @@ class NotesDao {
         // La creazione non può essere posteriore a una modifica conosciuta:
         // se il remoto manca del campo (server vecchio) o ha una data
         // incoerente, si usa updated_at come stima migliore.
-        final createdAt =
-            _normalizeCreatedAt(remote.createdAt, remote.updatedAt);
-        batch.insert(
-          'notes',
-          {...remote.toMap(), 'created_at': createdAt, 'dirty': 0},
-          conflictAlgorithm: ConflictAlgorithm.replace,
+        final createdAt = _normalizeCreatedAt(
+          remote.createdAt,
+          remote.updatedAt,
         );
-        local[remote.id] =
-            (createdAt: createdAt, updatedAt: remote.updatedAt, dirty: false);
+        batch.insert('notes', {
+          ...remote.toMap(),
+          'created_at': createdAt,
+          'dirty': 0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        local[remote.id] = (
+          createdAt: createdAt,
+          updatedAt: remote.updatedAt,
+          dirty: false,
+        );
       }
       await batch.commit(noResult: true);
     });
@@ -214,8 +230,10 @@ class NotesDao {
     final db = await _db;
     final batch = db.batch();
     for (final row in rows) {
-      batch.insert('notes', {...row.toMap(), 'dirty': 1},
-          conflictAlgorithm: ConflictAlgorithm.replace);
+      batch.insert('notes', {
+        ...row.toMap(),
+        'dirty': 1,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }
@@ -236,8 +254,12 @@ class NotesDao {
     final db = await _db;
     final batch = db.batch();
     for (final e in idToPushedUpdatedAt.entries) {
-      batch.update('notes', {'dirty': 0},
-          where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
+      batch.update(
+        'notes',
+        {'dirty': 0},
+        where: 'id = ? AND updated_at = ?',
+        whereArgs: [e.key, e.value],
+      );
     }
     await batch.commit(noResult: true);
   }
@@ -299,8 +321,11 @@ class NotesDao {
       );
       if (rows.isEmpty) return;
       final map = {...rows.first, 'id': newId, 'dirty': 1};
-      await txn.insert('notes', map,
-          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert(
+        'notes',
+        map,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
       await txn.delete('notes', where: 'id = ?', whereArgs: [oldId]);
     });
   }

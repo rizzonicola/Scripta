@@ -16,19 +16,22 @@ class SyncMetaDao {
 
   Future<int> getSyncCursor() async {
     final db = await _db;
-    final rows = await db.query('sync_meta',
-        where: 'key = ?', whereArgs: [_cursorKey], limit: 1);
+    final rows = await db.query(
+      'sync_meta',
+      where: 'key = ?',
+      whereArgs: [_cursorKey],
+      limit: 1,
+    );
     if (rows.isEmpty) return 0;
     return int.tryParse(rows.first['value'] as String) ?? 0;
   }
 
   Future<void> setSyncCursor(int millis) async {
     final db = await _db;
-    await db.insert(
-      'sync_meta',
-      {'key': _cursorKey, 'value': millis.toString()},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('sync_meta', {
+      'key': _cursorKey,
+      'value': millis.toString(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Identità dell'ultimo account autenticato su questo dispositivo
@@ -49,11 +52,10 @@ class SyncMetaDao {
 
   Future<void> setAccountIdentity(String identity) async {
     final db = await _db;
-    await db.insert(
-      'sync_meta',
-      {'key': _accountIdentityKey, 'value': identity},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('sync_meta', {
+      'key': _accountIdentityKey,
+      'value': identity,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Azzera cursore e metadati di sync, conservando l'identità del NUOVO

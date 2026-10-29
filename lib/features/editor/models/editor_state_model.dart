@@ -1,7 +1,4 @@
-enum EditorMode {
-  edit,
-  readOnly,
-}
+enum EditorMode { edit, readOnly }
 
 class EditorStateModel {
   final EditorMode mode;

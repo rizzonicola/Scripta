@@ -240,13 +240,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     Future<void> Function(Duration)? retryWait,
     Random? random,
     Duration loginBudget = _defaultLoginBudget,
-  })  : _foldersDao = foldersDao ?? FoldersDao(),
-        _notesDao = notesDao ?? NotesDao(),
-        _syncMetaDao = syncMetaDao ?? SyncMetaDao(),
-        _retryWait = retryWait ?? Future<void>.delayed,
-        _random = random ?? Random(),
-        _loginBudget = loginBudget,
-        super(const SyncConfig()) {
+  }) : _foldersDao = foldersDao ?? FoldersDao(),
+       _notesDao = notesDao ?? NotesDao(),
+       _syncMetaDao = syncMetaDao ?? SyncMetaDao(),
+       _retryWait = retryWait ?? Future<void>.delayed,
+       _random = random ?? Random(),
+       _loginBudget = loginBudget,
+       super(const SyncConfig()) {
     initialized = _init();
   }
 
@@ -403,12 +403,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// chiamante il compito di chiudere la sessione; un errore di rete/5xx non
   /// cancella le credenziali.
   Future<T> _authorizedRequest<T>(
-      Future<T> Function(String token) request) async {
+    Future<T> Function(String token) request,
+  ) async {
     final generation = _sessionGeneration;
     final token = await _secureStorage.getAuthToken();
     if (!_isCurrentSession(generation) || token == null || token.isEmpty) {
       throw const SyncApiException(
-          'Sessione scaduta o non autorizzata', 401, [], 'invalid_token');
+        'Sessione scaduta o non autorizzata',
+        401,
+        [],
+        'invalid_token',
+      );
     }
 
     try {
@@ -506,8 +511,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // lo stato se il server non risponde. Senza un valore salvato (primo
     // avvio della 1.0.3) si parte ottimisticamente Online quando c'è una
     // sessione, esattamente come dopo una login riuscita.
-    final initialOnline =
-        hasToken && savedServerUrl.isNotEmpty ? (savedOnline ?? true) : false;
+    final initialOnline = hasToken && savedServerUrl.isNotEmpty
+        ? (savedOnline ?? true)
+        : false;
     _lastPersistedOnline = initialOnline;
 
     state = state.copyWith(
@@ -539,27 +545,30 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // If authenticated and launch sync enabled, trigger sync & fetch remote settings
     if (hasToken && launchSync && mounted) {
       // Defer slightly to let UI settle
-      unawaited(Future.delayed(const Duration(milliseconds: 500), () {
-        if (!mounted) return;
-        // Indipendenti: le impostazioni cambiano solo l'aspetto, la sync solo
-        // i dati. Attendere le prime (fino a 33 s su rete morta) prima di
-        // avviare la seconda ritardava l'invio di modifiche locali senza
-        // alcun motivo. Un errore dell'una non impedisce più l'altra (prima,
-        // se il fetch delle impostazioni lanciava, la sync non partiva).
-        // Se le impostazioni rispondono 401 la sync fa comunque la sua
-        // richiesta e riceve lo stesso 401, che ripulisce le credenziali come
-        // prima: nessun dato locale viene toccato (il 401 non scrive righe).
-        //
-        // Marker per DevTools (vedi PerfMarks): non cambiano il comportamento.
-        // `launchRequests` segna il momento in cui partono insieme; per il
-        // momento esatto del POST vale il protocollo M8 (`tshark`).
-        PerfMarks.mark('sync.launchRequests');
-        unawaited(
-            PerfMarks.timeAsync('sync.settings', fetchRemoteUserSettings));
-        // `sync.initial` copre l'intera `triggerSync`, compresi gli eventuali
-        // giri di recupero (fino a 3 giri): non è il tempo sul filo.
-        unawaited(PerfMarks.timeAsync('sync.initial', triggerSync));
-      }));
+      unawaited(
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (!mounted) return;
+          // Indipendenti: le impostazioni cambiano solo l'aspetto, la sync solo
+          // i dati. Attendere le prime (fino a 33 s su rete morta) prima di
+          // avviare la seconda ritardava l'invio di modifiche locali senza
+          // alcun motivo. Un errore dell'una non impedisce più l'altra (prima,
+          // se il fetch delle impostazioni lanciava, la sync non partiva).
+          // Se le impostazioni rispondono 401 la sync fa comunque la sua
+          // richiesta e riceve lo stesso 401, che ripulisce le credenziali come
+          // prima: nessun dato locale viene toccato (il 401 non scrive righe).
+          //
+          // Marker per DevTools (vedi PerfMarks): non cambiano il comportamento.
+          // `launchRequests` segna il momento in cui partono insieme; per il
+          // momento esatto del POST vale il protocollo M8 (`tshark`).
+          PerfMarks.mark('sync.launchRequests');
+          unawaited(
+            PerfMarks.timeAsync('sync.settings', fetchRemoteUserSettings),
+          );
+          // `sync.initial` copre l'intera `triggerSync`, compresi gli eventuali
+          // giri di recupero (fino a 3 giri): non è il tempo sul filo.
+          unawaited(PerfMarks.timeAsync('sync.initial', triggerSync));
+        }),
+      );
     }
   }
 
@@ -668,8 +677,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   /// [_retryDelayFor]) e rispetta `Retry-After` di un 503. La somma delle attese
   /// non supera [_retryBudget]: se la prossima non ci sta, si rinuncia subito.
   Future<T> _withNetworkRetry<T>(Future<T> Function() action) async {
-    Object lastError =
-        const SyncApiException('Errore di connessione sconosciuto');
+    Object lastError = const SyncApiException(
+      'Errore di connessione sconosciuto',
+    );
     var waited = Duration.zero;
 
     for (int attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
@@ -705,8 +715,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     required String password,
   }) async {
     final deadline = DateTime.now().add(_loginBudget);
-    Object lastError =
-        const SyncApiException('Errore di connessione sconosciuto');
+    Object lastError = const SyncApiException(
+      'Errore di connessione sconosciuto',
+    );
 
     for (var attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
       final remaining = deadline.difference(DateTime.now());
@@ -714,11 +725,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
       try {
         return await _apiService
-            .login(
-              baseUrl: serverUrl,
-              username: username,
-              password: password,
-            )
+            .login(baseUrl: serverUrl, username: username, password: password)
             .timeout(remaining);
       } catch (e) {
         lastError = e;
@@ -866,7 +873,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         // l'identità in `sync_meta` non esisteva ancora).
         final switchedByIdentity =
             previousIdentity != null && previousIdentity != newIdentity;
-        final switchedByLegacy = previousIdentity == null &&
+        final switchedByLegacy =
+            previousIdentity == null &&
             previousUserId != null &&
             previousUserId.isNotEmpty &&
             (previousUserId != response.userId ||
@@ -1043,18 +1051,15 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!state.isAuthenticated || !state.syncOnInactivity) return;
 
     _inactivityTimer?.cancel();
-    _inactivityTimer = Timer(
-      Duration(seconds: state.inactivitySeconds),
-      () {
-        // Re-check the toggle at execution time too: it may have been
-        // disabled after the timer was scheduled but before it fired.
-        // Se una sync è già in corso, triggerSync() accoda un giro di
-        // recupero invece di perdere la richiesta (vedi _resyncRequested).
-        if (mounted && state.syncOnInactivity) {
-          unawaited(triggerSync());
-        }
-      },
-    );
+    _inactivityTimer = Timer(Duration(seconds: state.inactivitySeconds), () {
+      // Re-check the toggle at execution time too: it may have been
+      // disabled after the timer was scheduled but before it fired.
+      // Se una sync è già in corso, triggerSync() accoda un giro di
+      // recupero invece di perdere la richiesta (vedi _resyncRequested).
+      if (mounted && state.syncOnInactivity) {
+        unawaited(triggerSync());
+      }
+    });
   }
 
   /// Hook for note change / editor close (debounced by 600ms to avoid bursts during rapid navigation)
@@ -1078,17 +1083,19 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     if (!state.isAuthenticated) return;
 
     _folderStructureDebounceTimer?.cancel();
-    _folderStructureDebounceTimer =
-        Timer(const Duration(milliseconds: 600), () {
-      if (!mounted) return;
-      unawaited(() async {
-        // La UI aggiorna lo stato in modo sincrono ma la scrittura SQLite è
-        // accodata: senza questa attesa la sync può leggere `dirty` prima
-        // che la nuova cartella/rinomina sia davvero persistita.
-        await _ref.read(folderProvider.notifier).flushPendingWrites();
-        if (mounted) await triggerSync();
-      }());
-    });
+    _folderStructureDebounceTimer = Timer(
+      const Duration(milliseconds: 600),
+      () {
+        if (!mounted) return;
+        unawaited(() async {
+          // La UI aggiorna lo stato in modo sincrono ma la scrittura SQLite è
+          // accodata: senza questa attesa la sync può leggere `dirty` prima
+          // che la nuova cartella/rinomina sia davvero persistita.
+          await _ref.read(folderProvider.notifier).flushPendingWrites();
+          if (mounted) await triggerSync();
+        }());
+      },
+    );
   }
 
   /// Hook for app lifecycle (pause / exit)
@@ -1104,7 +1111,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _ref.read(settingsProvider.notifier).flushRemotePush();
     if (state.syncOnAppLifecycle) {
       unawaited(
-          triggerSync()); // no-op se non autenticati; accoda se già in corso
+        triggerSync(),
+      ); // no-op se non autenticati; accoda se già in corso
     }
   }
 
@@ -1122,48 +1130,48 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   }
 
   FolderChangeDto _toFolderDto(FolderRow r) => FolderChangeDto(
-        id: r.id,
-        name: r.name,
-        parentId: r.parentId,
-        updatedAt: r.updatedAt,
-        deletedAt: r.deletedAt,
-      );
+    id: r.id,
+    name: r.name,
+    parentId: r.parentId,
+    updatedAt: r.updatedAt,
+    deletedAt: r.deletedAt,
+  );
 
   NoteChangeDto _toNoteDto(NoteRow r) => NoteChangeDto(
-        id: r.id,
-        title: r.title,
-        content: r.content,
-        folderId: r.folderId,
-        isFavorite: r.isFavorite,
-        isPinned: r.isPinned,
-        orderIndex: r.orderIndex,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-        deletedAt: r.deletedAt,
-      );
+    id: r.id,
+    title: r.title,
+    content: r.content,
+    folderId: r.folderId,
+    isFavorite: r.isFavorite,
+    isPinned: r.isPinned,
+    orderIndex: r.orderIndex,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    deletedAt: r.deletedAt,
+  );
 
   FolderRow _fromFolderDto(FolderChangeDto d) => FolderRow(
-        id: d.id,
-        name: d.name,
-        parentId: d.parentId,
-        isExpanded:
-            true, // valore di default: applyRemoteLWW preserva quello locale se già presente
-        updatedAt: d.updatedAt,
-        deletedAt: d.deletedAt,
-      );
+    id: d.id,
+    name: d.name,
+    parentId: d.parentId,
+    isExpanded:
+        true, // valore di default: applyRemoteLWW preserva quello locale se già presente
+    updatedAt: d.updatedAt,
+    deletedAt: d.deletedAt,
+  );
 
   NoteRow _fromNoteDto(NoteChangeDto d) => NoteRow(
-        id: d.id,
-        title: d.title,
-        content: d.content,
-        folderId: d.folderId,
-        isFavorite: d.isFavorite,
-        isPinned: d.isPinned,
-        orderIndex: d.orderIndex,
-        createdAt: d.createdAt > 0 ? d.createdAt : d.updatedAt,
-        updatedAt: d.updatedAt,
-        deletedAt: d.deletedAt,
-      );
+    id: d.id,
+    title: d.title,
+    content: d.content,
+    folderId: d.folderId,
+    isFavorite: d.isFavorite,
+    isPinned: d.isPinned,
+    orderIndex: d.orderIndex,
+    createdAt: d.createdAt > 0 ? d.createdAt : d.updatedAt,
+    updatedAt: d.updatedAt,
+    deletedAt: d.deletedAt,
+  );
 
   /// Sincronizza cartelle e note bidirezionalmente con il server
   /// (Last-Write-Wins), interamente ID-based.
@@ -1357,19 +1365,23 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           //    round-trip). 2) Applica la risposta (che include anche la
           //    versione del server per i conflitti persi). Ordine importante:
           //    markSynced prima, così l'eco del server sostituisce le righe.
-          await _foldersDao
-              .markSynced({for (final f in dirtyFolders) f.id: f.updatedAt});
-          await _notesDao
-              .markSynced({for (final n in dirtyNotes) n.id: n.updatedAt});
+          await _foldersDao.markSynced({
+            for (final f in dirtyFolders) f.id: f.updatedAt,
+          });
+          await _notesDao.markSynced({
+            for (final n in dirtyNotes) n.id: n.updatedAt,
+          });
 
           if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
             return false;
           }
 
           await _foldersDao.applyRemoteLWWBatch(
-              response.folders.map(_fromFolderDto).toList());
-          await _notesDao
-              .applyRemoteLWWBatch(response.notes.map(_fromNoteDto).toList());
+            response.folders.map(_fromFolderDto).toList(),
+          );
+          await _notesDao.applyRemoteLWWBatch(
+            response.notes.map(_fromNoteDto).toList(),
+          );
 
           if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
             return false;
@@ -1402,10 +1414,12 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             // Cursore più vecchio della retention dei tombstone del server:
             // la risposta è lo stato completo. Le righe pulite che il server
             // non elenca sono state eliminate mentre eravamo offline.
-            await _foldersDao
-                .deleteCleanNotIn({for (final f in response.folders) f.id});
-            await _notesDao
-                .deleteCleanNotIn({for (final n in response.notes) n.id});
+            await _foldersDao.deleteCleanNotIn({
+              for (final f in response.folders) f.id,
+            });
+            await _notesDao.deleteCleanNotIn({
+              for (final n in response.notes) n.id,
+            });
           }
 
           // Tombstone locali ormai inutili (confermati dal server o ricevuti
@@ -1427,7 +1441,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           // archivio a ogni giro, anche con risposta vuota, era puro lavoro
           // sprecato. markSynced e la purge dei tombstone non toccano nulla
           // che la UI mostri.
-          final localDbChanged = repaired ||
+          final localDbChanged =
+              repaired ||
               response.fullResync ||
               response.folders.isNotEmpty ||
               response.notes.isNotEmpty;
@@ -1439,7 +1454,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           final syncedAt = DateTime.now();
           final prefs = await SharedPreferences.getInstance();
           await prefs.setInt(
-              _prefLastSyncTime, syncedAt.millisecondsSinceEpoch);
+            _prefLastSyncTime,
+            syncedAt.millisecondsSinceEpoch,
+          );
 
           if (!_isCurrentSession(generation) ||
               serverUrl != state.serverUrl ||
@@ -1485,32 +1502,32 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       final nextOnline = _serverRespondedTo(e)
           ? true
           : isLocalDbError
-              ? state.isOnline
-              : false;
+          ? state.isOnline
+          : false;
       state = state.copyWith(
-        isAuthenticated:
-            isAuthError || isBlocked ? false : state.isAuthenticated,
+        isAuthenticated: isAuthError || isBlocked
+            ? false
+            : state.isAuthenticated,
         isOnline: nextOnline,
         isSyncing: false,
         lastError: () => e is SyncApiException ? e.message : e.toString(),
         lastSyncMessage: () => isBlocked
             ? 'Account bloccato: contatta l\'amministratore'
             : isAuthError
-                ? 'Sessione scaduta: effettua nuovamente l\'accesso'
-                : isRateLimited
-                    ? 'Sincronizzazione non riuscita: limite di richieste raggiunto, riprova tra poco'
-                    : isRejected
-                        ? 'Sincronizzazione non riuscita: alcuni elementi non sono validi per il server'
-                        : isBadResponse
-                            ? 'Sincronizzazione non riuscita: risposta del server non valida'
-                            : isLocalDbError
-                                ? 'Sincronizzazione non riuscita: errore del database locale'
-                                : isServerBusy
-                                    ? 'Sincronizzazione non riuscita: server temporaneamente occupato'
-                                    : e is SyncApiException &&
-                                            e.statusCode != null
-                                        ? 'Sincronizzazione non riuscita: errore del server'
-                                        : 'Sincronizzazione non riuscita: server non raggiungibile',
+            ? 'Sessione scaduta: effettua nuovamente l\'accesso'
+            : isRateLimited
+            ? 'Sincronizzazione non riuscita: limite di richieste raggiunto, riprova tra poco'
+            : isRejected
+            ? 'Sincronizzazione non riuscita: alcuni elementi non sono validi per il server'
+            : isBadResponse
+            ? 'Sincronizzazione non riuscita: risposta del server non valida'
+            : isLocalDbError
+            ? 'Sincronizzazione non riuscita: errore del database locale'
+            : isServerBusy
+            ? 'Sincronizzazione non riuscita: server temporaneamente occupato'
+            : e is SyncApiException && e.statusCode != null
+            ? 'Sincronizzazione non riuscita: errore del server'
+            : 'Sincronizzazione non riuscita: server non raggiungibile',
       );
       _rememberOnline(nextOnline);
       if (isAuthError || isBlocked) {
@@ -1562,8 +1579,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         if (row == null || parentId == null) continue;
         final parent = await _foldersDao.getById(parentId);
         if (parent == null || parent.deletedAt != null) {
-          await _foldersDao
-              .upsert(row.copyWith(parentId: null, updatedAt: now));
+          await _foldersDao.upsert(
+            row.copyWith(parentId: null, updatedAt: now),
+          );
         }
       }
     }
@@ -1580,20 +1598,21 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     try {
       final remoteSettings = await _authorizedRequest(
         (token) => _withNetworkRetry(
-          () => _apiService.getUserSettings(
-            baseUrl: serverUrl,
-            token: token,
-          ),
+          () => _apiService.getUserSettings(baseUrl: serverUrl, token: token),
         ),
       );
       if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
         return;
       }
       _networkSuccessCount++;
-      unawaited(_ref.read(settingsProvider.notifier).applyRemoteSettings(
-            remoteSettings,
-            expectedRevision: settingsRevision,
-          ));
+      unawaited(
+        _ref
+            .read(settingsProvider.notifier)
+            .applyRemoteSettings(
+              remoteSettings,
+              expectedRevision: settingsRevision,
+            ),
+      );
     } catch (e) {
       if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
         return;

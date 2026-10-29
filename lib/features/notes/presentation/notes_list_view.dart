@@ -19,10 +19,7 @@ import 'note_card.dart';
 class NotesListView extends ConsumerStatefulWidget {
   final void Function(NoteModel note)? onNoteSelected;
 
-  const NotesListView({
-    super.key,
-    this.onNoteSelected,
-  });
+  const NotesListView({super.key, this.onNoteSelected});
 
   @override
   ConsumerState<NotesListView> createState() => _NotesListViewState();
@@ -92,7 +89,10 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
   }
 
   Widget _buildSortMenu(
-      AppLocalizations l10n, ThemeData theme, NoteSortOrder activeSort) {
+    AppLocalizations l10n,
+    ThemeData theme,
+    NoteSortOrder activeSort,
+  ) {
     ContextMenuEntry sortEntry(
       String label,
       IconData icon,
@@ -121,18 +121,36 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
             buttonContext,
             box.localToGlobal(Offset(0, box.size.height + 4)),
             [
-              sortEntry(l10n.sortUpdatedDesc, Icons.history_rounded,
-                  NoteSortOrder.updatedDesc),
-              sortEntry(l10n.sortUpdatedAsc, Icons.update_rounded,
-                  NoteSortOrder.updatedAsc),
-              sortEntry(l10n.sortCreatedDesc, Icons.calendar_today_rounded,
-                  NoteSortOrder.createdDesc),
-              sortEntry(l10n.sortCreatedAsc, Icons.event_note_rounded,
-                  NoteSortOrder.createdAsc),
-              sortEntry(l10n.sortTitleAsc, Icons.sort_by_alpha_rounded,
-                  NoteSortOrder.titleAsc),
-              sortEntry(l10n.sortTitleDesc, Icons.sort_by_alpha_rounded,
-                  NoteSortOrder.titleDesc),
+              sortEntry(
+                l10n.sortUpdatedDesc,
+                Icons.history_rounded,
+                NoteSortOrder.updatedDesc,
+              ),
+              sortEntry(
+                l10n.sortUpdatedAsc,
+                Icons.update_rounded,
+                NoteSortOrder.updatedAsc,
+              ),
+              sortEntry(
+                l10n.sortCreatedDesc,
+                Icons.calendar_today_rounded,
+                NoteSortOrder.createdDesc,
+              ),
+              sortEntry(
+                l10n.sortCreatedAsc,
+                Icons.event_note_rounded,
+                NoteSortOrder.createdAsc,
+              ),
+              sortEntry(
+                l10n.sortTitleAsc,
+                Icons.sort_by_alpha_rounded,
+                NoteSortOrder.titleAsc,
+              ),
+              sortEntry(
+                l10n.sortTitleDesc,
+                Icons.sort_by_alpha_rounded,
+                NoteSortOrder.titleDesc,
+              ),
               const ContextMenuEntry.divider(),
               ContextMenuEntry(
                 label: l10n.sortCustom,
@@ -158,16 +176,13 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     // Il provider è la fonte di verità: se la query viene cambiata altrove
     // (es. "cancella ricerca" da un'altra vista), il campo visibile resta
     // allineato invece di mostrare testo vuoto con la lista ancora filtrata.
-    ref.listen<String>(
-      notesProvider.select((s) => s.searchQuery),
-      (_, next) {
-        if (_searchController.text == next) return;
-        _searchController.value = TextEditingValue(
-          text: next,
-          selection: TextSelection.collapsed(offset: next.length),
-        );
-      },
-    );
+    ref.listen<String>(notesProvider.select((s) => s.searchQuery), (_, next) {
+      if (_searchController.text == next) return;
+      _searchController.value = TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: next.length),
+      );
+    });
 
     // Ctrl+Shift+F: porta il focus sul campo di ricerca e seleziona il testo
     // già presente, così si può riscrivere subito.
@@ -183,10 +198,12 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     final notes = ref.watch(filteredNotesProvider);
     final sortOrder = ref.watch(notesProvider.select((s) => s.sortOrder));
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
-    final selectedFolderId =
-        ref.watch(folderProvider.select((s) => s.selectedFolderId));
-    final searchQueryEmpty =
-        ref.watch(notesProvider.select((s) => s.searchQuery.trim().isEmpty));
+    final selectedFolderId = ref.watch(
+      folderProvider.select((s) => s.selectedFolderId),
+    );
+    final searchQueryEmpty = ref.watch(
+      notesProvider.select((s) => s.searchQuery.trim().isEmpty),
+    );
 
     final isCustomReorderActive =
         sortOrder == NoteSortOrder.custom && searchQueryEmpty;
@@ -236,8 +253,10 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                 isDense: true,
                 filled: true,
                 fillColor: theme.surfaceElevated,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                   borderSide: BorderSide.none,
@@ -251,12 +270,8 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
           ContextMenuRegion(
             enabled: isDesktopPlatform,
             behavior: HitTestBehavior.opaque,
-            entriesBuilder: (ctx) => _listMenuEntries(
-              ctx,
-              l10n,
-              sortOrder,
-              selectedFolderId,
-            ),
+            entriesBuilder: (ctx) =>
+                _listMenuEntries(ctx, l10n, sortOrder, selectedFolderId),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 12, 8),
               child: Row(
@@ -303,86 +318,87 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
             child: ContextMenuRegion(
               enabled: isDesktopPlatform,
               behavior: HitTestBehavior.opaque,
-              entriesBuilder: (ctx) => _listMenuEntries(
-                ctx,
-                l10n,
-                sortOrder,
-                selectedFolderId,
-              ),
+              entriesBuilder: (ctx) =>
+                  _listMenuEntries(ctx, l10n, sortOrder, selectedFolderId),
               child: notes.isEmpty
                   ? _buildEmptyState(context, l10n, theme)
                   : isCustomReorderActive
-                      ? ReorderableListView.builder(
-                          buildDefaultDragHandles: false,
-                          proxyDecorator: (child, index, animation) {
-                            return AnimatedBuilder(
-                              animation: animation,
-                              builder: (context, child) {
-                                final lift = Curves.easeOutCubic
-                                    .transform(animation.value);
-                                return Transform.scale(
-                                  scale: 1 + (0.02 * lift),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    elevation: 10 * lift,
-                                    borderRadius: BorderRadius.circular(12),
-                                    shadowColor:
-                                        Colors.black.withValues(alpha: 0.3),
-                                    child: child,
-                                  ),
-                                );
-                              },
-                              child: child,
+                  ? ReorderableListView.builder(
+                      buildDefaultDragHandles: false,
+                      proxyDecorator: (child, index, animation) {
+                        return AnimatedBuilder(
+                          animation: animation,
+                          builder: (context, child) {
+                            final lift = Curves.easeOutCubic.transform(
+                              animation.value,
+                            );
+                            return Transform.scale(
+                              scale: 1 + (0.02 * lift),
+                              child: Material(
+                                color: Colors.transparent,
+                                elevation: 10 * lift,
+                                borderRadius: BorderRadius.circular(12),
+                                shadowColor: Colors.black.withValues(
+                                  alpha: 0.3,
+                                ),
+                                child: child,
+                              ),
                             );
                           },
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          itemCount: notes.length,
-                          onReorderItem: (oldIndex, newIndex) {
-                            // onReorderItem fornisce newIndex già corretto per
-                            // la rimozione dell'elemento; reorderNotes usa la
-                            // semantica classica di onReorder (la correzione
-                            // avviene al suo interno), quindi la si ripristina.
-                            final legacyNewIndex =
-                                newIndex > oldIndex ? newIndex + 1 : newIndex;
-                            // Gli indici si riferiscono alla lista MOSTRATA
-                            // (filtrata per cartella): si passano anche gli id
-                            // visibili, così il provider sposta la nota giusta.
-                            ref.read(notesProvider.notifier).reorderNotes(
-                                  oldIndex,
-                                  legacyNewIndex,
-                                  visibleIds: notes.map((n) => n.id).toList(),
-                                );
-                          },
-                          itemBuilder: (context, index) {
-                            final note = notes[index];
-                            final isSelected = activeNoteId == note.id;
+                          child: child,
+                        );
+                      },
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: notes.length,
+                      onReorderItem: (oldIndex, newIndex) {
+                        // onReorderItem fornisce newIndex già corretto per
+                        // la rimozione dell'elemento; reorderNotes usa la
+                        // semantica classica di onReorder (la correzione
+                        // avviene al suo interno), quindi la si ripristina.
+                        final legacyNewIndex = newIndex > oldIndex
+                            ? newIndex + 1
+                            : newIndex;
+                        // Gli indici si riferiscono alla lista MOSTRATA
+                        // (filtrata per cartella): si passano anche gli id
+                        // visibili, così il provider sposta la nota giusta.
+                        ref
+                            .read(notesProvider.notifier)
+                            .reorderNotes(
+                              oldIndex,
+                              legacyNewIndex,
+                              visibleIds: notes.map((n) => n.id).toList(),
+                            );
+                      },
+                      itemBuilder: (context, index) {
+                        final note = notes[index];
+                        final isSelected = activeNoteId == note.id;
 
-                            return NoteCard(
-                              key: ValueKey(note.id),
-                              note: note,
-                              isSelected: isSelected,
-                              showDragHandle: true,
-                              dragIndex: index,
-                              onTap: () => _openNote(note),
-                            );
-                          },
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          itemCount: notes.length,
-                          itemBuilder: (context, index) {
-                            final note = notes[index];
-                            final isSelected = activeNoteId == note.id;
+                        return NoteCard(
+                          key: ValueKey(note.id),
+                          note: note,
+                          isSelected: isSelected,
+                          showDragHandle: true,
+                          dragIndex: index,
+                          onTap: () => _openNote(note),
+                        );
+                      },
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: notes.length,
+                      itemBuilder: (context, index) {
+                        final note = notes[index];
+                        final isSelected = activeNoteId == note.id;
 
-                            return NoteCard(
-                              key: ValueKey(note.id),
-                              note: note,
-                              isSelected: isSelected,
-                              showDragHandle: false,
-                              onTap: () => _openNote(note),
-                            );
-                          },
-                        ),
+                        return NoteCard(
+                          key: ValueKey(note.id),
+                          note: note,
+                          isSelected: isSelected,
+                          showDragHandle: false,
+                          onTap: () => _openNote(note),
+                        );
+                      },
+                    ),
             ),
           ),
         ],
@@ -442,7 +458,10 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
   }
 
   Widget _buildEmptyState(
-      BuildContext context, AppLocalizations l10n, ThemeData theme) {
+    BuildContext context,
+    AppLocalizations l10n,
+    ThemeData theme,
+  ) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),

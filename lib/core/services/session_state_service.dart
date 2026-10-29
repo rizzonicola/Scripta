@@ -45,8 +45,9 @@ class SessionSnapshot {
 /// sessione: "Modifica", "Tutte le note", prima nota) è quello usato dai
 /// test e da `ProviderContainer()` senza override; `main()` lo sostituisce con
 /// quello letto da disco.
-final sessionSnapshotProvider =
-    Provider<SessionSnapshot>((ref) => const SessionSnapshot());
+final sessionSnapshotProvider = Provider<SessionSnapshot>(
+  (ref) => const SessionSnapshot(),
+);
 
 /// Lettura e scrittura su SharedPreferences dell'ultima posizione dell'utente.
 ///
@@ -69,8 +70,9 @@ class SessionStateService {
     try {
       final prefs = await SharedPreferences.getInstance();
       return SessionSnapshot(
-        editorMode:
-            _parseMode(prefs.getString(AppConstants.prefSessionEditorMode)),
+        editorMode: _parseMode(
+          prefs.getString(AppConstants.prefSessionEditorMode),
+        ),
         folderId: _cleanId(prefs.getString(AppConstants.prefSessionFolderId)),
         noteId: _cleanId(prefs.getString(AppConstants.prefSessionNoteId)),
         mobileEditorOpen:
@@ -78,13 +80,15 @@ class SessionStateService {
       );
     } catch (e, st) {
       debugPrint(
-          'SessionStateService: ripristino della sessione non riuscito: $e\n$st');
+        'SessionStateService: ripristino della sessione non riuscito: $e\n$st',
+      );
       return const SessionSnapshot();
     }
   }
 
-  static Future<void> saveEditorMode(EditorMode mode) => _write((prefs) =>
-      prefs.setString(AppConstants.prefSessionEditorMode, mode.name));
+  static Future<void> saveEditorMode(EditorMode mode) => _write(
+    (prefs) => prefs.setString(AppConstants.prefSessionEditorMode, mode.name),
+  );
 
   /// `null` = "Tutte le note": la chiave viene rimossa.
   static Future<void> saveFolderId(String? folderId) =>
@@ -95,8 +99,9 @@ class SessionStateService {
   static Future<void> saveNoteId(String? noteId) =>
       _writeNullableString(AppConstants.prefSessionNoteId, noteId);
 
-  static Future<void> saveMobileEditorOpen(bool isOpen) => _write((prefs) =>
-      prefs.setBool(AppConstants.prefSessionMobileEditorOpen, isOpen));
+  static Future<void> saveMobileEditorOpen(bool isOpen) => _write(
+    (prefs) => prefs.setBool(AppConstants.prefSessionMobileEditorOpen, isOpen),
+  );
 
   static EditorMode _parseMode(String? name) {
     for (final mode in EditorMode.values) {
@@ -116,13 +121,15 @@ class SessionStateService {
   }
 
   static Future<void> _write(
-      Future<bool> Function(SharedPreferences prefs) op) async {
+    Future<bool> Function(SharedPreferences prefs) op,
+  ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await op(prefs);
     } catch (e, st) {
       debugPrint(
-          'SessionStateService: salvataggio della sessione non riuscito: $e\n$st');
+        'SessionStateService: salvataggio della sessione non riuscito: $e\n$st',
+      );
     }
   }
 }

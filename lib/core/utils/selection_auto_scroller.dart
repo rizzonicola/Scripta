@@ -59,8 +59,9 @@ class SelectionAutoScroller {
     this.maxSpeed = 1100.0,
     this.overshootForMaxSpeed = 48.0,
     SelectionPointerDispatcher? dispatchPointerEvent,
-  }) : _dispatch = dispatchPointerEvent ??
-            ((event) => GestureBinding.instance.handlePointerEvent(event)) {
+  }) : _dispatch =
+           dispatchPointerEvent ??
+           ((event) => GestureBinding.instance.handlePointerEvent(event)) {
     _ticker = vsync.createTicker(_onTick);
     GestureBinding.instance.pointerRouter.addGlobalRoute(_handlePointerEvent);
   }
@@ -131,8 +132,9 @@ class SelectionAutoScroller {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    GestureBinding.instance.pointerRouter
-        .removeGlobalRoute(_handlePointerEvent);
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(
+      _handlePointerEvent,
+    );
     _driver = null;
     _pointers.clear();
     if (_ticker.isActive) _ticker.stop();
@@ -262,8 +264,9 @@ class SelectionAutoScroller {
 
     // Rampa quadratica: dolce all'ingresso nella fascia, veloce oltre il
     // bordo, così l'utente modula la velocità spostando il dito.
-    final t =
-        (depth / (zone + overshootForMaxSpeed)).clamp(0.0, 1.0).toDouble();
+    final t = (depth / (zone + overshootForMaxSpeed))
+        .clamp(0.0, 1.0)
+        .toDouble();
     return direction * (minSpeed + (maxSpeed - minSpeed) * t * t);
   }
 

@@ -20,9 +20,8 @@ class ShortcutsHelpDialog extends StatelessWidget {
     final theme = Theme.of(context);
 
     List<(String, String)> rows(List<AppCommand> commands) => [
-          for (final c in commands)
-            (ds.command(c.name), commandShortcutLabel(c)),
-        ];
+      for (final c in commands) (ds.command(c.name), commandShortcutLabel(c)),
+    ];
 
     final groups = <(String, List<(String, String)>)>[
       (
@@ -57,17 +56,17 @@ class ShortcutsHelpDialog extends StatelessWidget {
             (ds.command(c.name), editorShortcutLabel(c)),
         ],
       ),
-      (
-        ds.groupApp,
-        rows(const [AppCommand.settings, AppCommand.help]),
-      ),
+      (ds.groupApp, rows(const [AppCommand.settings, AppCommand.help])),
     ];
 
     return AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.keyboard_alt_outlined,
-              size: 22, color: theme.colorScheme.primary),
+          Icon(
+            Icons.keyboard_alt_outlined,
+            size: 22,
+            color: theme.colorScheme.primary,
+          ),
           const SizedBox(width: 8),
           Expanded(child: Text(ds.keyboardShortcuts)),
         ],
@@ -98,10 +97,13 @@ class ShortcutsHelpDialog extends StatelessWidget {
                         Expanded(child: Text(label)),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
-                            color: theme.colorScheme.onSurface
-                                .withValues(alpha: 0.07),
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.07,
+                            ),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(

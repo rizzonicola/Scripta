@@ -19,8 +19,9 @@ void main() {
       final isOnline = await service.checkHealth('http://localhost:8080');
       expect(isOnline, isTrue);
 
-      final isOffline =
-          await service.checkHealth('http://localhost:8080/nonexistent');
+      final isOffline = await service.checkHealth(
+        'http://localhost:8080/nonexistent',
+      );
       expect(isOffline, isFalse);
     });
 
@@ -42,7 +43,9 @@ void main() {
             );
           }
           return http.Response(
-              json.encode({'error': 'credenziali non valide'}), 401);
+            json.encode({'error': 'credenziali non valide'}),
+            401,
+          );
         }
         return http.Response('error', 500);
       });
@@ -128,130 +131,151 @@ void main() {
     });
 
     test(
-        'sync sends last_synced_at + folders/notes and parses the pull response',
-        () async {
-      final client = MockClient((request) async {
-        if (request.url.path == '/api/v1/sync') {
-          final body = json.decode(request.body) as Map<String, dynamic>;
-          expect(body['last_synced_at'], 1000);
-          final notes = body['notes'] as List<dynamic>;
-          expect(notes.first['id'], 'note-1');
-          expect(notes.first['folder_id'], 'folder-1');
+      'sync sends last_synced_at + folders/notes and parses the pull response',
+      () async {
+        final client = MockClient((request) async {
+          if (request.url.path == '/api/v1/sync') {
+            final body = json.decode(request.body) as Map<String, dynamic>;
+            expect(body['last_synced_at'], 1000);
+            final notes = body['notes'] as List<dynamic>;
+            expect(notes.first['id'], 'note-1');
+            expect(notes.first['folder_id'], 'folder-1');
 
-          return http.Response(
-            json.encode({
-              'server_time': 2000,
-              'folders': [
-                {
-                  'id': 'folder-remote',
-                  'name': 'Dal server',
-                  'parent_id': null,
-                  'updated_at': 1500,
-                  'deleted_at': null,
-                }
-              ],
-              'notes': [
-                {
-                  'id': 'note-conflict',
-                  'title': 'Versione server più recente',
-                  'content': '# Vince il server',
-                  'folder_id': null,
-                  'updated_at': 1800,
-                  'deleted_at': null,
-                }
-              ],
-            }),
-            200,
-            headers: {'content-type': 'application/json'},
-          );
-        }
-        return http.Response('error', 500);
-      });
+            return http.Response(
+              json.encode({
+                'server_time': 2000,
+                'folders': [
+                  {
+                    'id': 'folder-remote',
+                    'name': 'Dal server',
+                    'parent_id': null,
+                    'updated_at': 1500,
+                    'deleted_at': null,
+                  },
+                ],
+                'notes': [
+                  {
+                    'id': 'note-conflict',
+                    'title': 'Versione server più recente',
+                    'content': '# Vince il server',
+                    'folder_id': null,
+                    'updated_at': 1800,
+                    'deleted_at': null,
+                  },
+                ],
+              }),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          return http.Response('error', 500);
+        });
 
-      final service = SyncApiService(client);
-      final syncResp = await service.sync(
-        baseUrl: 'http://localhost:8080',
-        token: 'valid_token',
-        lastSyncedAt: 1000,
-        folders: const [],
-        notes: const [
-          NoteChangeDto(
-            id: 'note-1',
-            title: 'Mia nota',
-            content: '# Mia nota',
-            folderId: 'folder-1',
-            isFavorite: false,
-            isPinned: false,
-            orderIndex: 0,
-            createdAt: 1200,
-            updatedAt: 1200,
-            deletedAt: null,
-          ),
-        ],
-      );
-
-      expect(syncResp.serverTime, 2000);
-      expect(syncResp.folders.length, 1);
-      expect(syncResp.folders.first.name, 'Dal server');
-      expect(syncResp.notes.length, 1);
-      expect(syncResp.notes.first.content, '# Vince il server');
-    });
-
-    test('un 200 con JSON malformato è un 502 non transitorio, non offline',
-        () async {
-      final client = MockClient(
-        (_) async => http.Response('<html>non json</html>', 200),
-      );
-      final service = SyncApiService(client);
-
-      expect(
-        () => service.sync(
+        final service = SyncApiService(client);
+        final syncResp = await service.sync(
           baseUrl: 'http://localhost:8080',
-          token: 't',
-          lastSyncedAt: 0,
+          token: 'valid_token',
+          lastSyncedAt: 1000,
           folders: const [],
-          notes: const [],
-        ),
-        throwsA(predicate((e) =>
-            e is SyncApiException &&
-            e.statusCode == 502 &&
-            e.message.contains('non valida'))),
-      );
-    });
+          notes: const [
+            NoteChangeDto(
+              id: 'note-1',
+              title: 'Mia nota',
+              content: '# Mia nota',
+              folderId: 'folder-1',
+              isFavorite: false,
+              isPinned: false,
+              orderIndex: 0,
+              createdAt: 1200,
+              updatedAt: 1200,
+              deletedAt: null,
+            ),
+          ],
+        );
 
-    test('403 account_blocked conserva il codice stabile sulle impostazioni',
-        () async {
-      final client = MockClient((_) async => http.Response(
+        expect(syncResp.serverTime, 2000);
+        expect(syncResp.folders.length, 1);
+        expect(syncResp.folders.first.name, 'Dal server');
+        expect(syncResp.notes.length, 1);
+        expect(syncResp.notes.first.content, '# Vince il server');
+      },
+    );
+
+    test(
+      'un 200 con JSON malformato è un 502 non transitorio, non offline',
+      () async {
+        final client = MockClient(
+          (_) async => http.Response('<html>non json</html>', 200),
+        );
+        final service = SyncApiService(client);
+
+        expect(
+          () => service.sync(
+            baseUrl: 'http://localhost:8080',
+            token: 't',
+            lastSyncedAt: 0,
+            folders: const [],
+            notes: const [],
+          ),
+          throwsA(
+            predicate(
+              (e) =>
+                  e is SyncApiException &&
+                  e.statusCode == 502 &&
+                  e.message.contains('non valida'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      '403 account_blocked conserva il codice stabile sulle impostazioni',
+      () async {
+        final client = MockClient(
+          (_) async => http.Response(
             json.encode({
               'error': 'account bloccato',
               'code': 'account_blocked',
             }),
             403,
-          ));
+          ),
+        );
 
-      final service = SyncApiService(client);
+        final service = SyncApiService(client);
 
-      expect(
-        () => service.getUserSettings(
-            baseUrl: 'http://localhost:8080', token: 't'),
-        throwsA(predicate((e) =>
-            e is SyncApiException &&
-            e.statusCode == 403 &&
-            e.code == 'account_blocked')),
-      );
+        expect(
+          () => service.getUserSettings(
+            baseUrl: 'http://localhost:8080',
+            token: 't',
+          ),
+          throwsA(
+            predicate(
+              (e) =>
+                  e is SyncApiException &&
+                  e.statusCode == 403 &&
+                  e.code == 'account_blocked',
+            ),
+          ),
+        );
 
-      expect(
-        () => service.updateUserSettings(
-          baseUrl: 'http://localhost:8080',
-          token: 't',
-          settings: const UserSettingsDto(),
-        ),
-        throwsA(predicate((e) =>
-            e is SyncApiException &&
-            e.statusCode == 403 &&
-            e.code == 'account_blocked')),
-      );
-    });
+        expect(
+          () => service.updateUserSettings(
+            baseUrl: 'http://localhost:8080',
+            token: 't',
+            settings: const UserSettingsDto(),
+          ),
+          throwsA(
+            predicate(
+              (e) =>
+                  e is SyncApiException &&
+                  e.statusCode == 403 &&
+                  e.code == 'account_blocked',
+            ),
+          ),
+        );
+      },
+    );
 
     test('handles 401 token expiration across all endpoints', () async {
       final client = MockClient((request) async {
@@ -262,7 +286,9 @@ void main() {
 
       expect(
         () => service.getUserSettings(
-            baseUrl: 'http://localhost:8080', token: 'expired'),
+          baseUrl: 'http://localhost:8080',
+          token: 'expired',
+        ),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
       );
 
@@ -277,45 +303,58 @@ void main() {
 
       expect(
         () => service.sync(
-            baseUrl: 'http://localhost:8080',
-            token: 'expired',
-            lastSyncedAt: 0,
-            folders: const [],
-            notes: const []),
+          baseUrl: 'http://localhost:8080',
+          token: 'expired',
+          lastSyncedAt: 0,
+          folders: const [],
+          notes: const [],
+        ),
         throwsA(predicate((e) => e is SyncApiException && e.statusCode == 401)),
       );
     });
 
-    test('handles 503 (server busy) as a SyncApiException with statusCode 503',
-        () async {
-      final client = MockClient((request) async {
-        return http.Response(
-            json.encode(
-                {'error': 'database temporaneamente occupato, riprovare'}),
-            503);
-      });
+    test(
+      'handles 503 (server busy) as a SyncApiException with statusCode 503',
+      () async {
+        final client = MockClient((request) async {
+          return http.Response(
+            json.encode({
+              'error': 'database temporaneamente occupato, riprovare',
+            }),
+            503,
+          );
+        });
 
-      final service = SyncApiService(client);
+        final service = SyncApiService(client);
 
-      expect(
-        () => service.sync(
+        expect(
+          () => service.sync(
             baseUrl: 'http://localhost:8080',
             token: 't',
             lastSyncedAt: 0,
             folders: const [],
-            notes: const []),
-        throwsA(predicate((e) => e is SyncApiException && e.statusCode == 503)),
-      );
-    });
+            notes: const [],
+          ),
+          throwsA(
+            predicate((e) => e is SyncApiException && e.statusCode == 503),
+          ),
+        );
+      },
+    );
 
     test('rifiuta http in chiaro verso host non loopback', () async {
-      final service = SyncApiService(MockClient((request) async {
-        fail('nessuna richiesta deve partire verso http non loopback');
-      }));
+      final service = SyncApiService(
+        MockClient((request) async {
+          fail('nessuna richiesta deve partire verso http non loopback');
+        }),
+      );
 
       expect(
         () => service.login(
-            baseUrl: 'http://example.com', username: 'u', password: 'p'),
+          baseUrl: 'http://example.com',
+          username: 'u',
+          password: 'p',
+        ),
         throwsA(isA<SyncApiException>()),
       );
       expect(await service.checkHealth('http://example.com'), isFalse);

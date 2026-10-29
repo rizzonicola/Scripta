@@ -2,12 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/features/notes/models/note_model.dart';
 
 NoteModel _note(String content) => NoteModel(
-      id: 'n',
-      title: 'T',
-      content: content,
-      createdAt: DateTime(2024),
-      updatedAt: DateTime(2024),
-    );
+  id: 'n',
+  title: 'T',
+  content: content,
+  createdAt: DateTime(2024),
+  updatedAt: DateTime(2024),
+);
 
 void main() {
   group('NoteModel.wordCount', () {
@@ -22,11 +22,13 @@ void main() {
       expect(_note('  spazi ai bordi  ').wordCount, 3);
     });
 
-    test('riconosce gli stessi spazi di \\s (spazio non separabile incluso)',
-        () {
-      expect(_note('a\u00a0b').wordCount, 2);
-      expect(_note('a\u2003b\u3000c').wordCount, 3);
-    });
+    test(
+      'riconosce gli stessi spazi di \\s (spazio non separabile incluso)',
+      () {
+        expect(_note('a\u00a0b').wordCount, 2);
+        expect(_note('a\u2003b\u3000c').wordCount, 3);
+      },
+    );
 
     test('è coerente con la definizione originale split(RegExp(r"\\s+"))', () {
       const samples = [
@@ -36,8 +38,9 @@ void main() {
         '\n\nsolo a capo e una parola\n\n',
       ];
       for (final text in samples) {
-        final expected =
-            text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\s+')).length;
+        final expected = text.trim().isEmpty
+            ? 0
+            : text.trim().split(RegExp(r'\s+')).length;
         expect(_note(text).wordCount, expected, reason: text);
       }
     });

@@ -56,8 +56,9 @@ class SyncConfig {
       isOnline: isOnline ?? this.isOnline,
       isSyncing: isSyncing ?? this.isSyncing,
       lastSyncTime: lastSyncTime != null ? lastSyncTime() : this.lastSyncTime,
-      lastSyncMessage:
-          lastSyncMessage != null ? lastSyncMessage() : this.lastSyncMessage,
+      lastSyncMessage: lastSyncMessage != null
+          ? lastSyncMessage()
+          : this.lastSyncMessage,
       lastError: lastError != null ? lastError() : this.lastError,
     );
   }
@@ -90,18 +91,18 @@ class SyncConfig {
 
   @override
   int get hashCode => Object.hash(
-        syncOnAppLaunch,
-        syncOnAppLifecycle,
-        syncOnNoteSwitch,
-        syncOnInactivity,
-        inactivitySeconds,
-        serverUrl,
-        username,
-        isAuthenticated,
-        isOnline,
-        isSyncing,
-        lastSyncTime,
-        lastSyncMessage,
-        lastError,
-      );
+    syncOnAppLaunch,
+    syncOnAppLifecycle,
+    syncOnNoteSwitch,
+    syncOnInactivity,
+    inactivitySeconds,
+    serverUrl,
+    username,
+    isAuthenticated,
+    isOnline,
+    isSyncing,
+    lastSyncTime,
+    lastSyncMessage,
+    lastError,
+  );
 }

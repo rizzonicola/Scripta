@@ -83,11 +83,17 @@ class AboutCreditsDialog extends StatelessWidget {
               _buildCreditItem(theme, 'sqflite / SQLite', l10n.creditDrift),
               _buildCreditItem(theme, 'Shared Preferences', l10n.creditStorage),
               _buildCreditItem(
-                  theme, 'Secure Storage', l10n.creditSecureStorage),
+                theme,
+                'Secure Storage',
+                l10n.creditSecureStorage,
+              ),
               _buildCreditItem(theme, 'HTTP / Archive', l10n.creditSyncArchive),
               _buildCreditItem(theme, 'Google Fonts', l10n.creditFonts),
               _buildCreditItem(
-                  theme, 'UUID / URL Launcher', l10n.creditUtility),
+                theme,
+                'UUID / URL Launcher',
+                l10n.creditUtility,
+              ),
               const SizedBox(height: 16),
               const Divider(height: 1),
               const SizedBox(height: 8),
@@ -198,8 +204,11 @@ class AboutCreditsDialog extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.check_circle_outline,
-              size: 16, color: theme.colorScheme.primary),
+          Icon(
+            Icons.check_circle_outline,
+            size: 16,
+            color: theme.colorScheme.primary,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: RichText(
@@ -209,14 +218,15 @@ class AboutCreditsDialog extends StatelessWidget {
                   TextSpan(
                     text: '$title: ',
                     style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.onSurface),
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onSurface,
+                    ),
                   ),
                   TextSpan(
                     text: subtitle,
                     style: TextStyle(
-                        color:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.7)),
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
                   ),
                 ],
               ),

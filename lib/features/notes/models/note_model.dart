@@ -163,7 +163,8 @@ class NoteModel {
   String _buildPreviewSnippet() {
     final isLong = content.length > _snippetSourceChars;
     var cleaned = _stripMarkdown(
-        isLong ? content.substring(0, _snippetSourceChars) : content);
+      isLong ? content.substring(0, _snippetSourceChars) : content,
+    );
     if (isLong && cleaned.length < _snippetMinCleanChars) {
       cleaned = _stripMarkdown(content);
     }
@@ -178,10 +179,14 @@ class NoteModel {
       title: row.title,
       content: row.content,
       folderId: row.folderId,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAt, isUtc: true)
-          .toLocal(),
-      updatedAt: DateTime.fromMillisecondsSinceEpoch(row.updatedAt, isUtc: true)
-          .toLocal(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        row.createdAt,
+        isUtc: true,
+      ).toLocal(),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(
+        row.updatedAt,
+        isUtc: true,
+      ).toLocal(),
       isFavorite: row.isFavorite,
       isPinned: row.isPinned,
       orderIndex: row.orderIndex,

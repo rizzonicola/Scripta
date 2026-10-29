@@ -26,14 +26,15 @@ AppSettings readAppSettingsFromPrefs(SharedPreferences prefs) {
   final themeMode = themeStr == 'dark'
       ? ThemeMode.dark
       : themeStr == 'light'
-          ? ThemeMode.light
-          : ThemeMode.system;
+      ? ThemeMode.light
+      : ThemeMode.system;
 
   final themeId = prefs.getString(AppConstants.prefThemeId) ?? 'dark_teal';
 
   final langCode = prefs.getString(AppConstants.prefLocale);
-  final locale =
-      (langCode != null && langCode.isNotEmpty) ? Locale(langCode) : null;
+  final locale = (langCode != null && langCode.isNotEmpty)
+      ? Locale(langCode)
+      : null;
 
   final fontFamily = prefs.getString(AppConstants.prefFontFamily) ?? 'Inter';
   final fontSize = prefs.getDouble(AppConstants.prefFontSize) ?? 16.0;
@@ -136,7 +137,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   /// giusto e NON ricarica (rileggerebbe gli stessi valori); se assenti carica
   /// in modo asincrono partendo dai default, come sempre.
   SettingsNotifier([this._ref, AppSettings? initial])
-      : super(initial ?? const AppSettings()) {
+    : super(initial ?? const AppSettings()) {
     if (initial == null) _loadSettings();
   }
 
@@ -177,8 +178,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final themeStr = state.themeMode == ThemeMode.dark
         ? 'dark'
         : state.themeMode == ThemeMode.light
-            ? 'light'
-            : 'system';
+        ? 'light'
+        : 'system';
 
     _queuedPayload = UserSettingsDto(
       theme: themeStr,
@@ -217,8 +218,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       while (mounted && epoch == _pushEpoch && _queuedPayload != null) {
         final payload = _queuedPayload!;
         _queuedPayload = null;
-        final sent =
-            await ref.read(syncProvider.notifier).pushUserSettings(payload);
+        final sent = await ref
+            .read(syncProvider.notifier)
+            .pushUserSettings(payload);
         if (!mounted || epoch != _pushEpoch) return;
         if (!sent) {
           // Conserva il payload più recente (potrebbe essere arrivato mentre
@@ -268,8 +270,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final themeMode = remote.theme == 'dark'
         ? ThemeMode.dark
         : remote.theme == 'light'
-            ? ThemeMode.light
-            : ThemeMode.system;
+        ? ThemeMode.light
+        : ThemeMode.system;
 
     final locale = remote.language.isNotEmpty ? Locale(remote.language) : null;
 
@@ -279,12 +281,15 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           ? remote.colorScheme
           : state.selectedThemeId,
       locale: () => locale,
-      fontFamily:
-          remote.fontFamily.isNotEmpty ? remote.fontFamily : state.fontFamily,
-      fontSize:
-          remote.fontSize > 0 ? remote.fontSize.toDouble() : state.fontSize,
-      lineHeight:
-          remote.lineSpacing > 0 ? remote.lineSpacing : state.lineHeight,
+      fontFamily: remote.fontFamily.isNotEmpty
+          ? remote.fontFamily
+          : state.fontFamily,
+      fontSize: remote.fontSize > 0
+          ? remote.fontSize.toDouble()
+          : state.fontSize,
+      lineHeight: remote.lineSpacing > 0
+          ? remote.lineSpacing
+          : state.lineHeight,
     );
 
     final prefs = await SharedPreferences.getInstance();
@@ -308,8 +313,8 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       mode == ThemeMode.dark
           ? 'dark'
           : mode == ThemeMode.light
-              ? 'light'
-              : 'system',
+          ? 'light'
+          : 'system',
     );
     _pushRemoteSettings();
   }
@@ -364,8 +369,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   }
 }
 
-final settingsProvider =
-    StateNotifierProvider<SettingsNotifier, AppSettings>((ref) {
+final settingsProvider = StateNotifierProvider<SettingsNotifier, AppSettings>((
+  ref,
+) {
   // `read` e non `watch`: l'istantanea è fissata una volta all'avvio e non
   // cambia mai; osservarla ricreerebbe il notifier (e perderebbe lo stato).
   return SettingsNotifier(ref, ref.read(settingsSnapshotProvider));

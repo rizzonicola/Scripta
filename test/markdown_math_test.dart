@@ -16,9 +16,7 @@ void main() {
     });
 
     test('estrae una formula a blocco multi-riga', () {
-      final chunks = splitNoteChunks(
-        'a\n\$\$\n\\frac{a}{b}\n+ c\n\$\$\nb',
-      );
+      final chunks = splitNoteChunks('a\n\$\$\n\\frac{a}{b}\n+ c\n\$\$\nb');
       expect(chunks, hasLength(3));
       expect((chunks[1] as DisplayMathChunk).tex, '\\frac{a}{b}\n+ c');
     });
@@ -35,30 +33,37 @@ void main() {
       expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
     });
 
-    test('tollera righe vuote interne se la chiusura arriva entro 30 righe',
-        () {
-      const src = '\$\$\nx = 1\n\ny = 2\n\$\$';
-      final chunks = splitNoteChunks(src);
-      expect(chunks.whereType<DisplayMathChunk>(), hasLength(1));
-      expect(chunks.whereType<DisplayMathChunk>().first.tex, 'x = 1\n\ny = 2');
-    });
-
-    test('un \$\$ che non si chiude entro 30 righe viene rifiutato come blocco',
-        () {
-      final longText = [
-        '\$\$',
-        for (var i = 0; i < 35; i++) 'riga $i',
-        '\$\$',
-      ].join('\n');
-      final chunks = splitNoteChunks(longText);
-      // Non deve essere accoppiato perché supera le 30 righe
-      expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
-    });
+    test(
+      'tollera righe vuote interne se la chiusura arriva entro 30 righe',
+      () {
+        const src = '\$\$\nx = 1\n\ny = 2\n\$\$';
+        final chunks = splitNoteChunks(src);
+        expect(chunks.whereType<DisplayMathChunk>(), hasLength(1));
+        expect(
+          chunks.whereType<DisplayMathChunk>().first.tex,
+          'x = 1\n\ny = 2',
+        );
+      },
+    );
 
     test(
-        'un \$\$ orfano seguito da intestazione Markdown non inghiotte la formula successiva',
-        () {
-      const src = '''
+      'un \$\$ che non si chiude entro 30 righe viene rifiutato come blocco',
+      () {
+        final longText = [
+          '\$\$',
+          for (var i = 0; i < 35; i++) 'riga $i',
+          '\$\$',
+        ].join('\n');
+        final chunks = splitNoteChunks(longText);
+        // Non deve essere accoppiato perché supera le 30 righe
+        expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
+      },
+    );
+
+    test(
+      'un \$\$ orfano seguito da intestazione Markdown non inghiotte la formula successiva',
+      () {
+        const src = '''
 \$\$
 questa era una formula mai chiusa
 
@@ -69,17 +74,18 @@ Testo descrittivo normale
 x = 42
 \$\$
 ''';
-      final chunks = splitNoteChunks(src);
-      // Solo la vera formula deve essere estratta
-      final mathChunks = chunks.whereType<DisplayMathChunk>().toList();
-      expect(mathChunks, hasLength(1));
-      expect(mathChunks.single.tex, 'x = 42');
-    });
+        final chunks = splitNoteChunks(src);
+        // Solo la vera formula deve essere estratta
+        final mathChunks = chunks.whereType<DisplayMathChunk>().toList();
+        expect(mathChunks, hasLength(1));
+        expect(mathChunks.single.tex, 'x = 42');
+      },
+    );
 
     test(
-        'due righe vuote consecutive dentro un \$\$ aperto ne determinano l\'abbandono',
-        () {
-      const src = '''
+      'due righe vuote consecutive dentro un \$\$ aperto ne determinano l\'abbandono',
+      () {
+        const src = '''
 \$\$
 passo 1
 
@@ -87,22 +93,25 @@ passo 1
 passo 2
 \$\$
 ''';
-      final chunks = splitNoteChunks(src);
-      expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
-    });
+        final chunks = splitNoteChunks(src);
+        expect(chunks.whereType<DisplayMathChunk>(), isEmpty);
+      },
+    );
 
-    test('formula multi-riga con sottrazione a inizio riga (- c) resta valida',
-        () {
-      const src = '''
+    test(
+      'formula multi-riga con sottrazione a inizio riga (- c) resta valida',
+      () {
+        const src = '''
 \$\$
 a = b
 - c
 \$\$
 ''';
-      final chunks = splitNoteChunks(src);
-      expect(chunks.whereType<DisplayMathChunk>(), hasLength(1));
-      expect(chunks.whereType<DisplayMathChunk>().first.tex, 'a = b\n- c');
-    });
+        final chunks = splitNoteChunks(src);
+        expect(chunks.whereType<DisplayMathChunk>(), hasLength(1));
+        expect(chunks.whereType<DisplayMathChunk>().first.tex, 'a = b\n- c');
+      },
+    );
 
     test('\$\$x\$\$ seguito da testo sulla stessa riga non è un blocco', () {
       final chunks = splitNoteChunks('\$\$x\$\$ e altro');
@@ -134,7 +143,9 @@ a = b
 
     test('solo testo: toglie i \$ (es. formula chimica senza pedici)', () {
       expect(
-          normalizeInlineMath(r'Ossido ($\text{BaO}$) +'), r'Ossido (BaO) +');
+        normalizeInlineMath(r'Ossido ($\text{BaO}$) +'),
+        r'Ossido (BaO) +',
+      );
     });
 
     test('con pedici/apici mantiene i \$ per il parser di flutter_md', () {

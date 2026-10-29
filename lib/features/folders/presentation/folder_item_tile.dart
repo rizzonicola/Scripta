@@ -51,10 +51,7 @@ class FolderItemTile extends StatelessWidget {
           focusColor: theme.colorScheme.primary.withValues(alpha: 0.12),
           child: Container(
             constraints: const BoxConstraints(minHeight: 44),
-            padding: EdgeInsets.only(
-              left: (depth * 12.0) + 2.0,
-              right: 2,
-            ),
+            padding: EdgeInsets.only(left: (depth * 12.0) + 2.0, right: 2),
             child: Row(
               children: [
                 if (hasChildren)
@@ -67,8 +64,10 @@ class FolderItemTile extends StatelessWidget {
                     ),
                     tooltip: isExpanded ? ds.collapse : ds.expand,
                     padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints.tightFor(width: 44, height: 44),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 44,
+                      height: 44,
+                    ),
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
                     onPressed: onToggleExpand,
                   )
@@ -88,8 +87,9 @@ class FolderItemTile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight:
-                          isSelected ? FontWeight.w600 : FontWeight.normal,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
                       color: isSelected
                           ? theme.colorScheme.primary
                           : theme.colorScheme.onSurface,
@@ -100,8 +100,9 @@ class FolderItemTile extends StatelessWidget {
                   Builder(
                     builder: (buttonContext) => IconButton(
                       icon: const Icon(Icons.more_horiz, size: 18),
-                      tooltip:
-                          MaterialLocalizations.of(context).showMenuTooltip,
+                      tooltip: MaterialLocalizations.of(
+                        context,
+                      ).showMenuTooltip,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints.tightFor(
                         width: 44,

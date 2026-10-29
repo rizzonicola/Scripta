@@ -20,10 +20,7 @@ class FolderState {
   final List<FolderNode> rootFolders;
   final String? selectedFolderId; // null = "All Notes"
 
-  const FolderState({
-    this.rootFolders = const [],
-    this.selectedFolderId,
-  });
+  const FolderState({this.rootFolders = const [], this.selectedFolderId});
 
   FolderState copyWith({
     List<FolderNode>? rootFolders,
@@ -31,8 +28,9 @@ class FolderState {
   }) {
     return FolderState(
       rootFolders: rootFolders ?? this.rootFolders,
-      selectedFolderId:
-          selectedFolderId != null ? selectedFolderId() : this.selectedFolderId,
+      selectedFolderId: selectedFolderId != null
+          ? selectedFolderId()
+          : this.selectedFolderId,
     );
   }
 
@@ -129,9 +127,9 @@ class FolderNotifier extends StateNotifier<FolderState> {
     FoldersDao? foldersDao,
     NotesDao? notesDao,
     String? initialSelectedFolderId,
-  })  : _foldersDao = foldersDao ?? FoldersDao(),
-        _notesDao = notesDao ?? NotesDao(),
-        super(FolderState(selectedFolderId: initialSelectedFolderId)) {
+  }) : _foldersDao = foldersDao ?? FoldersDao(),
+       _notesDao = notesDao ?? NotesDao(),
+       super(FolderState(selectedFolderId: initialSelectedFolderId)) {
     _loadFromDb(validateSelection: true);
     // Non si può notificare un altro provider durante il build di questo:
     // lo scope iniziale viene pubblicato appena il microtask lo consente.
@@ -232,8 +230,10 @@ class FolderNotifier extends StateNotifier<FolderState> {
     if (idx == -1) return;
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final updated =
-        _activeRows[idx].copyWith(name: newName.trim(), updatedAt: now);
+    final updated = _activeRows[idx].copyWith(
+      name: newName.trim(),
+      updatedAt: now,
+    );
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
     unawaited(_enqueueWrite(() => _foldersDao.upsert(updated)));
@@ -245,12 +245,14 @@ class FolderNotifier extends StateNotifier<FolderState> {
     final idx = _activeRows.indexWhere((r) => r.id == id);
     if (idx == -1) return;
 
-    final updated =
-        _activeRows[idx].copyWith(isExpanded: !_activeRows[idx].isExpanded);
+    final updated = _activeRows[idx].copyWith(
+      isExpanded: !_activeRows[idx].isExpanded,
+    );
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
     unawaited(
-        _enqueueWrite(() => _foldersDao.setExpanded(id, updated.isExpanded)));
+      _enqueueWrite(() => _foldersDao.setExpanded(id, updated.isExpanded)),
+    );
   }
 
   /// Cancella una cartella e, ricorsivamente, tutte le sue sottocartelle e
@@ -268,26 +270,29 @@ class FolderNotifier extends StateNotifier<FolderState> {
     }
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    _activeRows =
-        _activeRows.where((r) => !idsToDelete.contains(r.id)).toList();
+    _activeRows = _activeRows
+        .where((r) => !idsToDelete.contains(r.id))
+        .toList();
     _publishState();
 
-    unawaited(_enqueueWrite(() async {
-      // Prima di far sparire le note dal DB, scrive l'eventuale testo ancora
-      // nel debounce dell'editor: altrimenti il timer successivo riscriverebbe
-      // la nota con la vecchia cartella, annullando il tombstone appena
-      // creato dalla cascade.
-      await _ref.read(notesProvider.notifier).flushPendingSaves();
-      await _foldersDao.cascadeSoftDelete(
-        id,
-        now,
-        deleteNotesInFolder: (folderIdInSubtree, cascadeNow) =>
-            _notesDao.softDeleteByFolder(folderIdInSubtree, cascadeNow),
-      );
-      // Le note della cartella cancellata sono sparite anche dal DB locale:
-      // la vista "Tutte le note"/per-cartella deve rifletterlo subito.
-      await _ref.read(notesProvider.notifier).refreshFromDb();
-    }));
+    unawaited(
+      _enqueueWrite(() async {
+        // Prima di far sparire le note dal DB, scrive l'eventuale testo ancora
+        // nel debounce dell'editor: altrimenti il timer successivo riscriverebbe
+        // la nota con la vecchia cartella, annullando il tombstone appena
+        // creato dalla cascade.
+        await _ref.read(notesProvider.notifier).flushPendingSaves();
+        await _foldersDao.cascadeSoftDelete(
+          id,
+          now,
+          deleteNotesInFolder: (folderIdInSubtree, cascadeNow) =>
+              _notesDao.softDeleteByFolder(folderIdInSubtree, cascadeNow),
+        );
+        // Le note della cartella cancellata sono sparite anche dal DB locale:
+        // la vista "Tutte le note"/per-cartella deve rifletterlo subito.
+        await _ref.read(notesProvider.notifier).refreshFromDb();
+      }),
+    );
   }
 
   /// Raccoglie, a partire dallo specchio in memoria [_activeRows], l'ID
@@ -356,8 +361,10 @@ class FolderNotifier extends StateNotifier<FolderState> {
     if (idx == -1) return false;
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final updated =
-        _activeRows[idx].copyWith(parentId: newParentId, updatedAt: now);
+    final updated = _activeRows[idx].copyWith(
+      parentId: newParentId,
+      updatedAt: now,
+    );
     _activeRows = [..._activeRows]..[idx] = updated;
     _publishState();
     unawaited(_enqueueWrite(() => _foldersDao.upsert(updated)));
@@ -367,8 +374,9 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
 final selectedFolderScopeProvider = StateProvider<String?>((ref) => null);
 
-final folderProvider =
-    StateNotifierProvider<FolderNotifier, FolderState>((ref) {
+final folderProvider = StateNotifierProvider<FolderNotifier, FolderState>((
+  ref,
+) {
   return FolderNotifier(
     ref,
     // Cartella dell'ultima sessione (null = "Tutte le note" o nessuna sessione).

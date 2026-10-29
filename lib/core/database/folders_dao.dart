@@ -26,22 +26,22 @@ class FolderRow {
   bool get isDeleted => deletedAt != null;
 
   factory FolderRow.fromMap(Map<String, Object?> m) => FolderRow(
-        id: m['id'] as String,
-        name: m['name'] as String,
-        parentId: m['parent_id'] as String?,
-        isExpanded: (m['is_expanded'] as int) != 0,
-        updatedAt: m['updated_at'] as int,
-        deletedAt: m['deleted_at'] as int?,
-      );
+    id: m['id'] as String,
+    name: m['name'] as String,
+    parentId: m['parent_id'] as String?,
+    isExpanded: (m['is_expanded'] as int) != 0,
+    updatedAt: m['updated_at'] as int,
+    deletedAt: m['deleted_at'] as int?,
+  );
 
   Map<String, Object?> toMap() => {
-        'id': id,
-        'name': name,
-        'parent_id': parentId,
-        'is_expanded': isExpanded ? 1 : 0,
-        'updated_at': updatedAt,
-        'deleted_at': deletedAt,
-      };
+    'id': id,
+    'name': name,
+    'parent_id': parentId,
+    'is_expanded': isExpanded ? 1 : 0,
+    'updated_at': updatedAt,
+    'deleted_at': deletedAt,
+  };
 
   FolderRow copyWith({
     String? name,
@@ -53,12 +53,14 @@ class FolderRow {
     return FolderRow(
       id: id,
       name: name ?? this.name,
-      parentId:
-          identical(parentId, _unset) ? this.parentId : parentId as String?,
+      parentId: identical(parentId, _unset)
+          ? this.parentId
+          : parentId as String?,
       isExpanded: isExpanded ?? this.isExpanded,
       updatedAt: updatedAt ?? this.updatedAt,
-      deletedAt:
-          identical(deletedAt, _unset) ? this.deletedAt : deletedAt as int?,
+      deletedAt: identical(deletedAt, _unset)
+          ? this.deletedAt
+          : deletedAt as int?,
     );
   }
 }
@@ -146,15 +148,22 @@ class FoldersDao {
 
   Future<List<FolderRow>> getActive() async {
     final db = await _db;
-    final rows = await db.query('folders',
-        where: 'deleted_at IS NULL', orderBy: 'name COLLATE NOCASE ASC');
+    final rows = await db.query(
+      'folders',
+      where: 'deleted_at IS NULL',
+      orderBy: 'name COLLATE NOCASE ASC',
+    );
     return rows.map(FolderRow.fromMap).toList();
   }
 
   Future<FolderRow?> getById(String id) async {
     final db = await _db;
-    final rows =
-        await db.query('folders', where: 'id = ?', whereArgs: [id], limit: 1);
+    final rows = await db.query(
+      'folders',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
     if (rows.isEmpty) return null;
     return FolderRow.fromMap(rows.first);
   }
@@ -164,8 +173,10 @@ class FoldersDao {
   /// Scrittura LOCALE: marca la riga `dirty = 1` (da inviare al server).
   Future<void> upsert(FolderRow row) async {
     final db = await _db;
-    await db.insert('folders', {...row.toMap(), 'dirty': 1},
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert('folders', {
+      ...row.toMap(),
+      'dirty': 1,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Applica una riga ricevuta dal server (vedi [applyRemoteLWWBatch]).
@@ -209,13 +220,15 @@ class FoldersDao {
         } else {
           isExpanded = existing.isExpanded;
         }
-        batch.insert(
-          'folders',
-          {...remote.copyWith(isExpanded: isExpanded).toMap(), 'dirty': 0},
-          conflictAlgorithm: ConflictAlgorithm.replace,
+        batch.insert('folders', {
+          ...remote.copyWith(isExpanded: isExpanded).toMap(),
+          'dirty': 0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        local[remote.id] = (
+          isExpanded: isExpanded,
+          updatedAt: remote.updatedAt,
+          dirty: false,
         );
-        local[remote.id] =
-            (isExpanded: isExpanded, updatedAt: remote.updatedAt, dirty: false);
       }
       await batch.commit(noResult: true);
     });
@@ -239,8 +252,12 @@ class FoldersDao {
     final db = await _db;
     final batch = db.batch();
     for (final e in idToPushedUpdatedAt.entries) {
-      batch.update('folders', {'dirty': 0},
-          where: 'id = ? AND updated_at = ?', whereArgs: [e.key, e.value]);
+      batch.update(
+        'folders',
+        {'dirty': 0},
+        where: 'id = ? AND updated_at = ?',
+        whereArgs: [e.key, e.value],
+      );
     }
     await batch.commit(noResult: true);
   }
@@ -361,7 +378,7 @@ class FoldersDao {
     String rootFolderId,
     int now, {
     required Future<void> Function(String folderId, int now)
-        deleteNotesInFolder,
+    deleteNotesInFolder,
   }) async {
     final db = await _db;
     final subtree = await _collectActiveSubtreeIds(db, rootFolderId);
@@ -387,9 +404,14 @@ class FoldersDao {
   /// sicura anche con riferimenti `parent_id` ciclici in un database
   /// corrotto.
   Future<List<String>> _collectActiveSubtreeIds(
-      Database db, String rootId) async {
-    final rows = await db.query('folders',
-        columns: ['id', 'parent_id'], where: 'deleted_at IS NULL');
+    Database db,
+    String rootId,
+  ) async {
+    final rows = await db.query(
+      'folders',
+      columns: ['id', 'parent_id'],
+      where: 'deleted_at IS NULL',
+    );
     final childrenByParent = <String, List<String>>{};
     for (final r in rows) {
       final parent = r['parent_id'] as String?;
@@ -421,11 +443,11 @@ class FoldersDao {
       );
       if (rows.isEmpty) return;
 
-      await txn.insert(
-        'folders',
-        {...rows.first, 'id': newId, 'dirty': 1},
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert('folders', {
+        ...rows.first,
+        'id': newId,
+        'dirty': 1,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
       await txn.update(
         'folders',
         {'parent_id': newId, 'updated_at': now, 'dirty': 1},
