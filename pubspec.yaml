@@ -108,7 +108,3 @@ dependency_overrides:
 flutter:
   uses-material-design: true
   generate: true
-
-  assets:
-    - assets/icons/
-    - assets/samples/
