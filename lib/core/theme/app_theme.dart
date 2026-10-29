@@ -1,19 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'color_schemes.dart';
 
 class AppTheme {
-  /// Solo per i test: se `true`, [getTextStyleForFont] NON passa da
-  /// `google_fonts` e restituisce uno `TextStyle` semplice.
-  ///
-  /// Perché: nei test non c'è rete e i font non sono tra gli asset, e in quel
-  /// caso google_fonts lancia un'eccezione asincrona NON gestita (HTTP 400, o
-  /// "allowRuntimeFetching is false but font ... was not found in the
-  /// application assets" se si disattiva il download) che fa fallire il test
-  /// in corso. Con `false` (valore predefinito) il comportamento dell'app non
-  /// cambia.
-  @visibleForTesting
-  static bool debugSkipGoogleFonts = false;
+  static const String defaultFontFamily = 'Inter';
+  static const String monospaceFontFamily = 'JetBrains Mono';
 
   static TextStyle getTextStyleForFont(
     String fontFamily, {
@@ -22,52 +12,16 @@ class AppTheme {
     Color? color,
     double? height,
   }) {
-    if (debugSkipGoogleFonts) {
-      return TextStyle(
-        fontSize: fontSize,
-        fontWeight: fontWeight,
-        color: color,
-        height: height,
-      );
-    }
-    switch (fontFamily.toLowerCase()) {
-      case 'jetbrains mono':
-        return GoogleFonts.jetBrainsMono(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          color: color,
-          height: height,
-        );
-      case 'merriweather':
-        return GoogleFonts.merriweather(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          color: color,
-          height: height,
-        );
-      case 'fira code':
-        return GoogleFonts.firaCode(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          color: color,
-          height: height,
-        );
-      case 'roboto':
-        return GoogleFonts.roboto(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          color: color,
-          height: height,
-        );
-      case 'inter':
-      default:
-        return GoogleFonts.inter(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          color: color,
-          height: height,
-        );
-    }
+    final family = fontFamily.toLowerCase() == 'jetbrains mono'
+        ? monospaceFontFamily
+        : defaultFontFamily;
+    return TextStyle(
+      fontFamily: family,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      color: color,
+      height: height,
+    );
   }
 
   static PopupMenuThemeData popupMenuTheme(AppThemePalette palette) {
@@ -108,7 +62,7 @@ class AppTheme {
     final baseTheme = palette.brightness == Brightness.dark
         ? ThemeData.dark()
         : ThemeData.light();
-    final textTheme = GoogleFonts.interTextTheme(baseTheme.textTheme);
+    final textTheme = baseTheme.textTheme.apply(fontFamily: defaultFontFamily);
 
     return ThemeData(
       useMaterial3: true,

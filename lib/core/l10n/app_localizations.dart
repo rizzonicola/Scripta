@@ -853,7 +853,7 @@ abstract class AppLocalizations {
   /// No description provided for @creditFonts.
   ///
   /// In en, this message translates to:
-  /// **'google_fonts for interface typography'**
+  /// **'Inter and JetBrains Mono bundled fonts (SIL OFL)'**
   String get creditFonts;
 
   /// No description provided for @creditSyncArchive.

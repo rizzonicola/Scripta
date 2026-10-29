@@ -34,7 +34,7 @@ void main() {
       const AppSettings(
         themeMode: ThemeMode.dark,
         selectedThemeId: 'nord',
-        fontFamily: 'Merriweather',
+        fontFamily: 'JetBrains Mono',
         fontSize: 18,
         lineHeight: 1.8,
       ),
@@ -53,14 +53,14 @@ void main() {
     );
 
     expect(notifier.state.themeMode, ThemeMode.light);
-    expect(notifier.state.fontFamily, 'Merriweather');
+    expect(notifier.state.fontFamily, 'JetBrains Mono');
     expect(notifier.state.fontSize, AppConstants.maxFontSize);
     expect(notifier.state.lineHeight, AppConstants.maxLineHeight);
 
     await _expectPrefs(
       theme: 'light',
       themeId: 'dark_teal',
-      fontFamily: 'Merriweather',
+      fontFamily: 'JetBrains Mono',
       fontSize: AppConstants.maxFontSize,
       lineHeight: AppConstants.maxLineHeight,
     );

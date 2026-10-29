@@ -15,8 +15,6 @@ import 'account_sync_section.dart';
 const Map<String, String> _fontFamilyLabels = {
   'Inter': 'Inter (Clean Modern Sans)',
   'JetBrains Mono': 'JetBrains Mono (Monospace)',
-  'Merriweather': 'Merriweather (Classic Serif)',
-  'Roboto': 'Roboto (Standard Sans)',
 };
 
 class SettingsView extends ConsumerWidget {

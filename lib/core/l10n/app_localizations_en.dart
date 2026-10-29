@@ -405,7 +405,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'shared_preferences and path_provider for preferences and local files';
 
   @override
-  String get creditFonts => 'google_fonts for interface typography';
+  String get creditFonts => 'Inter and JetBrains Mono bundled fonts (SIL OFL)';
 
   @override
   String get creditSyncArchive =>

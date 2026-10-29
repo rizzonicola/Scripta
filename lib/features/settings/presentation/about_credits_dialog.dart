@@ -88,7 +88,11 @@ class AboutCreditsDialog extends StatelessWidget {
                 l10n.creditSecureStorage,
               ),
               _buildCreditItem(theme, 'HTTP / Archive', l10n.creditSyncArchive),
-              _buildCreditItem(theme, 'Google Fonts', l10n.creditFonts),
+              _buildCreditItem(
+                theme,
+                'Inter & JetBrains Mono',
+                l10n.creditFonts,
+              ),
               _buildCreditItem(
                 theme,
                 'UUID / URL Launcher',

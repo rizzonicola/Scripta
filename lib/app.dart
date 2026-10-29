@@ -13,7 +13,7 @@ import 'shell/session_persistence.dart';
 
 /// Temi chiaro e scuro, derivati SOLO da tema scelto e famiglia di font.
 ///
-/// Costruire un `ThemeData` (con i `TextTheme` di Google Fonts) è costoso.
+/// Costruire un `ThemeData` (con i `TextTheme` dei font inclusi) è costoso.
 /// Tenerli in un provider significa ricalcolarli solo quando cambia uno di
 /// questi due valori, e non a ogni ricostruzione di [ScriptaApp] (cambio di
 /// luminosità del sistema, lingua, intensità aptica...).

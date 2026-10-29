@@ -26,7 +26,7 @@ const _saved = AppSettings(
   themeMode: ThemeMode.dark,
   selectedThemeId: 'nord',
   locale: Locale('en'),
-  fontFamily: 'Roboto',
+  fontFamily: 'JetBrains Mono',
   fontSize: 19.0,
   lineHeight: 1.9,
   hapticIntensity: HapticIntensity.off,
@@ -39,7 +39,7 @@ void _seedSavedSettings() {
     AppConstants.prefThemeMode: 'dark',
     AppConstants.prefThemeId: 'nord',
     AppConstants.prefLocale: 'en',
-    AppConstants.prefFontFamily: 'Roboto',
+    AppConstants.prefFontFamily: 'JetBrains Mono',
     AppConstants.prefFontSize: 19.0,
     AppConstants.prefLineHeight: 1.9,
     AppConstants.prefHapticIntensity: 'off',
@@ -212,7 +212,7 @@ void main() {
   });
 
   // Il test più "esposto" del file: pompa l'app intera come `widget_test.dart`
-  // (stessa esposizione a `google_fonts` e a SQLite). Se in CI risultasse
+  // (stessa esposizione ai font inclusi e a SQLite). Se in CI risultasse
   // instabile si può togliere da solo senza perdere le garanzie dei test sopra.
   group('primo frame di ScriptaApp', () {
     setUp(() async {

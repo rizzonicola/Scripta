@@ -125,7 +125,7 @@
   "creditRiverpod": "flutter_riverpod pour l'état réactif et l'injection de dépendances",
   "creditMarkdown": "flutter_md et flutter_math_fork pour Markdown, GFM et formules",
   "creditStorage": "shared_preferences et path_provider pour préférences et fichiers locaux",
-  "creditFonts": "google_fonts pour la typographie de l'interface",
+  "creditFonts": "Inter et JetBrains Mono integres (SIL OFL) pour la typographie",
   "creditSyncArchive": "http, archive et file_picker pour API REST, ZIP et fichiers",
   "creditUtility": "uuid et url_launcher pour identifiants et liens externes",
   "replayTutorial": "Revoir le Tutoriel Initial",

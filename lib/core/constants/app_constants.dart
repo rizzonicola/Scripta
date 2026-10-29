@@ -1,6 +1,6 @@
 class AppConstants {
   static const String appName = 'Scripta';
-  static const String appVersion = '1.0.5';
+  static const String appVersion = '1.0.7';
   static const String githubUrl = 'https://github.com/rizzonicola/Scripta';
 
   // NESSUN server di default: l'app non deve mai inviare credenziali o dati
@@ -11,12 +11,7 @@ class AppConstants {
 
   // Tipografia: stessi limiti usati da Slider e dropdown in Impostazioni,
   // così la normalizzazione dei valori remoti non può divergere dalla UI.
-  static const List<String> supportedFontFamilies = [
-    'Inter',
-    'JetBrains Mono',
-    'Merriweather',
-    'Roboto',
-  ];
+  static const List<String> supportedFontFamilies = ['Inter', 'JetBrains Mono'];
   static const double minFontSize = 13.0;
   static const double maxFontSize = 24.0;
   static const double minLineHeight = 1.2;

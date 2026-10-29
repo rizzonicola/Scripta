@@ -34,7 +34,6 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    AppTheme.debugSkipGoogleFonts = true;
     AppDatabase.ensureFactoryInitialized();
     await AppDatabase.instance.close();
     AppDatabase.debugDatabasePathOverride = p.join(
@@ -44,7 +43,6 @@ void main() {
   });
 
   tearDown(() async {
-    AppTheme.debugSkipGoogleFonts = false;
     await AppDatabase.instance.close();
     AppDatabase.debugDatabasePathOverride = null;
   });
