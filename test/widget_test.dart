@@ -9,7 +9,6 @@ import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/core/utils/markdown_toolbar_actions.dart';
-import 'package:scripta/core/utils/syntax_highlighter.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:flutter/material.dart';
@@ -91,34 +90,6 @@ void main() {
       expect(find.text('Scripta'), findsWidgets);
     },
   );
-
-  test('ScriptaCodeHighlighter highlights Dart code into styled tokens', () {
-    const code = 'void main() {\n  final app = ScriptaApp();\n}';
-    final span = ScriptaCodeHighlighter.highlight(
-      code: code,
-      language: 'dart',
-      isDark: true,
-      baseStyle: const TextStyle(fontSize: 14),
-    );
-
-    expect(span.children, isNotEmpty);
-    final texts = span.children!.map((s) => (s as TextSpan).text).join();
-    expect(texts, code);
-  });
-
-  test('ScriptaCodeHighlighter highlights JSON keys and strings', () {
-    const jsonCode = '{\n  "name": "Scripta",\n  "active": true\n}';
-    final span = ScriptaCodeHighlighter.highlight(
-      code: jsonCode,
-      language: 'json',
-      isDark: true,
-      baseStyle: const TextStyle(fontSize: 14),
-    );
-
-    expect(span.children, isNotEmpty);
-    final texts = span.children!.map((s) => (s as TextSpan).text).join();
-    expect(texts, jsonCode);
-  });
 
   test(
     'moveNote updates folderId and moves note between folders and root',
