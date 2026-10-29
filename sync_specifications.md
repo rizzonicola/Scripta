@@ -173,12 +173,13 @@ L'unico endpoint di sincronizzazione: **delta sync** basato su ID. Il client inv
     {
       "id": "n-1", "title": "Riunione", "content": "# Riunione\n\n...",
       "folder_id": "f-1", "is_favorite": false, "is_pinned": false, "order_index": 0,
-      "updated_at": 1756900000000, "deleted_at": null
+      "created_at": 1756800000000, "updated_at": 1756900000000, "deleted_at": null
     }
   ]
 }
 ```
 - `last_synced_at`: il cursore locale (`sync_meta.last_synced_at`); `0` alla prima sync.
+- `created_at` è **obbligatorio** per le note: un valore assente o `<= 0` fa fallire l'intero batch con `422` e `reason=invalid_created_at`. L'app `v1.0.7` lo invia sempre.
 - Le cartelle sono inviate **con i genitori prima dei figli** (`sortFoldersParentsFirst`). Il server accetta comunque anche l'ordine inverso, se il genitore è nello stesso batch.
 
 **Response 200**:
@@ -310,7 +311,7 @@ Client invia una riga (id, updated_at, ...)
 2. **Server, pull**: restituisce le righe con `synced_at` in `(last_synced_at, server_time]`, calcolate **dopo** il push. `synced_at` è uno stamp **del server**, monotono (e persistente: non scende dopo un riavvio del server con l'orologio indietro), distinto da `updated_at`. Il cursore `server_time` è quindi sicuro anche con orologi dei client sbagliati.
 3. **Cancellazioni**: un tombstone è una riga con `deleted_at`. Cancellare una cartella cancella a cascata sottocartelle e note attive. I tombstone si conservano 30 giorni.
 4. **Client, applicazione della risposta** (`applyRemoteLWWBatch`): la copia remota vince se la riga locale non esiste, è **pulita** (`dirty = 0`) o è meno recente; una modifica locale sporca e più recente **non** viene mai sovrascritta (partirà al giro successivo). `is_expanded` è solo locale e si preserva sempre.
-5. **Rifiuti (`422`)**: il server annulla l'intero batch. Il client ripara ciò che è stato rifiutato: una nota con `folder_id` sconosciuto va fuori da ogni cartella, una cartella con `parent_id` sconosciuto diventa radice; le righe riparate risultano modificate (`dirty`, `updated_at` nuovo) e vengono rinviate. Nessun contenuto va perso.
+5. **Rifiuti (`422`)**: il server annulla l'intero batch. Il client ripara ciò che è stato rifiutato: una nota con `folder_id` sconosciuto va fuori da ogni cartella, una cartella con `parent_id` sconosciuto diventa radice; le righe riparate risultano modificate (`dirty`, `updated_at` nuovo) e vengono rinviate. Nessun contenuto va perso. Un rifiuto `invalid_created_at` non è riparabile dal client: indica un payload non conforme al contratto corrente.
 6. **Ordine**: il server richiede che il genitore di una cartella esista quando la scrive. Il client invia i genitori prima dei figli; il server accetta anche l'ordine inverso se il genitore è nel batch; un genitore inesistente o un ciclo fra cartelle nuove è rifiutato.
 
 ### 5.1 Strategia di Debouncing & Concorrenza Client/Server
