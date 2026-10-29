@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kIsWeb, visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -29,6 +30,7 @@ class SecureStorageService {
   static const _userIdKey = 'inkflow_user_id';
 
   final FlutterSecureStorage _storage;
+  final bool? _fallbackEnabledOverride;
 
   const SecureStorageService([FlutterSecureStorage? storage])
       : _storage = storage ??
@@ -39,15 +41,23 @@ class SecureStorageService {
               iOptions: IOSOptions(
                 accessibility: KeychainAccessibility.first_unlock,
               ),
-            );
+            ),
+        _fallbackEnabledOverride = null;
+
+  @visibleForTesting
+  const SecureStorageService.withFallback(
+    FlutterSecureStorage storage, {
+    required bool fallbackEnabled,
+  })  : _storage = storage,
+        _fallbackEnabledOverride = fallbackEnabled;
 
   /// Prefisso delle chiavi usate SOLO dal fallback su SharedPreferences.
   static const _fallbackPrefix = 'scripta_secure_fallback_';
 
   /// Il fallback è attivo solo su iOS/macOS (vedi commento di classe).
-  static bool get _fallbackEnabled {
+  bool get _fallbackEnabled {
     if (kIsWeb) return false;
-    return Platform.isIOS || Platform.isMacOS;
+    return _fallbackEnabledOverride ?? (Platform.isIOS || Platform.isMacOS);
   }
 
   Future<void> _write(String key, String value) async {
