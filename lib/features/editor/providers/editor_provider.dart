@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/services/session_state_service.dart';
 import '../models/editor_state_model.dart';
 
-/// Stato UI locale dell'editor (modalità, focus mode, undo/redo).
+/// Stato UI locale dell'editor (modalità e focus mode).
 ///
 /// Migrato dalla legacy `StateNotifier` API alla nuova `Notifier` API di
 /// Riverpod 3: lo stato iniziale è sincrono (nessun caricamento asincrono),
@@ -12,8 +12,8 @@ import '../models/editor_state_model.dart';
 /// chiusura dell'app: parte da quella dell'ultima sessione, letta prima del
 /// primo frame (vedi [sessionSnapshotProvider]), e viene risalvata a ogni
 /// cambio da `sessionPersistenceProvider` (shell/session_persistence.dart).
-/// Focus mode e undo/redo restano volutamente effimeri: ripartire a schermo
-/// intero senza barre sarebbe disorientante.
+/// Il focus mode resta volutamente effimero: ripartire a schermo intero senza
+/// barre sarebbe disorientante.
 class EditorNotifier extends Notifier<EditorStateModel> {
   @override
   EditorStateModel build() {
@@ -34,10 +34,6 @@ class EditorNotifier extends Notifier<EditorStateModel> {
 
   void exitFocusMode() {
     state = state.copyWith(isFocusMode: false);
-  }
-
-  void setUndoRedoState({required bool canUndo, required bool canRedo}) {
-    state = state.copyWith(canUndo: canUndo, canRedo: canRedo);
   }
 }
 

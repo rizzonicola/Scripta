@@ -3,27 +3,16 @@ enum EditorMode { edit, readOnly }
 class EditorStateModel {
   final EditorMode mode;
   final bool isFocusMode;
-  final bool canUndo;
-  final bool canRedo;
 
   const EditorStateModel({
     this.mode = EditorMode.edit,
     this.isFocusMode = false,
-    this.canUndo = false,
-    this.canRedo = false,
   });
 
-  EditorStateModel copyWith({
-    EditorMode? mode,
-    bool? isFocusMode,
-    bool? canUndo,
-    bool? canRedo,
-  }) {
+  EditorStateModel copyWith({EditorMode? mode, bool? isFocusMode}) {
     return EditorStateModel(
       mode: mode ?? this.mode,
       isFocusMode: isFocusMode ?? this.isFocusMode,
-      canUndo: canUndo ?? this.canUndo,
-      canRedo: canRedo ?? this.canRedo,
     );
   }
 
@@ -36,11 +25,9 @@ class EditorStateModel {
     if (identical(this, other)) return true;
     return other is EditorStateModel &&
         other.mode == mode &&
-        other.isFocusMode == isFocusMode &&
-        other.canUndo == canUndo &&
-        other.canRedo == canRedo;
+        other.isFocusMode == isFocusMode;
   }
 
   @override
-  int get hashCode => Object.hash(mode, isFocusMode, canUndo, canRedo);
+  int get hashCode => Object.hash(mode, isFocusMode);
 }

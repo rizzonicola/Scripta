@@ -32,7 +32,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
     final theme = Theme.of(context);
     // Solo il campo effettivamente usato (mode): evita di ricostruire
     // l'intera TopAppBar per cambi di editorProvider che non riguardano
-    // questo widget (es. canUndo/canRedo, isFocusMode).
+    // questo widget (es. isFocusMode).
     final editorMode = ref.watch(editorProvider.select((s) => s.mode));
     final screenType = ResponsiveBreakpoints.getScreenType(context);
     final isDesktop = screenType == DeviceScreenType.desktop;
