@@ -394,5 +394,33 @@ void main() {
       );
       expect(await service.checkHealth('http://example.com'), isFalse);
     });
+
+    test(
+      'rifiuta credenziali, query e frammenti nell\'URL del server',
+      () async {
+        final service = SyncApiService(
+          MockClient((request) async {
+            fail('nessuna richiesta deve partire con un URL non valido');
+          }),
+        );
+
+        for (final url in [
+          'https://user:password@example.com',
+          'https://example.com?token=segreto',
+          'https://example.com#frammento',
+        ]) {
+          await expectLater(
+            service.login(baseUrl: url, username: 'u', password: 'p'),
+            throwsA(
+              predicate((e) => e is SyncApiException && e.statusCode == 400),
+            ),
+          );
+        }
+        expect(
+          await service.checkHealth('https://user:password@example.com'),
+          isFalse,
+        );
+      },
+    );
   });
 }

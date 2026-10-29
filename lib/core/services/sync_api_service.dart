@@ -231,6 +231,12 @@ class SyncApiService {
         400,
       );
     }
+    if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+      throw const SyncApiException(
+        'URL del server non valido: non includere credenziali, query o frammenti',
+        400,
+      );
+    }
     // Il token viaggia nell'header Authorization: su http in chiaro può essere
     // letto da chiunque sulla rete. Consentiamo http solo verso il loopback
     // (server di sviluppo in locale/emulatore).
