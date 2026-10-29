@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,6 +13,8 @@ import '../../features/notes/providers/notes_provider.dart';
 import '../../features/settings/providers/settings_provider.dart';
 import '../../features/sync/models/sync_models.dart';
 import 'export_archive.dart';
+
+typedef _SaveResult = ({bool saved, String? fallbackPath});
 
 class ExportService {
   static String _sanitizeFileName(String name) => sanitizeFileName(name);
@@ -50,7 +52,7 @@ class ExportService {
   }
 
   /// Helper to save file across platforms with native picker and Android SAF support
-  static Future<bool> _saveExportFile({
+  static Future<_SaveResult> _saveExportFile({
     required String fileName,
     required Uint8List bytes,
     required String mimeType,
@@ -66,27 +68,41 @@ class ExportService {
         type: FileType.custom,
         allowedExtensions: allowedExtensions,
       );
-      return uri != null;
-    } catch (pickerError) {
-      // Mobile fallback if system SAF picker activity cannot be resolved
+      return (saved: uri != null, fallbackPath: null);
+    } catch (_) {
+      // Se il picker di sistema non è disponibile, il fallback resta nella
+      // directory privata dell'app: mai storage esterno condiviso o
+      // app-specific, dove un backup non cifrato sarebbe leggibile da altre
+      // app (SEC-03). Il percorso viene mostrato all'utente.
       if (Platform.isAndroid || Platform.isIOS) {
-        Directory? dir;
-        if (Platform.isAndroid) {
-          try {
-            dir = await getDownloadsDirectory();
-          } catch (_) {}
-        }
-        dir ??=
-            await getExternalStorageDirectory() ??
-            await getApplicationDocumentsDirectory();
-
-        final file = File('${dir.path}/$fileName');
+        final dir = await getApplicationDocumentsDirectory();
+        final file = await uniqueFallbackFile(dir, fileName);
         await file.writeAsBytes(bytes);
-        return true;
+        return (saved: true, fallbackPath: file.path);
       }
       rethrow;
     }
   }
+
+  /// Nome univoco nel fallback, per non sovrascrivere un export precedente.
+  @visibleForTesting
+  static Future<File> uniqueFallbackFile(Directory dir, String fileName) async {
+    final dot = fileName.lastIndexOf('.');
+    final base = dot > 0 ? fileName.substring(0, dot) : fileName;
+    final extension = dot > 0 ? fileName.substring(dot) : '';
+    var candidate = File('${dir.path}/$fileName');
+    var suffix = 2;
+    while (await candidate.exists()) {
+      candidate = File('${dir.path}/$base-$suffix$extension');
+      suffix++;
+    }
+    return candidate;
+  }
+
+  static String _successMessage(String message, String? fallbackPath) =>
+      fallbackPath == null
+      ? message
+      : '$message\nFile salvato in: $fallbackPath';
 
   /// Export a single note as Markdown (.md)
   static Future<void> exportNoteAsMarkdown(
@@ -103,7 +119,7 @@ class ExportService {
     );
 
     try {
-      final saved = await _saveExportFile(
+      final saveResult = await _saveExportFile(
         fileName: fileName,
         bytes: bytes,
         mimeType: 'text/markdown',
@@ -111,10 +127,15 @@ class ExportService {
         allowedExtensions: ['md'],
       );
 
-      if (saved && context.mounted) {
+      if (saveResult.saved && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Nota esportata con successo ($fileName)'),
+            content: Text(
+              _successMessage(
+                'Nota esportata con successo ($fileName)',
+                saveResult.fallbackPath,
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -163,7 +184,7 @@ class ExportService {
         settings: null,
       ));
 
-      final saved = await _saveExportFile(
+      final saveResult = await _saveExportFile(
         fileName: zipFileName,
         bytes: result.bytes,
         mimeType: 'application/zip',
@@ -171,11 +192,14 @@ class ExportService {
         allowedExtensions: ['zip'],
       );
 
-      if (saved && context.mounted) {
+      if (saveResult.saved && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Cartella esportata con successo (${result.noteCount} note in $zipFileName)',
+              _successMessage(
+                'Cartella esportata con successo (${result.noteCount} note in $zipFileName)',
+                saveResult.fallbackPath,
+              ),
             ),
             behavior: SnackBarBehavior.floating,
           ),
@@ -215,7 +239,7 @@ class ExportService {
         settings: _settingsSnapshot(ref),
       ));
 
-      final saved = await _saveExportFile(
+      final saveResult = await _saveExportFile(
         fileName: zipFileName,
         bytes: result.bytes,
         mimeType: 'application/zip',
@@ -223,11 +247,14 @@ class ExportService {
         allowedExtensions: ['zip'],
       );
 
-      if (saved && context.mounted) {
+      if (saveResult.saved && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Backup completato (${result.noteCount} note esportate in $zipFileName)',
+              _successMessage(
+                'Backup completato (${result.noteCount} note esportate in $zipFileName)',
+                saveResult.fallbackPath,
+              ),
             ),
             behavior: SnackBarBehavior.floating,
           ),
