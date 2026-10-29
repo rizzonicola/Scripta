@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants/app_constants.dart';
+import '../core/l10n/app_localizations.dart';
 import '../core/services/session_state_service.dart';
 import '../core/utils/responsive_breakpoints.dart';
 import '../features/editor/presentation/note_editor_pane.dart';
 import '../features/editor/providers/editor_provider.dart';
 import '../features/folders/presentation/folder_tree_view.dart';
+import '../features/folders/providers/folder_provider.dart';
 import '../features/notes/presentation/notes_list_view.dart';
 import '../features/notes/providers/notes_provider.dart';
 import '../features/onboarding/presentation/onboarding_dialog.dart';
@@ -16,6 +18,61 @@ import '../features/onboarding/providers/onboarding_provider.dart';
 import '../features/sync/providers/sync_provider.dart';
 import 'app_shortcuts_scope.dart';
 import 'top_app_bar.dart';
+
+class _SaveErrorBanner extends StatelessWidget {
+  const _SaveErrorBanner({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final foreground = theme.colorScheme.onErrorContainer;
+
+    return Material(
+      color: theme.colorScheme.errorContainer,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.error_outline_rounded, color: foreground),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.saveErrorTitle,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      l10n.saveErrorBody,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: foreground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: onRetry,
+                style: TextButton.styleFrom(foregroundColor: foreground),
+                child: Text(l10n.retry),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 enum MobileActiveView { notesList, editor }
 
@@ -103,6 +160,11 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     unawaited(SessionStateService.saveMobileEditorOpen(false));
   }
 
+  void _retryPendingWrites() {
+    unawaited(ref.read(notesProvider.notifier).retryFailedWrites());
+    unawaited(ref.read(folderProvider.notifier).retryPendingWrites());
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<String?>(notesProvider.select((s) => s.activeNoteId), (
@@ -131,6 +193,9 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     final screenType = ResponsiveBreakpoints.getScreenType(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final hasSaveError =
+        ref.watch(notesProvider.select((s) => s.hasPendingWriteError)) ||
+        ref.watch(folderProvider.select((s) => s.hasPendingWriteError));
 
     final systemOverlay = SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -163,7 +228,12 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
         onNotesListRequested: screenType == DeviceScreenType.mobile
             ? _showMobileNotesList
             : null,
-        child: shellContent,
+        child: Column(
+          children: [
+            if (hasSaveError) _SaveErrorBanner(onRetry: _retryPendingWrites),
+            Expanded(child: shellContent),
+          ],
+        ),
       ),
     );
   }

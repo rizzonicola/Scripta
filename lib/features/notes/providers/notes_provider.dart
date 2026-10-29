@@ -56,11 +56,19 @@ class NotesState {
   final String? activeNoteId;
   final NoteSortOrder sortOrder;
 
+  /// Errore dell'ultima scrittura locale non riuscita; `null` se non ce ne
+  /// sono in sospeso. La UI mostra un banner non bloccante e il notifier
+  /// ritenta da solo con backoff.
+  final String? lastWriteError;
+
+  bool get hasPendingWriteError => lastWriteError != null;
+
   const NotesState({
     this.notes = const [],
     this.searchQuery = '',
     this.activeNoteId,
     this.sortOrder = NoteSortOrder.updatedDesc,
+    this.lastWriteError,
   });
 
   NotesState copyWith({
@@ -68,12 +76,16 @@ class NotesState {
     String? searchQuery,
     String? Function()? activeNoteId,
     NoteSortOrder? sortOrder,
+    String? Function()? lastWriteError,
   }) {
     return NotesState(
       notes: notes ?? this.notes,
       searchQuery: searchQuery ?? this.searchQuery,
       activeNoteId: activeNoteId != null ? activeNoteId() : this.activeNoteId,
       sortOrder: sortOrder ?? this.sortOrder,
+      lastWriteError: lastWriteError != null
+          ? lastWriteError()
+          : this.lastWriteError,
     );
   }
 
@@ -90,7 +102,8 @@ class NotesState {
         identical(other.notes, notes) &&
         other.searchQuery == searchQuery &&
         other.activeNoteId == activeNoteId &&
-        other.sortOrder == sortOrder;
+        other.sortOrder == sortOrder &&
+        other.lastWriteError == lastWriteError;
   }
 
   @override
@@ -99,6 +112,7 @@ class NotesState {
     searchQuery,
     activeNoteId,
     sortOrder,
+    lastWriteError,
   );
 }
 
@@ -251,15 +265,113 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
   bool _initialLoadComplete = false;
 
+  /// Note la cui ultima scrittura è fallita, indicizzate per id: un nuovo
+  /// salvataggio della stessa nota sostituisce la versione vecchia, così il
+  /// retry non può riscrivere contenuto superato.
+  final Map<String, NoteModel> _failedNotes = <String, NoteModel>{};
+  Timer? _writeRetryTimer;
+  int _writeRetryAttempt = 0;
+
+  static const int _maxWriteRetries = 4;
+  static const Duration _writeRetryBase = Duration(milliseconds: 250);
+
   /// Vero quando il primo caricamento dal DB è terminato.
   @visibleForTesting
   bool get initialLoadComplete => _initialLoadComplete;
 
+  void _markWriteError(Object error) {
+    if (!mounted) return;
+    final message = error.toString();
+    if (state.lastWriteError == message) return;
+    state = state.copyWith(lastWriteError: () => message);
+  }
+
+  void _clearWriteError() {
+    if (!mounted || state.lastWriteError == null) return;
+    state = state.copyWith(lastWriteError: () => null);
+  }
+
+  void _onNoteWriteSucceeded(String noteId) {
+    _failedNotes.remove(noteId);
+    if (_failedNotes.isEmpty && _pendingNote == null) {
+      _clearWriteError();
+    }
+  }
+
+  void _onNoteWriteFailed(
+    NoteModel note,
+    Object error,
+    StackTrace stackTrace, {
+    bool scheduleRetry = true,
+  }) {
+    _failedNotes[note.id] = note;
+    _markWriteError(error);
+    if (scheduleRetry) _scheduleWriteRetry();
+  }
+
+  void _scheduleWriteRetry() {
+    if (!mounted || _writeRetryTimer?.isActive == true) return;
+    final exponent = _writeRetryAttempt.clamp(0, _maxWriteRetries);
+    final delay = _writeRetryBase * (1 << exponent);
+    _writeRetryAttempt++;
+    _writeRetryTimer = Timer(delay, () {
+      _writeRetryTimer = null;
+      unawaited(retryFailedWrites());
+    });
+  }
+
+  /// Ritenta subito le scritture fallite (usato dal banner e dai test).
+  Future<void> retryFailedWrites() async {
+    _writeRetryTimer?.cancel();
+    _writeRetryTimer = null;
+    if (!mounted || _failedNotes.isEmpty) {
+      _writeRetryAttempt = 0;
+      _clearWriteError();
+      return;
+    }
+
+    for (final entry in _failedNotes.entries.toList()) {
+      if (!mounted) return;
+      // Una nuova modifica della stessa nota è già in attesa del debounce:
+      // scriverà la versione più recente, non questa.
+      if (_pendingNote?.id == entry.key) continue;
+      // Nel frattempo un altro salvataggio può aver risolto o sostituito la
+      // voce: in quel caso non riscrivere la fotografia vecchia.
+      if (_failedNotes[entry.key] != entry.value) continue;
+      _failedNotes.remove(entry.key);
+      try {
+        await _trackPersist(
+          () => _dao.upsert(entry.value.toRow()),
+          rethrowOnError: true,
+        );
+      } catch (e, st) {
+        debugPrint('NotesNotifier: retry scrittura fallito: $e\n$st');
+        _failedNotes[entry.key] = entry.value;
+      }
+    }
+
+    if (!mounted) return;
+    if (_failedNotes.isEmpty) {
+      _writeRetryAttempt = 0;
+      if (_pendingNote == null) _clearWriteError();
+    } else {
+      _scheduleWriteRetry();
+    }
+  }
+
   /// Esegue [op] tracciandola in [_inflightWrites]. Il Future restituito non
   /// fallisce mai: un errore di I/O viene loggato invece di diventare
   /// un'eccezione asincrona non gestita.
-  Future<void> _persist(Future<void> Function() op) =>
-      _trackPersist(op, rethrowOnError: false);
+  Future<void> _persist(
+    Future<void> Function() op, {
+    void Function()? onSuccess,
+    void Function(Object error, StackTrace stackTrace)? onError,
+  }) => _trackPersist(
+    op,
+    rethrowOnError: false,
+    onSuccess: onSuccess,
+    onError: onError,
+  );
 
   /// Variante per le scritture che il chiamante DEVE poter verificare
   /// (import, flush prima della sync): l'errore viene propagato, così non si
@@ -270,12 +382,16 @@ class NotesNotifier extends StateNotifier<NotesState> {
   Future<void> _trackPersist(
     Future<void> Function() op, {
     required bool rethrowOnError,
+    void Function()? onSuccess,
+    void Function(Object error, StackTrace stackTrace)? onError,
   }) {
     final Future<void> f = () async {
       try {
         await op();
+        onSuccess?.call();
       } catch (e, st) {
         debugPrint('NotesNotifier: scrittura su SQLite fallita: $e\n$st');
+        onError?.call(e, st);
         if (rethrowOnError) rethrow;
       }
     }();
@@ -313,6 +429,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // realmente il Future restituito da flushPendingSaves, altrimenti la
     // sync rischia di leggere il database PRIMA che questa scrittura sia
     // stata effettivamente committata (vedi flushPendingSaves).
+    _writeRetryTimer?.cancel();
+    _writeRetryTimer = null;
     flushPendingSavesInBackground();
     super.dispose();
   }
@@ -493,7 +611,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // cascade di una cartella), il timer non deve riscriverla: sarebbe un
     // upsert con `deleted_at = NULL` che fa "risorgere" un tombstone.
     if (pending != null && state.notes.any((n) => n.id == pending.id)) {
-      _pendingWrite = _persistStrict(() => _dao.upsert(pending.toRow()));
+      _pendingWrite = _persistStrict(() => _dao.upsert(pending.toRow()))
+          .then<void>(
+            (_) => _onNoteWriteSucceeded(pending.id),
+            onError: (Object e, StackTrace st) {
+              _onNoteWriteFailed(pending, e, st);
+              Error.throwWithStackTrace(e, st);
+            },
+          );
     }
 
     // Attende anche una scrittura eventualmente già avviata (dal debounce
@@ -509,6 +634,19 @@ class NotesNotifier extends StateNotifier<NotesState> {
           _pendingWrite = null;
         }
       }
+    }
+
+    // Un autosave precedente può essere fallito senza che il chiamante se ne
+    // sia accorto (scrittura fire-and-forget). Prima di dichiarare il flush
+    // completato si ritenta subito; se il DB continua a rifiutare, l'errore
+    // viene propagato a chi deve garantire la coerenza (es. la sync).
+    if (_failedNotes.isNotEmpty) {
+      await retryFailedWrites();
+    }
+    if (_failedNotes.isNotEmpty) {
+      throw StateError(
+        state.lastWriteError ?? 'Salvataggio locale non riuscito',
+      );
     }
   }
 
@@ -533,6 +671,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
   Future<void> prepareForAccountReset() async {
     _saveDebounceTimer?.cancel();
     _saveDebounceTimer = null;
+    _writeRetryTimer?.cancel();
+    _writeRetryTimer = null;
+    _writeRetryAttempt = 0;
+    _failedNotes.clear();
     _pendingNote = null;
     final pendingWrite = _pendingWrite;
     if (pendingWrite != null) {
@@ -553,6 +695,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       notes: const [],
       activeNoteId: () => null,
       searchQuery: '',
+      lastWriteError: () => null,
     );
   }
 
@@ -564,9 +707,20 @@ class NotesNotifier extends StateNotifier<NotesState> {
       final toWrite = _pendingNote;
       _pendingNote = null;
       if (toWrite != null && state.notes.any((n) => n.id == toWrite.id)) {
-        _pendingWrite = _persist(() => _dao.upsert(toWrite.toRow()));
+        _saveNote(toWrite);
       }
     });
+  }
+
+  void _saveNote(NoteModel note) {
+    // Una scrittura nuova della stessa nota sostituisce l'eventuale
+    // fotografia fallita: il retry non deve riscrivere testo superato.
+    _failedNotes.remove(note.id);
+    _pendingWrite = _persist(
+      () => _dao.upsert(note.toRow()),
+      onSuccess: () => _onNoteWriteSucceeded(note.id),
+      onError: (e, st) => _onNoteWriteFailed(note, e, st),
+    );
   }
 
   /// Confronto per l'ordine manuale di una cartella: le note presenti
@@ -992,7 +1146,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       notes: _sort([newNote, ...state.notes], state.sortOrder),
       activeNoteId: () => newNote.id,
     );
-    unawaited(_persist(() => _dao.upsert(newNote.toRow())));
+    _saveNote(newNote);
     return newNote;
   }
 
@@ -1051,6 +1205,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
     try {
       await _persistStrict(() => _dao.upsert(updatedNote.toRow()));
+      _failedNotes.remove(id);
     } catch (_) {
       if (mounted) state = state.copyWith(notes: previousNotes);
       rethrow;
@@ -1085,6 +1240,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     );
     try {
       await _persistStrict(() => _dao.upsert(tombstoneRow));
+      _failedNotes.remove(id);
     } catch (_) {
       if (mounted) {
         state = state.copyWith(

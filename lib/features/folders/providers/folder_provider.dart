@@ -20,17 +20,31 @@ class FolderState {
   final List<FolderNode> rootFolders;
   final String? selectedFolderId; // null = "All Notes"
 
-  const FolderState({this.rootFolders = const [], this.selectedFolderId});
+  /// Errore dell'ultima scrittura locale non riuscita; `null` se non ce ne
+  /// sono in sospeso. La UI mostra un banner non bloccante.
+  final String? lastWriteError;
+
+  bool get hasPendingWriteError => lastWriteError != null;
+
+  const FolderState({
+    this.rootFolders = const [],
+    this.selectedFolderId,
+    this.lastWriteError,
+  });
 
   FolderState copyWith({
     List<FolderNode>? rootFolders,
     String? Function()? selectedFolderId,
+    String? Function()? lastWriteError,
   }) {
     return FolderState(
       rootFolders: rootFolders ?? this.rootFolders,
       selectedFolderId: selectedFolderId != null
           ? selectedFolderId()
           : this.selectedFolderId,
+      lastWriteError: lastWriteError != null
+          ? lastWriteError()
+          : this.lastWriteError,
     );
   }
 
@@ -47,12 +61,16 @@ class FolderState {
     if (identical(this, other)) return true;
     return other is FolderState &&
         identical(other.rootFolders, rootFolders) &&
-        other.selectedFolderId == selectedFolderId;
+        other.selectedFolderId == selectedFolderId &&
+        other.lastWriteError == lastWriteError;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(identityHashCode(rootFolders), selectedFolderId);
+  int get hashCode => Object.hash(
+    identityHashCode(rootFolders),
+    selectedFolderId,
+    lastWriteError,
+  );
 }
 
 /// Gestisce l'albero delle cartelle sopra il database locale SQLite
@@ -102,9 +120,17 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   /// Coda delle scritture su SQLite: mantiene l'ordine UI (crea -> rinomina ->
   /// elimina) e impedisce che un upsert partito prima di una delete la
-  /// faccia "risorgere" scrivendo dopo la cascade. Gli errori vengono
-  /// loggati ma non bloccano le scritture successive.
+  /// faccia "risorgere" scrivendo dopo la cascade. Un errore viene ritentato
+  /// con backoff PRIMA di far avanzare la coda; dopo l'ultimo tentativo
+  /// fallito lo stato espone l'errore e la coda prosegue.
   Future<void> _writeQueue = Future<void>.value();
+
+  Future<void> Function()? _lastFailedWrite;
+  int _writeSerial = 0;
+  int _lastFailedWriteSerial = -1;
+
+  static const int _maxWriteRetries = 3;
+  static const Duration _writeRetryBase = Duration(milliseconds: 250);
 
   bool _initialLoadComplete = false;
 
@@ -112,12 +138,68 @@ class FolderNotifier extends StateNotifier<FolderState> {
   @visibleForTesting
   bool get initialLoadComplete => _initialLoadComplete;
 
+  void _markWriteError(Object error) {
+    if (!mounted) return;
+    final message = error.toString();
+    if (state.lastWriteError == message) return;
+    state = state.copyWith(lastWriteError: () => message);
+  }
+
+  void _clearWriteError() {
+    if (!mounted || state.lastWriteError == null) return;
+    state = state.copyWith(lastWriteError: () => null);
+  }
+
   Future<void> _enqueueWrite(Future<void> Function() op) {
-    final next = _writeQueue.then((_) => op());
+    final serial = ++_writeSerial;
+    final next = _writeQueue.then((_) => _runWriteWithRetry(op, serial));
     _writeQueue = next.catchError((Object e, StackTrace st) {
-      debugPrint('FolderNotifier: scrittura su SQLite fallita: $e\n$st');
+      debugPrint('FolderNotifier: coda scritture fallita: $e\n$st');
     });
     return _writeQueue;
+  }
+
+  Future<void> _runWriteWithRetry(
+    Future<void> Function() op,
+    int serial,
+  ) async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+    for (var attempt = 0; attempt <= _maxWriteRetries; attempt++) {
+      try {
+        await op();
+        _lastFailedWrite = null;
+        _lastFailedWriteSerial = -1;
+        _clearWriteError();
+        return;
+      } catch (e, st) {
+        lastError = e;
+        lastStackTrace = st;
+      }
+      if (attempt < _maxWriteRetries) {
+        await Future<void>.delayed(_writeRetryBase * (1 << attempt));
+        if (!mounted) return;
+      }
+    }
+
+    debugPrint(
+      'FolderNotifier: scrittura su SQLite fallita: $lastError\n$lastStackTrace',
+    );
+    if (!mounted) return;
+    _lastFailedWrite = op;
+    _lastFailedWriteSerial = serial;
+    _markWriteError(lastError!);
+  }
+
+  /// Ritenta subito l'ultima scrittura fallita, se nel frattempo non sono
+  /// state accodate altre mutazioni (che potrebbero renderla obsoleta).
+  Future<void> retryPendingWrites() async {
+    final op = _lastFailedWrite;
+    if (!mounted || op == null) return;
+    if (_lastFailedWriteSerial != _writeSerial) return;
+    _lastFailedWrite = null;
+    _lastFailedWriteSerial = -1;
+    await _enqueueWrite(op);
   }
 
   /// Attende che tutte le mutazioni già richieste siano state scritte.

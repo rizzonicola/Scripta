@@ -46,6 +46,16 @@ class AppLocalizationsIt extends AppLocalizations {
   String get save => 'Salva';
 
   @override
+  String get saveErrorTitle => 'Salvataggio non riuscito';
+
+  @override
+  String get saveErrorBody =>
+      'Le modifiche restano in memoria. Nuovo tentativo automatico in corso.';
+
+  @override
+  String get retry => 'Riprova';
+
+  @override
   String get searchNotes => 'Cerca note...';
 
   @override

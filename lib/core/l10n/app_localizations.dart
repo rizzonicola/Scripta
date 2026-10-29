@@ -172,6 +172,24 @@ abstract class AppLocalizations {
   /// **'Save'**
   String get save;
 
+  /// No description provided for @saveErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save changes'**
+  String get saveErrorTitle;
+
+  /// No description provided for @saveErrorBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes are still in memory. Retrying automatically.'**
+  String get saveErrorBody;
+
+  /// No description provided for @retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get retry;
+
   /// No description provided for @searchNotes.
   ///
   /// In en, this message translates to:
