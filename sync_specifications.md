@@ -179,7 +179,7 @@ L'unico endpoint di sincronizzazione: **delta sync** basato su ID. Il client inv
 }
 ```
 - `last_synced_at`: il cursore locale (`sync_meta.last_synced_at`); `0` alla prima sync.
-- `created_at` è **obbligatorio** per le note: un valore assente o `<= 0` fa fallire l'intero batch con `422` e `reason=invalid_created_at`. L'app `v1.0.7` lo invia sempre.
+- `created_at` è **obbligatorio** per le note: un valore assente o `<= 0` fa fallire l'intero batch con `422` e `reason=invalid_created_at`. L'app `v1.0.8` lo invia sempre.
 - Le cartelle sono inviate **con i genitori prima dei figli** (`sortFoldersParentsFirst`). Il server accetta comunque anche l'ordine inverso, se il genitore è nello stesso batch.
 
 **Response 200**:
