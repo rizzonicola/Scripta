@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart'
@@ -6,6 +7,80 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants/app_constants.dart';
+
+/// Sessione completa così com'è salvata nello storage sicuro: token, refresh
+/// token, URL del server e identità dell'account. Viene scritta con UNA sola
+/// operazione ([SecureStorageService.saveSession]): non esiste una finestra in
+/// cui un token del server nuovo resta abbinato all'URL del server vecchio.
+class StoredSession {
+  const StoredSession({
+    required this.token,
+    required this.refreshToken,
+    required this.serverUrl,
+    required this.username,
+    required this.userId,
+  });
+
+  final String token;
+  final String refreshToken;
+  final String serverUrl;
+  final String username;
+  final String userId;
+
+  /// Una sessione è utilizzabile solo se ha token, URL e identità: senza uno
+  /// di questi campi non si può sapere a quale server appartiene il token.
+  bool get isUsable =>
+      token.trim().isNotEmpty &&
+      serverUrl.trim().isNotEmpty &&
+      userId.trim().isNotEmpty;
+
+  StoredSession copyWith({String? token, String? refreshToken}) => StoredSession(
+    token: token ?? this.token,
+    refreshToken: refreshToken ?? this.refreshToken,
+    serverUrl: serverUrl,
+    username: username,
+    userId: userId,
+  );
+
+  Map<String, Object?> toJson() => {
+    'v': 1,
+    'token': token,
+    'refresh_token': refreshToken,
+    'server_url': serverUrl,
+    'username': username,
+    'user_id': userId,
+  };
+
+  static StoredSession? fromJsonString(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final token = decoded['token'];
+      final refreshToken = decoded['refresh_token'];
+      final serverUrl = decoded['server_url'];
+      final username = decoded['username'];
+      final userId = decoded['user_id'];
+      if (token is! String ||
+          refreshToken is! String ||
+          serverUrl is! String ||
+          username is! String ||
+          userId is! String) {
+        return null;
+      }
+      final session = StoredSession(
+        token: token,
+        refreshToken: refreshToken,
+        serverUrl: serverUrl,
+        username: username,
+        userId: userId,
+      );
+      return session.isUsable ? session : null;
+    } catch (_) {
+      return null;
+    }
+  }
+}
 
 /// Service providing encrypted local storage for sensitive authentication tokens and credentials.
 /// Uses Android Keystore + EncryptedSharedPreferences on Android,
@@ -30,6 +105,10 @@ class SecureStorageService {
   static const _serverUrlKey = 'inkflow_server_url';
   static const _usernameKey = 'inkflow_username';
   static const _userIdKey = 'inkflow_user_id';
+
+  /// Chiave unica della sessione atomica. Le chiavi separate sopra restano
+  /// solo per leggere/migrare installazioni precedenti e per i test.
+  static const _sessionKey = 'inkflow_session_v1';
 
   final FlutterSecureStorage _storage;
   final bool? _fallbackEnabledOverride;
@@ -109,6 +188,101 @@ class SecureStorageService {
   /// Stessa rete di sicurezza per il refresh token: senza Keychain resta
   /// valido solo per la sessione corrente.
   static String? _memoryOnlyRefreshToken;
+
+  /// Sessione completa tenuta in memoria quando il Keychain non è scrivibile:
+  /// i token non finiscono MAI in SharedPreferences.
+  static StoredSession? _memoryOnlySession;
+
+  /// Salva la sessione con UNA sola scrittura atomica. I token non usano mai
+  /// il fallback in chiaro: se il Keychain non è disponibile restano solo in
+  /// memoria per la sessione corrente.
+  Future<void> saveSession(StoredSession session) async {
+    if (!session.isUsable) {
+      throw ArgumentError('sessione non valida: token, URL o userId mancanti');
+    }
+    try {
+      await _storage.write(
+        key: _sessionKey,
+        value: jsonEncode(session.toJson()),
+      );
+      _memoryOnlySession = null;
+      _memoryOnlyToken = null;
+      _memoryOnlyRefreshToken = null;
+    } catch (e) {
+      if (!_fallbackEnabled) rethrow;
+      debugPrint(
+        'SecureStorage: Keychain non disponibile ($e): sessione solo in memoria.',
+      );
+      _memoryOnlySession = session;
+      _memoryOnlyToken = session.token;
+      _memoryOnlyRefreshToken = session.refreshToken;
+      try {
+        await _storage.delete(key: _sessionKey);
+      } catch (_) {}
+    }
+    // Le vecchie chiavi separate non devono poter resuscitare una sessione
+    // precedente dopo un logout o un downgrade. URL e userId restano: sono
+    // non segreti e servono al riconoscimento degli account legacy.
+    await _removeLegacySecretKeys();
+  }
+
+  Future<void> _removeLegacySecretKeys() async {
+    for (final key in [_tokenKey, _refreshTokenKey, _usernameKey]) {
+      try {
+        await _delete(key);
+      } catch (_) {}
+    }
+  }
+
+  /// Legge la sessione atomica. Se non esiste, migra una tantum le chiavi
+  /// separate delle versioni precedenti e la riscrive come bundle.
+  Future<StoredSession?> getSession() async {
+    final memorySession = _memoryOnlySession;
+    if (memorySession != null && memorySession.isUsable) return memorySession;
+
+    String? raw;
+    try {
+      raw = await _storage.read(key: _sessionKey);
+    } catch (e) {
+      if (!_fallbackEnabled) rethrow;
+      debugPrint(
+        'SecureStorage: Keychain non disponibile ($e), uso il fallback.',
+      );
+      return _legacySession();
+    }
+
+    if (raw != null) {
+      final parsed = StoredSession.fromJsonString(raw);
+      if (parsed != null) return parsed;
+      // Bundle presente ma illeggibile: non si riattiva una sessione dalle
+      // vecchie chiavi, che potrebbero appartenere a un altro account.
+      try {
+        await _storage.delete(key: _sessionKey);
+      } catch (_) {}
+      return null;
+    }
+
+    return _legacySession();
+  }
+
+  Future<StoredSession?> _legacySession() async {
+    final token = await getAuthToken();
+    if (token == null || token.isEmpty) return null;
+    final session = StoredSession(
+      token: token,
+      refreshToken: await getRefreshToken() ?? '',
+      serverUrl: await getServerUrl() ?? '',
+      username: await getUsername() ?? '',
+      userId: await getUserId() ?? '',
+    );
+    if (!session.isUsable) return null;
+    // Migrazione best effort: se la scrittura fallisce la sessione resta
+    // utilizzabile per questo avvio tramite le vecchie chiavi.
+    try {
+      await saveSession(session);
+    } catch (_) {}
+    return session;
+  }
 
   Future<void> saveAuthToken(String token) async {
     try {
@@ -204,10 +378,22 @@ class SecureStorageService {
   Future<void> clearAuth() async {
     _memoryOnlyToken = null;
     _memoryOnlyRefreshToken = null;
-    await _delete(_tokenKey);
-    await _delete(_refreshTokenKey);
-    await _delete(_usernameKey);
-    await _delete(_userIdKey);
+    _memoryOnlySession = null;
+    Object? firstError;
+    for (final key in [
+      _sessionKey,
+      _tokenKey,
+      _refreshTokenKey,
+      _usernameKey,
+      _userIdKey,
+    ]) {
+      try {
+        await _delete(key);
+      } catch (e) {
+        firstError ??= e;
+      }
+    }
     // Keep serverUrl for user convenience unless explicitly cleared
+    if (firstError != null) throw firstError;
   }
 }

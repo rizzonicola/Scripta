@@ -65,6 +65,53 @@ class _MemorySecureStorage extends SecureStorageService {
 
   @override
   Future<void> clearAuth() async => _memory.clear();
+
+  @override
+  Future<StoredSession?> getSession() async {
+    final token = _memory['token'];
+    final url = _memory['url'];
+    final uid = _memory['uid'];
+    if (token == null ||
+        token.isEmpty ||
+        url == null ||
+        url.isEmpty ||
+        uid == null ||
+        uid.isEmpty) {
+      return null;
+    }
+    return StoredSession(
+      token: token,
+      refreshToken: _memory['refresh'] ?? '',
+      serverUrl: url,
+      username: _memory['user'] ?? '',
+      userId: uid,
+    );
+  }
+
+  @override
+  Future<void> saveSession(StoredSession session) async {
+    _memory['token'] = session.token;
+    _memory['refresh'] = session.refreshToken;
+    _memory['url'] = session.serverUrl;
+    _memory['user'] = session.username;
+    _memory['uid'] = session.userId;
+  }
+}
+
+/// Storage che simula un Keychain che rifiuta UNA scrittura: serve a
+/// verificare che un login non riuscito non lasci il vecchio token abbinato
+/// al nuovo URL.
+class _FailingSaveSessionStorage extends _MemorySecureStorage {
+  bool failNextSave = false;
+
+  @override
+  Future<void> saveSession(StoredSession session) async {
+    if (failNextSave) {
+      failNextSave = false;
+      throw Exception('Keychain write failed');
+    }
+    await super.saveSession(session);
+  }
 }
 
 class _BlockingNotesDao extends NotesDao {
@@ -97,6 +144,7 @@ class _RaceServer {
   int syncCalls = 0;
   int settingsGets = 0;
   int settingsPuts = 0;
+  final List<String?> authHeaders = [];
   int blockSettingsCall = -1;
   int blockPutCall = -1;
   int blockSyncCall = -1;
@@ -109,6 +157,7 @@ class _RaceServer {
 
   Future<http.Response> _handle(http.Request request) async {
     const json200 = {'content-type': 'application/json'};
+    authHeaders.add(request.headers['authorization']);
     final path = request.url.path;
 
     if (path == '/api/v1/auth/login') {
@@ -189,14 +238,15 @@ class _RaceServer {
 }
 
 class _Harness {
-  _Harness(this.server, {NotesDao? notesDao}) {
+  _Harness(this.server, {NotesDao? notesDao, SecureStorageService? storage})
+    : storage = storage ?? _MemorySecureStorage() {
     container = ProviderContainer(
       overrides: [
         syncProvider.overrideWith(
           (ref) => SyncNotifier(
             ref,
             SyncApiService(server.client),
-            _MemorySecureStorage(),
+            this.storage,
             notesDao: notesDao,
             retryWait: (d) async {},
           ),
@@ -207,6 +257,7 @@ class _Harness {
   }
 
   final _RaceServer server;
+  final SecureStorageService storage;
   late final ProviderContainer container;
   late final SyncNotifier notifier;
 
@@ -404,6 +455,110 @@ void main() {
       expect(await metaDao.getSyncCursor(), isNot(123));
       expect(await metaDao.getAccountIdentity(), 'http://localhost:8080|uid-B');
       expect(h.container.read(syncProvider).username, 'B');
+    },
+  );
+
+  test(
+    'un salvataggio sessione fallito non lascia il vecchio token per il nuovo URL',
+    () async {
+      final server = _RaceServer();
+      final storage = _FailingSaveSessionStorage();
+      final h = _Harness(server, storage: storage);
+      addTearDown(h.container.dispose);
+
+      expect(await h.login('A'), isTrue);
+      final sessionA = await storage.getSession();
+      expect(sessionA?.token, 'token-A');
+      expect(sessionA?.serverUrl, 'http://localhost:8080');
+
+      // Il login di B risponde, ma il Keychain rifiuta la scrittura atomica
+      // della nuova sessione.
+      storage.failNextSave = true;
+      final callsBefore = server.syncCalls + server.settingsGets;
+      final authBefore = server.authHeaders.length;
+      expect(await h.login('B'), isFalse);
+
+      expect(
+        await storage.getSession(),
+        isNull,
+        reason: 'un login fallito non deve lasciare credenziali riutilizzabili',
+      );
+      expect(h.container.read(syncProvider).isAuthenticated, isFalse);
+      expect(
+        server.syncCalls + server.settingsGets,
+        callsBefore,
+        reason: 'dopo il fallimento non devono partire sync o impostazioni',
+      );
+
+      // Anche i trigger successivi devono rifiutarsi di usare il token di A.
+      expect(await h.notifier.triggerSync(), isFalse);
+      await h.notifier.fetchRemoteUserSettings();
+      expect(server.syncCalls + server.settingsGets, callsBefore);
+      expect(
+        server.authHeaders.skip(authBefore),
+        everyElement(isNot('Bearer token-A')),
+        reason: 'il token della sessione A non deve essere inviato al server B',
+      );
+    },
+  );
+
+  test(
+    'legacy con cursore avanzato: il primo login azzera i dati non attribuibili',
+    () async {
+      final server = _RaceServer();
+      final h = _Harness(server);
+      addTearDown(h.container.dispose);
+
+      final notesDao = NotesDao();
+      await notesDao.upsert(
+        const NoteRow(
+          id: 'nota-legacy',
+          title: 'Vecchia',
+          content: 'contenuto non attribuibile',
+          folderId: null,
+          isFavorite: false,
+          isPinned: false,
+          orderIndex: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          deletedAt: null,
+        ),
+      );
+      // Nessuna identity e nessun userId, ma il cursore è avanzato: i dati
+      // appartengono a una sessione precedente che non possiamo identificare.
+      await SyncMetaDao().setSyncCursor(500);
+
+      expect(await h.login('nuovo'), isTrue);
+      expect(await notesDao.getById('nota-legacy'), isNull);
+    },
+  );
+
+  test(
+    'legacy senza cursore: il primo login conserva le note solo-offline',
+    () async {
+      final server = _RaceServer();
+      final h = _Harness(server);
+      addTearDown(h.container.dispose);
+
+      final notesDao = NotesDao();
+      await notesDao.upsert(
+        const NoteRow(
+          id: 'nota-offline',
+          title: 'Offline',
+          content: 'creata prima del primo login',
+          folderId: null,
+          isFavorite: false,
+          isPinned: false,
+          orderIndex: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          deletedAt: null,
+        ),
+      );
+
+      // Cursore 0: nessuna prova che la nota appartenga a un altro account.
+      expect(await h.login('nuovo'), isTrue);
+      expect(await notesDao.getById('nota-offline'), isNotNull);
     },
   );
 

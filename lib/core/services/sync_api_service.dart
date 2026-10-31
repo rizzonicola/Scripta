@@ -268,6 +268,24 @@ class SyncApiService {
     }
   }
 
+  /// Valida i campi minimi di una risposta di autenticazione. Un 200 con
+  /// token vuoto o identità mancante non deve mai diventare una sessione
+  /// "autenticata" nello storage.
+  void _validateAuthResponse(
+    LoginResponseDto dto, {
+    required bool requireRefreshToken,
+  }) {
+    if (dto.token.trim().isEmpty ||
+        dto.userId.trim().isEmpty ||
+        dto.username.trim().isEmpty ||
+        dto.expiresAt <= 0) {
+      throw const SyncApiException(invalidServerResponseMessage, 502);
+    }
+    if (requireRefreshToken && dto.refreshToken.trim().isEmpty) {
+      throw const SyncApiException(invalidServerResponseMessage, 502);
+    }
+  }
+
   /// Authenticates user and returns JWT credentials
   Future<LoginResponseDto> login({
     required String baseUrl,
@@ -301,7 +319,9 @@ class SyncApiService {
     if (response.statusCode == 200) {
       try {
         final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
-        return LoginResponseDto.fromJson(decoded);
+        final dto = LoginResponseDto.fromJson(decoded);
+        _validateAuthResponse(dto, requireRefreshToken: false);
+        return dto;
       } catch (_) {
         // 502 = risposta non valida, non transitoria: ritentare la stessa
         // richiesta non può migliorare il JSON.
@@ -381,7 +401,9 @@ class SyncApiService {
     if (response.statusCode == 200) {
       try {
         final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
-        return LoginResponseDto.fromJson(decoded);
+        final dto = LoginResponseDto.fromJson(decoded);
+        _validateAuthResponse(dto, requireRefreshToken: true);
+        return dto;
       } catch (_) {
         throw const SyncApiException(invalidServerResponseMessage, 502);
       }

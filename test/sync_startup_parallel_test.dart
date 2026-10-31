@@ -29,6 +29,7 @@ class _SeededSecureStorage extends SecureStorageService {
   final Map<String, String> _memory = {
     'url': 'http://localhost:8080',
     'user': 'mario',
+    'uid': 'u1',
     'token': 'token',
   };
 
@@ -57,6 +58,37 @@ class _SeededSecureStorage extends SecureStorageService {
 
   @override
   Future<void> clearAuth() async => _memory.clear();
+
+  @override
+  Future<StoredSession?> getSession() async {
+    final token = _memory['token'];
+    final url = _memory['url'];
+    final uid = _memory['uid'];
+    if (token == null ||
+        token.isEmpty ||
+        url == null ||
+        url.isEmpty ||
+        uid == null ||
+        uid.isEmpty) {
+      return null;
+    }
+    return StoredSession(
+      token: token,
+      refreshToken: _memory['refresh'] ?? '',
+      serverUrl: url,
+      username: _memory['user'] ?? '',
+      userId: uid,
+    );
+  }
+
+  @override
+  Future<void> saveSession(StoredSession session) async {
+    _memory['token'] = session.token;
+    _memory['refresh'] = session.refreshToken;
+    _memory['url'] = session.serverUrl;
+    _memory['user'] = session.username;
+    _memory['uid'] = session.userId;
+  }
 }
 
 /// Server finto con tre endpoint, ciascuno trattenibile da un [Completer] e

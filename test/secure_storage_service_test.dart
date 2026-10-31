@@ -176,4 +176,137 @@ void main() {
     );
     await expectLater(strictService.getAuthToken(), throwsException);
   });
+
+  test('saveSession scrive un unico bundle atomico', () async {
+    final storage = _TestSecureStorage();
+    final atomicService = SecureStorageService.withFallback(
+      storage,
+      fallbackEnabled: true,
+    );
+
+    await atomicService.saveSession(
+      const StoredSession(
+        token: 'jwt-secret',
+        refreshToken: 'refresh-secret',
+        serverUrl: 'https://notes.example',
+        username: 'mario',
+        userId: 'u1',
+      ),
+    );
+
+    final session = await atomicService.getSession();
+    expect(session?.token, 'jwt-secret');
+    expect(session?.refreshToken, 'refresh-secret');
+    expect(session?.serverUrl, 'https://notes.example');
+    expect(session?.username, 'mario');
+    expect(session?.userId, 'u1');
+    expect(storage.data.containsKey('inkflow_session_v1'), isTrue);
+    expect(storage.data.containsKey('inkflow_jwt_token'), isFalse);
+    expect(storage.data.containsKey('inkflow_refresh_token'), isFalse);
+  });
+
+  test('getSession migra le vecchie chiavi separate in un bundle', () async {
+    final storage = _TestSecureStorage(
+      data: {
+        'inkflow_jwt_token': 'legacy-token',
+        'inkflow_refresh_token': 'legacy-refresh',
+        'inkflow_server_url': 'https://old.example',
+        'inkflow_username': 'mario',
+        'inkflow_user_id': 'u1',
+      },
+    );
+    final legacyService = SecureStorageService.withFallback(
+      storage,
+      fallbackEnabled: true,
+    );
+
+    final session = await legacyService.getSession();
+    expect(session?.token, 'legacy-token');
+    expect(session?.refreshToken, 'legacy-refresh');
+    expect(session?.serverUrl, 'https://old.example');
+    expect(session?.username, 'mario');
+    expect(session?.userId, 'u1');
+    expect(storage.data.containsKey('inkflow_session_v1'), isTrue);
+    expect(
+      storage.data.containsKey('inkflow_jwt_token'),
+      isFalse,
+      reason: 'le vecchie chiavi segrete non devono restare dopo la migrazione',
+    );
+    expect(storage.data.containsKey('inkflow_refresh_token'), isFalse);
+  });
+
+  test('una scrittura fallita non lascia una sessione parziale', () async {
+    final failingStorage = _TestSecureStorage(writeFails: true);
+    final strictService = SecureStorageService.withFallback(
+      failingStorage,
+      fallbackEnabled: false,
+    );
+
+    await expectLater(
+      strictService.saveSession(
+        const StoredSession(
+          token: 'jwt-secret',
+          refreshToken: 'refresh-secret',
+          serverUrl: 'https://notes.example',
+          username: 'mario',
+          userId: 'u1',
+        ),
+      ),
+      throwsException,
+    );
+    expect(await strictService.getSession(), isNull);
+  });
+
+  test('la sessione in fallback resta solo in memoria', () async {
+    final failingStorage = _TestSecureStorage(
+      writeFails: true,
+      readFails: true,
+      deleteFails: true,
+    );
+    final fallbackService = SecureStorageService.withFallback(
+      failingStorage,
+      fallbackEnabled: true,
+    );
+
+    await fallbackService.saveSession(
+      const StoredSession(
+        token: 'jwt-secret',
+        refreshToken: 'refresh-secret',
+        serverUrl: 'https://notes.example',
+        username: 'mario',
+        userId: 'u1',
+      ),
+    );
+
+    final session = await fallbackService.getSession();
+    expect(session?.token, 'jwt-secret');
+    expect(session?.refreshToken, 'refresh-secret');
+    expect(prefs.containsKey('${_fallbackPrefix}inkflow_session_v1'), isFalse);
+    for (final key in prefs.getKeys()) {
+      expect(prefs.get(key), isNot('jwt-secret'));
+      expect(prefs.get(key), isNot('refresh-secret'));
+    }
+  });
+
+  test('clearAuth elimina anche il bundle di sessione', () async {
+    final storage = _TestSecureStorage();
+    final atomicService = SecureStorageService.withFallback(
+      storage,
+      fallbackEnabled: true,
+    );
+    await atomicService.saveSession(
+      const StoredSession(
+        token: 'jwt-secret',
+        refreshToken: 'refresh-secret',
+        serverUrl: 'https://notes.example',
+        username: 'mario',
+        userId: 'u1',
+      ),
+    );
+
+    await atomicService.clearAuth();
+
+    expect(await atomicService.getSession(), isNull);
+    expect(storage.data.containsKey('inkflow_session_v1'), isFalse);
+  });
 }

@@ -103,6 +103,17 @@ class SessionStateService {
     (prefs) => prefs.setBool(AppConstants.prefSessionMobileEditorOpen, isOpen),
   );
 
+  /// Azzera la posizione salvata. Da chiamare a logout e cambio account: gli
+  /// ID di nota/cartella appartengono all'utente precedente e non devono
+  /// essere ripresi dal successivo. Come le altre operazioni non lancia mai.
+  static Future<void> clear() => _write((prefs) async {
+    await prefs.remove(AppConstants.prefSessionEditorMode);
+    await prefs.remove(AppConstants.prefSessionFolderId);
+    await prefs.remove(AppConstants.prefSessionNoteId);
+    await prefs.remove(AppConstants.prefSessionMobileEditorOpen);
+    return true;
+  });
+
   static EditorMode _parseMode(String? name) {
     for (final mode in EditorMode.values) {
       if (mode.name == name) return mode;

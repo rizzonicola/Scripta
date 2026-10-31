@@ -48,6 +48,38 @@ class MockSecureStorageService extends SecureStorageService {
   Future<void> clearAuth() async {
     _memory.remove('token');
     _memory.remove('user');
+    _memory.remove('uid');
+  }
+
+  @override
+  Future<StoredSession?> getSession() async {
+    final token = _memory['token'];
+    final url = _memory['url'];
+    final uid = _memory['uid'];
+    if (token == null ||
+        token.isEmpty ||
+        url == null ||
+        url.isEmpty ||
+        uid == null ||
+        uid.isEmpty) {
+      return null;
+    }
+    return StoredSession(
+      token: token,
+      refreshToken: _memory['refresh'] ?? '',
+      serverUrl: url,
+      username: _memory['user'] ?? '',
+      userId: uid,
+    );
+  }
+
+  @override
+  Future<void> saveSession(StoredSession session) async {
+    _memory['token'] = session.token;
+    _memory['refresh'] = session.refreshToken;
+    _memory['url'] = session.serverUrl;
+    _memory['user'] = session.username;
+    _memory['uid'] = session.userId;
   }
 }
 

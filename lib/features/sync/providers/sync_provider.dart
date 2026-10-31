@@ -17,6 +17,7 @@ import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
 import '../../../core/services/secure_storage_service.dart';
+import '../../../core/services/session_state_service.dart';
 import '../../../core/services/sync_api_service.dart';
 import '../../../core/utils/perf_marks.dart';
 import '../../folders/providers/folder_provider.dart';
@@ -317,7 +318,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       if (_sessionGeneration != endedGeneration) return;
       await _clearAuthCredentials();
     });
-    if (_sessionGeneration == endedGeneration) _stopConnectivityWatchdog();
+    if (_sessionGeneration == endedGeneration) {
+      _stopConnectivityWatchdog();
+      await SessionStateService.clear();
+    }
   }
 
   /// Vero se, secondo l'orologio LOCALE, il token è scaduto o sta per
@@ -357,11 +361,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   Future<_RefreshOutcome> _doRefresh(int generation) async {
     if (!_isCurrentSession(generation)) return _RefreshOutcome.invalid;
     final serverUrl = state.serverUrl;
-    final refreshToken = await _secureStorage.getRefreshToken();
+    final session = await _secureStorage.getSession();
+    final refreshToken = session?.refreshToken;
     if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
       return _RefreshOutcome.invalid;
     }
-    if (refreshToken == null || refreshToken.isEmpty || serverUrl.isEmpty) {
+    if (refreshToken == null ||
+        refreshToken.isEmpty ||
+        serverUrl.isEmpty ||
+        session == null ||
+        _normalizedServerUrl(session.serverUrl) !=
+            _normalizedServerUrl(serverUrl)) {
       return _RefreshOutcome.invalid;
     }
 
@@ -377,11 +387,14 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
           return false;
         }
-        // Prima il refresh token nuovo, poi l'access token: se il processo
-        // muore fra le due scritture, al riavvio il refresh nuovo è ancora
-        // utilizzabile (quello vecchio è già stato consumato dal server).
-        await _secureStorage.saveRefreshToken(response.refreshToken);
-        await _secureStorage.saveAuthToken(response.token);
+        // Una sola scrittura atomica: token, refresh e URL restano sempre
+        // abbinati. Il refresh vecchio è già stato consumato dal server.
+        await _secureStorage.saveSession(
+          session.copyWith(
+            token: response.token,
+            refreshToken: response.refreshToken,
+          ),
+        );
         await _saveTokenExpiry(response.expiresAt);
         return true;
       });
@@ -406,8 +419,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     Future<T> Function(String token) request,
   ) async {
     final generation = _sessionGeneration;
-    final token = await _secureStorage.getAuthToken();
-    if (!_isCurrentSession(generation) || token == null || token.isEmpty) {
+    final session = await _secureStorage.getSession();
+    final token = session?.token;
+    if (!_isCurrentSession(generation) ||
+        session == null ||
+        !session.isUsable ||
+        token == null ||
+        token.isEmpty) {
       throw const SyncApiException(
         'Sessione scaduta o non autorizzata',
         401,
@@ -424,7 +442,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       if (!_isCurrentSession(generation)) rethrow;
       switch (outcome) {
         case _RefreshOutcome.success:
-          final nextToken = await _secureStorage.getAuthToken();
+          final nextToken = (await _secureStorage.getSession())?.token;
           if (nextToken == null || nextToken.isEmpty) rethrow;
           return await request(nextToken);
         case _RefreshOutcome.blocked:
@@ -499,13 +517,18 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         : null;
     final savedOnline = prefs.getBool(_prefLastOnline);
 
-    final savedServerUrl = await _secureStorage.getServerUrl() ?? '';
-    final savedUsername = await _secureStorage.getUsername();
-    final savedToken = await _secureStorage.getAuthToken();
+    // La sessione è un UNICO record: token, URL e userId provengono dalla
+    // stessa scrittura atomica. Se manca anche uno solo dei campi la sessione
+    // non è utilizzabile (evita di mandare un token al server sbagliato).
+    final savedSession = await _secureStorage.getSession();
+    final savedServerUrl =
+        savedSession?.serverUrl ?? await _secureStorage.getServerUrl() ?? '';
+    final savedUsername =
+        savedSession?.username ?? await _secureStorage.getUsername();
 
     if (!mounted) return;
 
-    final hasToken = savedToken != null && savedToken.isNotEmpty;
+    final hasToken = savedSession != null && savedSession.isUsable;
     // All'avvio non far lampeggiare l'indicatore giallo se l'ultima sessione
     // era Online: il check di raggiungibilità parte subito dopo e correggerà
     // lo stato se il server non risponde. Senza un valore salvato (primo
@@ -804,6 +827,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     await _notesDao.hardDeleteAll();
     await _foldersDao.hardDeleteAll();
     await _syncMetaDao.clearSyncState(accountIdentity: newIdentity);
+    // La posizione salvata (nota/cartella aperta) appartiene all'account
+    // precedente e non deve essere ripresa dal nuovo.
+    await SessionStateService.clear();
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefLastSyncTime);
@@ -843,10 +869,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     await initialized;
     if (!mounted) return false;
     final generation = ++_sessionGeneration;
+    final normalizedUrl = _normalizedServerUrl(serverUrl);
     state = state.copyWith(
       isSyncing: true,
       lastError: () => null,
-      serverUrl: serverUrl,
+      serverUrl: normalizedUrl,
     );
 
     try {
@@ -865,7 +892,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       final applied = await _withSessionWriteLock(() async {
         if (!_isCurrentSession(generation)) return false;
 
-        final newIdentity = _accountIdentity(serverUrl, response.userId);
+        final newIdentity = _accountIdentity(normalizedUrl, response.userId);
         final previousIdentity = await _syncMetaDao.getAccountIdentity();
         String? previousUserId;
         try {
@@ -878,13 +905,23 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         // l'identità in `sync_meta` non esisteva ancora).
         final switchedByIdentity =
             previousIdentity != null && previousIdentity != newIdentity;
+        // Installazione legacy senza identity e senza userId, ma con un
+        // cursore di sync già avanzato: esistono dati locali di un account
+        // precedente che non possiamo attribuire con certezza. Si azzerano
+        // (euristica conservativa), perché rischiare un push cross-account è
+        // peggio che perdere dati locali già sincronizzati.
+        final legacyWithCursor =
+            previousIdentity == null &&
+            (previousUserId == null || previousUserId.isEmpty) &&
+            await _syncMetaDao.getSyncCursor() > 0;
         final switchedByLegacy =
             previousIdentity == null &&
-            previousUserId != null &&
-            previousUserId.isNotEmpty &&
-            (previousUserId != response.userId ||
-                _normalizedServerUrl(previousUrl ?? '') !=
-                    _normalizedServerUrl(serverUrl));
+            ((previousUserId != null &&
+                    previousUserId.isNotEmpty &&
+                    (previousUserId != response.userId ||
+                        _normalizedServerUrl(previousUrl ?? '') !=
+                            normalizedUrl)) ||
+                legacyWithCursor);
         if (switchedByIdentity || switchedByLegacy) {
           await _resetForAccountSwitch(newIdentity);
         } else {
@@ -892,13 +929,24 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         }
         if (!_isCurrentSession(generation)) return false;
 
-        // Prima il refresh token, poi l'access token: se il processo muore
-        // fra le due scritture, il refresh resta utilizzabile al riavvio.
-        await _secureStorage.saveRefreshToken(response.refreshToken);
-        await _secureStorage.saveAuthToken(response.token);
-        await _secureStorage.saveServerUrl(serverUrl);
-        await _secureStorage.saveUsername(response.username);
-        await _secureStorage.saveUserId(response.userId);
+        // Una sola scrittura atomica: token, refresh, URL e identità sono
+        // sempre abbinati. Se il processo muore qui, o la sessione vecchia o
+        // quella nuova è integra, mai un misto delle due.
+        await _secureStorage.saveSession(
+          StoredSession(
+            token: response.token,
+            refreshToken: response.refreshToken,
+            serverUrl: normalizedUrl,
+            username: response.username,
+            userId: response.userId,
+          ),
+        );
+        // Valori non segreti usati solo dal riconoscimento account legacy:
+        // un loro errore non deve far fallire un login già persistito.
+        try {
+          await _secureStorage.saveServerUrl(normalizedUrl);
+          await _secureStorage.saveUserId(response.userId);
+        } catch (_) {}
         await _saveTokenExpiry(response.expiresAt);
         if (!_isCurrentSession(generation)) return false;
 
@@ -923,6 +971,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       return _isCurrentSession(generation);
     } catch (e) {
       if (_isCurrentSession(generation)) {
+        // Un login fallito non deve lasciare credenziali (neppure parziali o
+        // di un account precedente) che potrebbero essere inviate al nuovo
+        // server: si cancella l'intera sessione, non solo lo stato in RAM.
+        await _withSessionWriteLock(() async {
+          if (_sessionGeneration != generation) return;
+          await _clearAuthCredentials();
+        });
         // Se il server ha risposto (401, 429, 500...) siamo Online anche se il
         // login è fallito; Offline solo quando la richiesta non è arrivata.
         final nextOnline = _serverRespondedTo(e);
@@ -950,8 +1005,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // questo il JWT resterebbe valido fino a scadenza anche dopo il logout.
     // Il refresh token permette al server di chiudere la famiglia anche se
     // l'access token è già scaduto.
-    final token = await _secureStorage.getAuthToken();
-    final refreshToken = await _secureStorage.getRefreshToken();
+    final session = await _secureStorage.getSession();
+    final token = session?.token;
+    final refreshToken = session?.refreshToken;
     final url = state.serverUrl;
     if (token != null && token.isNotEmpty && url.isNotEmpty) {
       await _apiService.logout(
@@ -1004,6 +1060,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       await _clearAuthCredentials();
     });
     if (!_isCurrentSession(generation)) return;
+    // Logout esplicito: i dati locali restano (offline-first), ma la
+    // posizione dell'interfaccia non deve riaprire note dell'account uscito.
+    await SessionStateService.clear();
     state = state.copyWith(
       isAuthenticated: false,
       username: () => null,

@@ -27,6 +27,12 @@ class _MemorySecureStorage extends SecureStorageService {
 
   @override
   Future<void> clearAuth() async {}
+
+  @override
+  Future<StoredSession?> getSession() async => null;
+
+  @override
+  Future<void> saveSession(StoredSession session) async {}
 }
 
 void main() {
