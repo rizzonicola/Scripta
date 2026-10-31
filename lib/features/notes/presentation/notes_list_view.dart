@@ -171,7 +171,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                 l10n.sortCustom,
                 Icons.drag_indicator_rounded,
                 NoteSortOrder.custom,
-                description: 'Trascina le note per riordinarle',
+                description: 'Tieni premuto e trascina per riordinare',
               ),
             ],
           );
@@ -336,6 +336,8 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                   ? _buildEmptyState(context, l10n, theme)
                   : isCustomReorderActive
                   ? ReorderableListView.builder(
+                      // La card intera è la superficie di drag: niente
+                      // maniglia predefinita.
                       buildDefaultDragHandles: false,
                       proxyDecorator: (child, index, animation) {
                         return AnimatedBuilder(
@@ -384,13 +386,16 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                       itemBuilder: (context, index) {
                         final noteId = noteIds[index];
 
-                        return _NoteListItem(
+                        // Long-press (touch) e long-click (mouse) sull'intera
+                        // card: il tap breve resta all'InkWell della nota.
+                        return ReorderableDelayedDragStartListener(
                           key: ValueKey(noteId),
-                          noteId: noteId,
-                          isSelected: activeNoteId == noteId,
-                          showDragHandle: true,
-                          dragIndex: index,
-                          onTap: _openNote,
+                          index: index,
+                          child: _NoteListItem(
+                            noteId: noteId,
+                            isSelected: activeNoteId == noteId,
+                            onTap: _openNote,
+                          ),
                         );
                       },
                     )
@@ -404,7 +409,6 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                           key: ValueKey(noteId),
                           noteId: noteId,
                           isSelected: activeNoteId == noteId,
-                          showDragHandle: false,
                           onTap: _openNote,
                         );
                       },
@@ -515,16 +519,12 @@ class _NoteListItem extends ConsumerWidget {
     super.key,
     required this.noteId,
     required this.isSelected,
-    required this.showDragHandle,
     required this.onTap,
-    this.dragIndex,
   });
 
   final String noteId;
   final bool isSelected;
-  final bool showDragHandle;
   final void Function(NoteModel note) onTap;
-  final int? dragIndex;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -534,8 +534,6 @@ class _NoteListItem extends ConsumerWidget {
     return NoteCard(
       note: note,
       isSelected: isSelected,
-      showDragHandle: showDragHandle,
-      dragIndex: dragIndex,
       onTap: () => onTap(note),
     );
   }

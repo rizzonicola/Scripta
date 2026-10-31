@@ -21,16 +21,12 @@ class NoteCard extends ConsumerWidget {
   final NoteModel note;
   final bool isSelected;
   final VoidCallback onTap;
-  final bool showDragHandle;
-  final int? dragIndex;
 
   const NoteCard({
     super.key,
     required this.note,
     required this.isSelected,
     required this.onTap,
-    this.showDragHandle = false,
-    this.dragIndex,
   });
 
   String _formatDate(DateTime dt, String locale) {
@@ -327,10 +323,6 @@ class NoteCard extends ConsumerWidget {
                     ],
                   ),
                 ),
-                if (showDragHandle && dragIndex != null) ...[
-                  const SizedBox(width: 10),
-                  _NoteDragHandle(index: dragIndex!, isSelected: isSelected),
-                ],
               ],
             ),
           ),
@@ -366,55 +358,6 @@ class _NoteCardMenuButton extends ConsumerWidget {
             NoteCard.contextMenuEntries(buttonContext, ref, note),
           );
         },
-      ),
-    );
-  }
-}
-
-/// Maniglia di trascinamento per il riordino manuale.
-class _NoteDragHandle extends StatelessWidget {
-  const _NoteDragHandle({required this.index, required this.isSelected});
-
-  final int index;
-  final bool isSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    final borderColor = isSelected
-        ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.35 : 0.22)
-        : theme.colorScheme.outline.withValues(alpha: isDark ? 0.18 : 0.12);
-    final bgColor = isSelected
-        ? theme.colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.08)
-        : (isDark
-              ? Colors.white.withValues(alpha: 0.03)
-              : Colors.black.withValues(alpha: 0.02));
-    final iconColor = isSelected
-        ? theme.colorScheme.primary
-        : theme.colorScheme.onSurface.withValues(alpha: 0.3);
-
-    return ReorderableDragStartListener(
-      index: index,
-      child: Tooltip(
-        message: 'Trascina per riordinare',
-        child: MouseRegion(
-          cursor: SystemMouseCursors.grab,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 14),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: borderColor, width: 1),
-            ),
-            child: Icon(
-              Icons.drag_indicator_rounded,
-              size: 18,
-              color: iconColor,
-            ),
-          ),
-        ),
       ),
     );
   }
