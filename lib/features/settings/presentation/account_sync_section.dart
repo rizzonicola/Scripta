@@ -333,6 +333,11 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 decoration: InputDecoration(
                   labelText: l10n.serverUrlLabel,
                   hintText: AppConstants.serverUrlPlaceholder,
+                  // Stesso trattamento del campo username: il testo di
+                  // esempio usa il colore semantico `hintColor` del tema,
+                  // così resta leggermente trasparente e non sembra un
+                  // valore già inserito.
+                  hintStyle: TextStyle(color: theme.hintColor),
                   prefixIcon: const Icon(Icons.dns_outlined, size: 20),
                   border: const OutlineInputBorder(),
                   contentPadding: const EdgeInsets.symmetric(
