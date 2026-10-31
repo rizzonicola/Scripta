@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -61,12 +63,15 @@ jobs:
     needs: build-flutter
     runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      # Digest dell'immagine multi-arch (OCI index), non solo il tag mobile.
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08@sha256:d534700a8a0090dfa5e23ed3ae09106a1beafde54e66b6b1327b27dbd3f0c7c2
       options: --privileged
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Download Flutter Linux Bundle
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7

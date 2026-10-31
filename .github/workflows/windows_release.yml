@@ -49,6 +49,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       # x64: azione standard.
       - name: Setup Flutter (x64)
@@ -214,6 +216,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Scarica il bundle
         id: download
@@ -232,8 +236,29 @@ jobs:
       - name: Installa Inno Setup
         if: steps.download.outcome == 'success'
         shell: pwsh
+        env:
+          # Versione e SHA-256 dell'installer ufficiale: niente "latest" da
+          # Chocolatey, così il toolchain di packaging è riproducibile.
+          INNO_SETUP_VERSION: '6.7.4'
+          INNO_SETUP_SHA256: 'a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c'
         run: |
-          choco install innosetup --no-progress -y
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup-$env:INNO_SETUP_VERSION.exe"
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-$env:INNO_SETUP_VERSION.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $installer).Hash.ToLowerInvariant()
+          if ($actual -ne $env:INNO_SETUP_SHA256) {
+            throw "Checksum Inno Setup non valido: atteso $env:INNO_SETUP_SHA256, ottenuto $actual"
+          }
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne 'Valid') {
+            throw "Firma Authenticode di Inno Setup non valida: $($signature.Status)"
+          }
+          $process = Start-Process -FilePath $installer `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' `
+            -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Installazione di Inno Setup fallita (exit code $($process.ExitCode))."
+          }
           $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
             $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
