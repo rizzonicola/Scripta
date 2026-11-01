@@ -1,0 +1,317 @@
+diff --git a/lib/core/database/app_database.dart b/lib/core/database/app_database.dart
+index fcedb9d..178b87f 100644
+--- a/lib/core/database/app_database.dart
++++ b/lib/core/database/app_database.dart
+@@ -1,11 +1,15 @@
+ import 'package:flutter/foundation.dart'
+     show debugPrint, kIsWeb, visibleForTesting;
+-import 'package:path/path.dart' as p;
+-import 'package:path_provider/path_provider.dart';
+-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
++
++// WEB-BEGIN — factory SQLite condizionale IO/Web.
++// WEB-ORIG: import 'package:path/path.dart' as p;
++// WEB-ORIG: import 'package:path_provider/path_provider.dart';
++// WEB-ORIG: import 'package:sqflite_common_ffi/sqflite_ffi.dart';
++// WEB-ORIG: import '../utils/platform_utils.dart';
++import '../../web_support/db_factory/db_factory.dart';
++// WEB-END
+ 
+ import '../utils/perf_marks.dart';
+-import '../utils/platform_utils.dart';
+ 
+ /// Punto di accesso unico al database locale SQLite: la SINGOLA fonte di
+ /// verità che la UI legge tramite i provider Riverpod (mai direttamente).
+@@ -57,20 +61,19 @@ class AppDatabase {
+   /// piattaforma corrente. Su Android/iOS il plugin `sqflite` usa il proprio
+   /// engine nativo automaticamente; su desktop (Linux/Windows/macOS) serve
+   /// invece esplicitamente `sqflite_common_ffi`, che usa sqlite3 nativo via
+-  /// FFI. Va chiamato prima di qualunque apertura di database (fatto da
++  /// FFI.
++  /// WEB-BEGIN — documentazione del target Web.
++  /// Sul Web usa `sqflite_common_ffi_web` (SQLite Wasm + IndexedDB).
++  /// WEB-END
++  /// Va chiamato prima di qualunque apertura di database (fatto da
+   /// [main] all'avvio dell'app, vedi lib/main.dart).
++  // WEB-BEGIN — inizializzazione delegata alla factory condizionale.
++  // WEB-ORIG: if (kIsWeb) { ... return; }
++  // WEB-ORIG: if (isDesktopPlatform) { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi; }
+   static void ensureFactoryInitialized() {
+-    if (kIsWeb) {
+-      // Il web non è un target supportato da questa app (nessuna cartella
+-      // web/ nel progetto): nessuna inizializzazione necessaria qui.
+-      return;
+-    }
+-    if (isDesktopPlatform) {
+-      sqfliteFfiInit();
+-      databaseFactory = databaseFactoryFfi;
+-    }
+-    // Android/iOS: il databaseFactory di default del plugin sqflite va già bene.
++    initializeDatabaseFactory();
+   }
++  // WEB-END
+ 
+   /// Apertura in corso, condivisa tra i chiamanti: `folderProvider`,
+   /// `notesProvider` e `syncProvider` leggono `db` quasi simultaneamente al
+@@ -122,9 +125,10 @@ class AppDatabase {
+   }
+ 
+   Future<Database> _open() async {
+-    final path =
+-        debugDatabasePathOverride ??
+-        p.join((await getApplicationSupportDirectory()).path, 'scripta.db');
++    // WEB-BEGIN — percorso risolto dalla factory condizionale.
++    // WEB-ORIG: final path = debugDatabasePathOverride ?? p.join((await getApplicationSupportDirectory()).path, 'scripta.db');
++    final path = debugDatabasePathOverride ?? await resolveDatabasePath();
++    // WEB-END
+ 
+     return openDatabase(
+       path,
+@@ -146,7 +150,12 @@ class AppDatabase {
+         // rawQuery methods only." e l'apertura del database fallisce ad
+         // ogni avvio, portando con sé anche note/cartelle non salvate e
+         // sync mai avviata.
+-        await db.rawQuery('PRAGMA journal_mode = WAL');
++        // WEB-BEGIN — WAL non disponibile sul VFS Web (IndexedDB).
++        // WEB-ORIG: await db.rawQuery('PRAGMA journal_mode = WAL');
++        if (!kIsWeb) {
++          await db.rawQuery('PRAGMA journal_mode = WAL');
++        }
++        // WEB-END
+         // "PRAGMA foreign_keys = ON" non restituisce righe: execute() va bene.
+         await db.execute('PRAGMA foreign_keys = ON');
+         // Con WAL, `synchronous = NORMAL` è sicuro contro la corruzione (al
+diff --git a/lib/core/services/export_service.dart b/lib/core/services/export_service.dart
+index 30ce597..9464aa5 100644
+--- a/lib/core/services/export_service.dart
++++ b/lib/core/services/export_service.dart
+@@ -2,7 +2,11 @@ import 'dart:convert';
+ import 'dart:io';
+ import 'dart:typed_data';
+ import 'package:file_picker/file_picker.dart';
+-import 'package:flutter/foundation.dart' show compute, visibleForTesting;
++// WEB-BEGIN — serve kIsWeb per il download del browser e per evitare Platform.
++// WEB-ORIG: import 'package:flutter/foundation.dart' show compute, visibleForTesting;
++import 'package:flutter/foundation.dart'
++    show compute, kIsWeb, visibleForTesting;
++// WEB-END
+ import 'package:flutter/material.dart';
+ import 'package:flutter_riverpod/flutter_riverpod.dart';
+ import 'package:path_provider/path_provider.dart';
+@@ -65,13 +69,23 @@ class ExportService {
+         bytes: bytes,
+         mimeType: mimeType,
+       );
++      // WEB-BEGIN — su Web file_picker avvia il download e restituisce null:
++      // il salvataggio è comunque riuscito (o gestito dal browser).
++      // WEB-ORIG: return (saved: uri != null, fallbackPath: null);
++      if (kIsWeb) return (saved: true, fallbackPath: null);
++      // WEB-END
+       return (saved: uri != null, fallbackPath: null);
+     } catch (_) {
+       // Se il picker di sistema non è disponibile, il fallback resta nella
+       // directory privata dell'app: mai storage esterno condiviso o
+       // app-specific, dove un backup non cifrato sarebbe leggibile da altre
+       // app (SEC-03). Il percorso viene mostrato all'utente.
+-      if (Platform.isAndroid || Platform.isIOS) {
++      // WEB-BEGIN — il fallback su directory privata non esiste sul Web.
++      // WEB-ORIG: if (Platform.isAndroid || Platform.isIOS) {
++      final canUsePrivateDirectory =
++          !kIsWeb && (Platform.isAndroid || Platform.isIOS);
++      // WEB-END
++      if (canUsePrivateDirectory) {
+         final dir = await getApplicationDocumentsDirectory();
+         final file = await uniqueFallbackFile(dir, fileName);
+         await file.writeAsBytes(bytes);
+diff --git a/lib/core/services/import_service.dart b/lib/core/services/import_service.dart
+index 38649de..fa5b20a 100644
+--- a/lib/core/services/import_service.dart
++++ b/lib/core/services/import_service.dart
+@@ -4,7 +4,11 @@ import 'dart:typed_data';
+ 
+ import 'package:archive/archive.dart';
+ import 'package:file_picker/file_picker.dart';
+-import 'package:flutter/foundation.dart' show compute, visibleForTesting;
++// WEB-BEGIN — serve kIsWeb per nascondere l'import da cartella sul Web.
++// WEB-ORIG: import 'package:flutter/foundation.dart' show compute, visibleForTesting;
++import 'package:flutter/foundation.dart'
++    show compute, kIsWeb, visibleForTesting;
++// WEB-END
+ import 'package:flutter/material.dart';
+ import 'package:flutter_riverpod/flutter_riverpod.dart';
+ 
+@@ -98,17 +102,22 @@ class ImportService {
+                   importFromZipFile(context, ref);
+                 },
+               ),
+-              ListTile(
+-                leading: const Icon(Icons.drive_folder_upload_outlined),
+-                title: const Text('Da cartella'),
+-                subtitle: const Text(
+-                  'Una cartella di file .md sul dispositivo',
++              // WEB-BEGIN — la File System Access API non espone una scelta
++              // di cartella tramite file_picker: sul Web resta solo lo ZIP.
++              // WEB: voce nascosta quando kIsWeb è true.
++              if (!kIsWeb)
++                ListTile(
++                  leading: const Icon(Icons.drive_folder_upload_outlined),
++                  title: const Text('Da cartella'),
++                  subtitle: const Text(
++                    'Una cartella di file .md sul dispositivo',
++                  ),
++                  onTap: () {
++                    Navigator.of(sheetCtx).pop();
++                    importFromFolder(context, ref);
++                  },
+                 ),
+-                onTap: () {
+-                  Navigator.of(sheetCtx).pop();
+-                  importFromFolder(context, ref);
+-                },
+-              ),
++              // WEB-END
+             ],
+           ),
+         );
+@@ -187,6 +196,17 @@ class ImportService {
+     BuildContext context,
+     WidgetRef ref,
+   ) async {
++    // WEB-BEGIN — guardia difensiva: getDirectoryPath lancia UnsupportedError
++    // sul Web. La voce di menu è già nascosta, ma il metodo resta raggiungibile.
++    if (kIsWeb) {
++      _showSnack(
++        context,
++        'L\'importazione da cartella non è disponibile sul Web. Usa un backup ZIP.',
++        isError: true,
++      );
++      return;
++    }
++    // WEB-END
+     try {
+       final dirPath = await FilePicker.getDirectoryPath(
+         dialogTitle: 'Seleziona la cartella da importare',
+diff --git a/lib/core/services/window_decoration_service.dart b/lib/core/services/window_decoration_service.dart
+index c55cffd..71f4ed6 100644
+--- a/lib/core/services/window_decoration_service.dart
++++ b/lib/core/services/window_decoration_service.dart
+@@ -1,5 +1,7 @@
+ import 'dart:async';
+ import 'dart:io';
++// WEB: kIsWeb per non toccare i canali nativi quando si compila per il Web.
++import 'package:flutter/foundation.dart' show kIsWeb;
+ import 'package:flutter/services.dart';
+ import '../theme/color_schemes.dart';
+ 
+@@ -45,7 +47,10 @@ class WindowDecorationService {
+     // (GTK headerbar) sia su Windows (DWM caption color). Sulle altre
+     // piattaforme il canale nativo non esiste: usciamo subito per evitare
+     // una chiamata a vuoto ad ogni build di ScriptaApp.
+-    if (!Platform.isLinux && !Platform.isWindows) return;
++    // WEB-BEGIN — su Web `Platform` non è disponibile e il canale nativo non esiste.
++    // WEB-ORIG: if (!Platform.isLinux && !Platform.isWindows) return;
++    if (kIsWeb || (!Platform.isLinux && !Platform.isWindows)) return;
++    // WEB-END
+ 
+     final isDark = effectiveBrightness == Brightness.dark;
+     final bgHex = _colorToHex(palette.surface);
+@@ -83,7 +88,10 @@ class WindowDecorationService {
+   /// senza fare danni dove il WM lo gestisce già a monte.
+   static void initializeFullScreenShortcut() {
+     if (_listenerRegistered) return;
+-    if (!Platform.isLinux && !Platform.isWindows) return;
++    // WEB-BEGIN — F11 è gestito dal browser; `Platform` non è disponibile sul Web.
++    // WEB-ORIG: if (!Platform.isLinux && !Platform.isWindows) return;
++    if (kIsWeb || (!Platform.isLinux && !Platform.isWindows)) return;
++    // WEB-END
+ 
+     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+     _listenerRegistered = true;
+diff --git a/pubspec.lock b/pubspec.lock
+index 9d5fd91..624a95e 100644
+--- a/pubspec.lock
++++ b/pubspec.lock
+@@ -1,5 +1,7 @@
+ # Generated by pub
+ # See https://dart.dev/tools/pub/glossary#lockfile
++# WEB: aggiornato per sqflite_common_ffi_web (solo target Web); nessuna
++# dipendenza nativa rimossa o degradata.
+ packages:
+   android_file_picker:
+     dependency: transitive
+@@ -97,6 +99,14 @@ packages:
+       url: "https://pub.dev"
+     source: hosted
+     version: "0.8.0"
++  dev_build:
++    dependency: transitive
++    description:
++      name: dev_build
++      sha256: aa1cf737b416bdedfeaf416f99ec9a58a1816a313862f59eba22de28b9e55bd3
++      url: "https://pub.dev"
++    source: hosted
++    version: "1.1.16"
+   fake_async:
+     dependency: transitive
+     description:
+@@ -509,6 +519,14 @@ packages:
+       url: "https://pub.dev"
+     source: hosted
+     version: "2.1.8"
++  pool:
++    dependency: transitive
++    description:
++      name: pool
++      sha256: "4177f68c237ea2128d1bee66ac17b2ce05ba3dbaafcbdd54c5d40a39d0b6b11c"
++      url: "https://pub.dev"
++    source: hosted
++    version: "1.5.3"
+   posix:
+     dependency: transitive
+     description:
+@@ -517,6 +535,14 @@ packages:
+       url: "https://pub.dev"
+     source: hosted
+     version: "6.5.2"
++  process_run:
++    dependency: transitive
++    description:
++      name: process_run
++      sha256: "4818d891c15347d84abb67319f18ed605cd5710e50a2fe82822e8f3b6b9295d2"
++      url: "https://pub.dev"
++    source: hosted
++    version: "1.4.1"
+   provider:
+     dependency: transitive
+     description:
+@@ -650,6 +676,14 @@ packages:
+       url: "https://pub.dev"
+     source: hosted
+     version: "2.4.5"
++  sqflite_common_ffi_web:
++    dependency: "direct main"
++    description:
++      name: sqflite_common_ffi_web
++      sha256: "8e9cc4bb519ff421985f719a652930eb6eee77a19a33612f589314984dab9312"
++      url: "https://pub.dev"
++    source: hosted
++    version: "1.2.0"
+   sqflite_darwin:
+     dependency: transitive
+     description:
+diff --git a/pubspec.yaml b/pubspec.yaml
+index 5c19ea2..2e2fc6b 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -48,6 +48,11 @@ dependencies:
+   # lib/core/database/app_database.dart puro SQL leggibile e diffabile.
+   sqflite: ^2.3.3+1
+   sqflite_common_ffi: ^2.3.3
++  # WEB-BEGIN — database SQLite su Flutter Web (Wasm + IndexedDB).
++  # WEB: usato solo da lib/web_support/db_factory/db_factory_web.dart;
++  # sulle altre piattaforme resta attivo sqflite_common_ffi.
++  sqflite_common_ffi_web: ^1.2.0
++  # WEB-END
+   path: ^1.9.0
+ 
+   # Utilities
