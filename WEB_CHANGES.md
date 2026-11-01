@@ -1,7 +1,7 @@
 # Scripta Web/PWA — modifiche
 
 Questo documento elenca in modo verificabile tutte le modifiche introdotte
-dal target Web/PWA di Scripta 1.0.8. Le modifiche ai file preesistenti sono
+dal target Web/PWA di Scripta 1.0.9. Le modifiche ai file preesistenti sono
 annotate con marcatori `WEB`, `WEB-BEGIN`, `WEB-END` e `WEB-ORIG`, così che
 ogni intervento sia riconoscibile e reversibile senza leggere l'intero diff.
 

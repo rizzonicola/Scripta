@@ -1,6 +1,6 @@
 # Scripta Web / PWA
 
-Scripta 1.0.8 include un target Web installabile come PWA. La build è unica
+Scripta 1.0.9 include un target Web installabile come PWA. La build è unica
 per tutti i browser:
 
 - **Chromium** (Chrome, Edge, Chromium): usa **dart2wasm + skwasm** quando
