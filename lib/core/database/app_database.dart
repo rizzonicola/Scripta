@@ -1,11 +1,15 @@
 import 'package:flutter/foundation.dart'
     show debugPrint, kIsWeb, visibleForTesting;
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+// WEB-BEGIN — factory SQLite condizionale IO/Web.
+// WEB-ORIG: import 'package:path/path.dart' as p;
+// WEB-ORIG: import 'package:path_provider/path_provider.dart';
+// WEB-ORIG: import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+// WEB-ORIG: import '../utils/platform_utils.dart';
+import '../../web_support/db_factory/db_factory.dart';
+// WEB-END
 
 import '../utils/perf_marks.dart';
-import '../utils/platform_utils.dart';
 
 /// Punto di accesso unico al database locale SQLite: la SINGOLA fonte di
 /// verità che la UI legge tramite i provider Riverpod (mai direttamente).
@@ -57,20 +61,19 @@ class AppDatabase {
   /// piattaforma corrente. Su Android/iOS il plugin `sqflite` usa il proprio
   /// engine nativo automaticamente; su desktop (Linux/Windows/macOS) serve
   /// invece esplicitamente `sqflite_common_ffi`, che usa sqlite3 nativo via
-  /// FFI. Va chiamato prima di qualunque apertura di database (fatto da
+  /// FFI.
+  /// WEB-BEGIN — documentazione del target Web.
+  /// Sul Web usa `sqflite_common_ffi_web` (SQLite Wasm + IndexedDB).
+  /// WEB-END
+  /// Va chiamato prima di qualunque apertura di database (fatto da
   /// [main] all'avvio dell'app, vedi lib/main.dart).
+  // WEB-BEGIN — inizializzazione delegata alla factory condizionale.
+  // WEB-ORIG: if (kIsWeb) { ... return; }
+  // WEB-ORIG: if (isDesktopPlatform) { sqfliteFfiInit(); databaseFactory = databaseFactoryFfi; }
   static void ensureFactoryInitialized() {
-    if (kIsWeb) {
-      // Il web non è un target supportato da questa app (nessuna cartella
-      // web/ nel progetto): nessuna inizializzazione necessaria qui.
-      return;
-    }
-    if (isDesktopPlatform) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
-    }
-    // Android/iOS: il databaseFactory di default del plugin sqflite va già bene.
+    initializeDatabaseFactory();
   }
+  // WEB-END
 
   /// Apertura in corso, condivisa tra i chiamanti: `folderProvider`,
   /// `notesProvider` e `syncProvider` leggono `db` quasi simultaneamente al
@@ -122,9 +125,10 @@ class AppDatabase {
   }
 
   Future<Database> _open() async {
-    final path =
-        debugDatabasePathOverride ??
-        p.join((await getApplicationSupportDirectory()).path, 'scripta.db');
+    // WEB-BEGIN — percorso risolto dalla factory condizionale.
+    // WEB-ORIG: final path = debugDatabasePathOverride ?? p.join((await getApplicationSupportDirectory()).path, 'scripta.db');
+    final path = debugDatabasePathOverride ?? await resolveDatabasePath();
+    // WEB-END
 
     return openDatabase(
       path,
@@ -146,7 +150,12 @@ class AppDatabase {
         // rawQuery methods only." e l'apertura del database fallisce ad
         // ogni avvio, portando con sé anche note/cartelle non salvate e
         // sync mai avviata.
-        await db.rawQuery('PRAGMA journal_mode = WAL');
+        // WEB-BEGIN — WAL non disponibile sul VFS Web (IndexedDB).
+        // WEB-ORIG: await db.rawQuery('PRAGMA journal_mode = WAL');
+        if (!kIsWeb) {
+          await db.rawQuery('PRAGMA journal_mode = WAL');
+        }
+        // WEB-END
         // "PRAGMA foreign_keys = ON" non restituisce righe: execute() va bene.
         await db.execute('PRAGMA foreign_keys = ON');
         // Con WAL, `synchronous = NORMAL` è sicuro contro la corruzione (al
