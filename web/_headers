@@ -1,0 +1,61 @@
+# Header Cloudflare Pages.
+#
+# COOP/COEP abilitano l'isolamento cross-origin necessario al renderer
+# skwasm (Flutter WebAssembly) su Chromium. "credentialless" (invece di
+# require-corp) permette di continuare a caricare immagini remote eventualmente
+# presenti nelle note Markdown senza richiedere header CORP al server esterno.
+# Safari/Firefox senza supporto all'isolamento usano il fallback CanvasKit
+# (dart2js), già incluso nella stessa build.
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
+  Cache-Control: no-cache
+
+# Il service worker e i file di ingresso non vanno mai serviti da cache HTTP
+# vecchia: il browser deve poterli rivalidare a ogni apertura.
+/scripta_sw.js
+  Cache-Control: no-cache
+  Service-Worker-Allowed: /
+
+/index.html
+  Cache-Control: no-cache
+
+/flutter_bootstrap.js
+  Cache-Control: no-cache
+
+/main.dart.js
+  Cache-Control: no-cache
+
+/main.dart.wasm
+  Cache-Control: no-cache
+
+/main.dart.mjs
+  Cache-Control: no-cache
+
+/manifest.json
+  Cache-Control: no-cache
+
+/version.json
+  Cache-Control: no-cache
+
+# Asset statici: possono essere riusati dalla cache HTTP per un giorno.
+# L'offline vero è garantito dal precache del service worker.
+/assets/*
+  Cache-Control: public, max-age=86400
+
+/canvaskit/*
+  Cache-Control: public, max-age=86400
+
+/icons/*
+  Cache-Control: public, max-age=86400
+
+/sqlite3.wasm
+  Cache-Control: public, max-age=86400
+
+/sqflite_sw.js
+  Cache-Control: public, max-age=86400

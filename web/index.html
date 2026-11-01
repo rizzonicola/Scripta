@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <!--
+    Se l'app viene servita da un percorso diverso dalla radice, Flutter
+    sostituisce il placeholder di base href con il valore di --base-href.
+    Il percorso deve iniziare e terminare con "/".
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Scripta — note Markdown minimali, local-first, con sincronizzazione opzionale.">
+  <meta name="application-name" content="Scripta">
+  <meta name="theme-color" content="#16191D">
+  <meta name="color-scheme" content="dark light">
+
+  <!-- iOS: installazione dalla Home Screen e modalità standalone. -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Scripta">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/Icon-180.png">
+
+  <!-- Favicon e manifest PWA. -->
+  <link rel="icon" type="image/png" sizes="48x48" href="favicon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="manifest" href="manifest.json">
+
+  <title>Scripta</title>
+</head>
+<body>
+  <!--
+    Bootstrap Flutter. Il service worker NON viene registrato da Flutter
+    (build con --pwa-strategy=none): lo registra lo script in fondo, che
+    aggiorna la cache in background senza mostrare alcuna interfaccia.
+  -->
+  <script src="flutter_bootstrap.js" async></script>
+
+  <script>
+    // Aggiornamento automatico e invisibile:
+    //  - il nuovo service worker si installa in background e resta in attesa;
+    //  - NON viene chiamato skipWaiting(): si attiva solo quando tutte le
+    //    finestre/tab della versione precedente sono state chiuse;
+    //  - nessun banner, pulsante o widget viene mostrato all'utente.
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+
+      var UPDATE_INTERVAL_MS = 15 * 60 * 1000;
+      var lastCheck = 0;
+
+      function checkForUpdate() {
+        var now = Date.now();
+        if (now - lastCheck < UPDATE_INTERVAL_MS) return;
+        lastCheck = now;
+        navigator.serviceWorker.getRegistration().then(function (registration) {
+          if (registration) registration.update().catch(function () {});
+        }).catch(function () {});
+      }
+
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('scripta_sw.js').then(function (registration) {
+          lastCheck = Date.now();
+          // Controllo immediato: se il deploy è già cambiato, il nuovo SW
+          // parte subito e resta in attesa fino alla chiusura delle tab.
+          registration.update().catch(function () {});
+        }).catch(function () {});
+      });
+
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') checkForUpdate();
+      });
+    })();
+  </script>
+</body>
+</html>
