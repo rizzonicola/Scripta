@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+// WEB: kIsWeb per non toccare i canali nativi quando si compila per il Web.
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import '../theme/color_schemes.dart';
 
@@ -45,7 +47,10 @@ class WindowDecorationService {
     // (GTK headerbar) sia su Windows (DWM caption color). Sulle altre
     // piattaforme il canale nativo non esiste: usciamo subito per evitare
     // una chiamata a vuoto ad ogni build di ScriptaApp.
-    if (!Platform.isLinux && !Platform.isWindows) return;
+    // WEB-BEGIN — su Web `Platform` non è disponibile e il canale nativo non esiste.
+    // WEB-ORIG: if (!Platform.isLinux && !Platform.isWindows) return;
+    if (kIsWeb || (!Platform.isLinux && !Platform.isWindows)) return;
+    // WEB-END
 
     final isDark = effectiveBrightness == Brightness.dark;
     final bgHex = _colorToHex(palette.surface);
@@ -83,7 +88,10 @@ class WindowDecorationService {
   /// senza fare danni dove il WM lo gestisce già a monte.
   static void initializeFullScreenShortcut() {
     if (_listenerRegistered) return;
-    if (!Platform.isLinux && !Platform.isWindows) return;
+    // WEB-BEGIN — F11 è gestito dal browser; `Platform` non è disponibile sul Web.
+    // WEB-ORIG: if (!Platform.isLinux && !Platform.isWindows) return;
+    if (kIsWeb || (!Platform.isLinux && !Platform.isWindows)) return;
+    // WEB-END
 
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
     _listenerRegistered = true;
