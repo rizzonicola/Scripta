@@ -1,0 +1,3 @@
+Version 1.1.0.
+
+- Fixed folder import on Android 11+ using the Storage Access Framework.

@@ -1,0 +1,1 @@
+Local-first Markdown notes with optional self-hosted sync
