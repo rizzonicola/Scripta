@@ -142,6 +142,19 @@ ImportLocation? mapFilePath(
 ImportLocation? mapFileSystemPath(List<String> segments) =>
     _mapSegments(segments);
 
+/// Come [mapFilePath], ma per una voce restituita da `Saf.walk` su Android:
+/// [relativePath] è il percorso POSIX relativo alla radice scelta (radice
+/// esclusa, es. `Lavoro/Sub/nota.md`).
+///
+/// Qui `\` NON è un separatore: su Android è un carattere legale di un nome
+/// di file e il plugin SAF restituisce già i segmenti separati da `/`. Un
+/// percorso assoluto è rifiutato; `..` e il rumore di macOS vengono scartati
+/// dalle stesse regole condivise con gli altri ingressi.
+ImportLocation? mapSafEntryPath(String relativePath) {
+  if (relativePath.startsWith('/')) return null;
+  return _mapSegments(relativePath.split('/'));
+}
+
 ImportLocation? _mapSegments(List<String> rawSegments) {
   final segments = <String>[];
   for (final segment in rawSegments) {

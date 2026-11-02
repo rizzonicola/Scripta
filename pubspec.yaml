@@ -2,7 +2,7 @@ name: scripta
 description: "Scripta - Minimal, Markdown-First, highly customizable note-taking application."
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.9+9
+version: 1.1.0+10
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
@@ -61,6 +61,11 @@ dependencies:
   archive: ^4.2.0
   path_provider: ^2.1.6
   file_picker: ^13.3.0
+  # Android Storage Access Framework: l'import da cartella deve attraversare
+  # l'albero tramite URI e leggere i file via ContentResolver. Il percorso
+  # restituito da file_picker, passato a dart:io, è visibile come vuoto sotto
+  # lo scoped storage di Android 11+ (targetSdk 37): vedi import_service.dart.
+  saf: ^2.1.2
   flutter_secure_storage: ^11.0.0
   http: ^1.6.0
 

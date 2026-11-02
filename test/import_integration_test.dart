@@ -6,6 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:saf/saf.dart';
 import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/services/export_archive.dart';
@@ -62,6 +63,76 @@ class _MemoryFoldersDao implements FoldersDao {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
+}
+
+/// SAF finto: riproduce `walk` e `readFileBytes` senza canali nativi. I URI
+/// sono costruiti come li restituirebbe il provider Android; le letture sono
+/// contate per verificare che un file oltre il limite venga rifiutato prima
+/// di leggerne i byte.
+class _FakeSafPlatform extends SafPlatform {
+  static const root = SafDocumentFile(
+    uri: 'content://tree/root',
+    name: 'Backup',
+    isDir: true,
+    length: 0,
+    lastModified: 0,
+  );
+
+  final List<SafWalkEntry> _entries = [];
+  final Map<String, Uint8List> _contents = {};
+  int reads = 0;
+
+  void addDirectory(String path) {
+    _entries.add(
+      SafWalkEntry(
+        file: SafDocumentFile(
+          uri: '${root.uri}/$path',
+          name: path.split('/').last,
+          isDir: true,
+          length: 0,
+          lastModified: 0,
+        ),
+        relativePath: path,
+      ),
+    );
+  }
+
+  void addFile(String path, String text, {int? declaredLength}) {
+    addBytes(
+      path,
+      Uint8List.fromList(utf8.encode(text)),
+      declaredLength: declaredLength,
+    );
+  }
+
+  void addBytes(String path, Uint8List data, {int? declaredLength}) {
+    final uri = '${root.uri}/$path';
+    _contents[uri] = data;
+    _entries.add(
+      SafWalkEntry(
+        file: SafDocumentFile(
+          uri: uri,
+          name: path.split('/').last,
+          isDir: false,
+          length: declaredLength ?? data.length,
+          lastModified: 0,
+        ),
+        relativePath: path,
+      ),
+    );
+  }
+
+  @override
+  Stream<SafWalkEntry> walk(String dirUri) =>
+      Stream<SafWalkEntry>.fromIterable(_entries);
+
+  @override
+  Future<Uint8List> readFileBytes(String uri, {int? start, int? count}) async {
+    reads++;
+    final data = _contents[uri];
+    if (data == null) throw StateError('file inatteso: $uri');
+    return data;
+  }
 }
 
 /// `FolderNotifier` vuole un `Ref`: lo si ottiene da un provider banale.
@@ -604,6 +675,107 @@ void main() {
       expect(entries, isEmpty);
       expect(result.importedNotes, 0);
       expect(result.importedFolders, 0);
+    });
+  });
+
+  group('cartella scelta con SAF (Android)', () {
+    late SafPlatform original;
+
+    setUp(() {
+      original = SafPlatform.instance;
+    });
+
+    tearDown(() {
+      SafPlatform.instance = original;
+    });
+
+    Future<List<ImportEntry>> extract(_FakeSafPlatform platform) {
+      SafPlatform.instance = platform;
+      return ImportService.extractFromSafDirectory(
+        Saf(),
+        _FakeSafPlatform.root,
+      );
+    }
+
+    test(
+      'stesse regole dello ZIP: radice, annidamento, rumore di macOS',
+      () async {
+        final platform = _FakeSafPlatform()
+          ..addDirectory('Lavoro')
+          ..addFile('Non_Catalogate/1 - Nome Nota.md', 'radice')
+          ..addFile(
+            'Lavoro/2 - Progetti/01. Introduzione.md',
+            '# Introduzione\n\ncorpo',
+          )
+          ..addFile('Lavoro/Non_Catalogate/x.md', 'vera cartella')
+          ..addFile('superiore.md', 'in cima')
+          ..addFile('__MACOSX/Lavoro/._x.md', 'spazzatura')
+          ..addFile('Lavoro/._x.md', 'spazzatura')
+          ..addFile('Lavoro/immagine.png', 'png');
+
+        final entries = await extract(platform);
+        final result = await commit(entries);
+
+        expect(result.importedNotes, 4);
+        expect(
+          folderPaths(),
+          unorderedEquals([
+            'Lavoro',
+            'Lavoro/2 - Progetti',
+            'Lavoro/Non_Catalogate',
+          ]),
+        );
+        expect(
+          importedSummary(),
+          unorderedEquals([
+            'radice|1 - Nome Nota|radice',
+            'Lavoro/2 - Progetti|01. Introduzione|# Introduzione\n\ncorpo',
+            'Lavoro/Non_Catalogate|x|vera cartella',
+            'radice|superiore|in cima',
+          ]),
+        );
+      },
+    );
+
+    test('un file sopra il limite viene rifiutato senza essere letto', () async {
+      final platform = _FakeSafPlatform()
+        ..addFile(
+          'Grande.md',
+          'x',
+          declaredLength: ImportService.maxEntryBytes + 1,
+        );
+
+      await expectLater(extract(platform), throwsFormatException);
+      expect(platform.reads, 0);
+    });
+
+    test('la dimensione effettiva viene ricontrollata dopo la lettura', () async {
+      final platform = _FakeSafPlatform()
+        ..addBytes(
+          'Grande.md',
+          Uint8List(ImportService.maxEntryBytes + 1),
+          declaredLength: 1,
+        );
+
+      await expectLater(extract(platform), throwsFormatException);
+      expect(platform.reads, 1);
+    });
+
+    test('percorsi fuori dalla radice e file non-nota vengono ignorati', () async {
+      final platform = _FakeSafPlatform()
+        ..addFile('../fuori.md', 'x')
+        ..addFile('Lavoro/../../fuori.md', 'x')
+        ..addFile('/assoluto.md', 'x')
+        ..addFile('Lavoro/immagine.png', 'png')
+        ..addFile('Lavoro/nota.md', 'dentro');
+
+      final entries = await extract(platform);
+
+      expect(entries, hasLength(1));
+      expect(entries.single.folderPathSegments, ['Lavoro']);
+      expect(entries.single.fileName, 'nota.md');
+      expect(entries.single.rawContent, 'dentro');
+      expect(platform.reads, 1);
     });
   });
 }

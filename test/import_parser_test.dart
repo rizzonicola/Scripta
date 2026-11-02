@@ -155,6 +155,42 @@ void main() {
     });
   });
 
+  group('mapSafEntryPath: percorsi POSIX restituiti da Saf.walk', () {
+    test('radice, annidamento e Non_Catalogate', () {
+      final root = mapSafEntryPath('A.md');
+      expect(root!.folders, isEmpty);
+      expect(root.fileName, 'A.md');
+
+      final bucket = mapSafEntryPath('Non_Catalogate/1 - Nome Nota.md');
+      expect(bucket!.folders, isEmpty);
+      expect(bucket.fileName, '1 - Nome Nota.md');
+
+      final nested = mapSafEntryPath('Lavoro/2 - Progetti/01. Introduzione.md');
+      expect(nested!.folders, ['Lavoro', '2 - Progetti']);
+      expect(nested.fileName, '01. Introduzione.md');
+
+      final realBucket = mapSafEntryPath('Lavoro/Non_Catalogate/x.md');
+      expect(realBucket!.folders, ['Lavoro', 'Non_Catalogate']);
+    });
+
+    test('un "\\" nel nome resta un carattere, non un separatore', () {
+      final location = mapSafEntryPath(r'Lavoro/a\b.md');
+      expect(location!.folders, ['Lavoro']);
+      expect(location.fileName, r'a\b.md');
+    });
+
+    test('scarta traversal, percorsi assoluti, rumore e file non-nota', () {
+      expect(mapSafEntryPath('../x.md'), isNull);
+      expect(mapSafEntryPath('Lavoro/../../x.md'), isNull);
+      expect(mapSafEntryPath('/x.md'), isNull);
+      expect(mapSafEntryPath('__MACOSX/Lavoro/._x.md'), isNull);
+      expect(mapSafEntryPath('Lavoro/._x.md'), isNull);
+      expect(mapSafEntryPath('Lavoro/x.pdf'), isNull);
+      expect(mapSafEntryPath('Lavoro'), isNull);
+      expect(mapSafEntryPath(''), isNull);
+    });
+  });
+
   group('mapFilePath: convenzioni di percorso di ogni piattaforma', () {
     // Il contesto è iniettabile: le regole di Windows e di POSIX si verificano
     // entrambe su qualunque sistema, senza dover avere quel sistema.

@@ -7,10 +7,16 @@ import 'package:file_picker/file_picker.dart';
 // WEB-BEGIN — serve kIsWeb per nascondere l'import da cartella sul Web.
 // WEB-ORIG: import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/foundation.dart'
-    show compute, kIsWeb, visibleForTesting;
+    show
+        TargetPlatform,
+        compute,
+        defaultTargetPlatform,
+        kIsWeb,
+        visibleForTesting;
 // WEB-END
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:saf/saf.dart';
 
 import '../../features/folders/models/folder_node.dart';
 import '../../features/folders/providers/folder_provider.dart';
@@ -208,6 +214,32 @@ class ImportService {
     }
     // WEB-END
     try {
+      // ANDROID: il percorso restituito da file_picker non è leggibile con
+      // dart:io sotto lo scoped storage di Android 11+ (targetSdk 37): per
+      // una cartella di documenti non multimediali `Directory.list()` vede
+      // una vista vuota. Si attraversa quindi l'albero tramite SAF, che
+      // legge i file con il ContentResolver sull'URI concesso dall'utente.
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final saf = Saf();
+        final dir = await saf.pickDirectory(
+          writePermission: false,
+          // Il permesso serve solo per questa importazione immediata: non
+          // lasciamo grant persistenti sulla cartella dell'utente.
+          persistablePermission: false,
+        );
+        if (dir == null || !dir.isDir) return;
+
+        if (!context.mounted) return;
+        await _runImport(
+          context,
+          ref,
+          () async => ImportBundle(
+            entries: await extractFromSafDirectory(saf, dir),
+          ),
+        );
+        return;
+      }
+
       final dirPath = await FilePicker.getDirectoryPath(
         dialogTitle: 'Seleziona la cartella da importare',
       );
@@ -650,6 +682,80 @@ class ImportService {
           folderPathSegments: location.folders,
           fileName: fileName,
           rawContent: rawContent,
+        ),
+      );
+    }
+
+    return entries;
+  }
+
+  /// Legge ricorsivamente una cartella scelta tramite SAF (Android).
+  ///
+  /// `Saf.walk` emette le voci in ordine depth-first con percorsi POSIX
+  /// relativi alla radice; i file vengono letti dal ContentResolver, mai da
+  /// un percorso `dart:io`. Valgono gli stessi limiti dell'import da
+  /// filesystem/ZIP: numero di note, dimensione della singola nota, totale
+  /// decompresso e profondità. Le cartelle vuote non vengono ricreate, come
+  /// per l'import da filesystem.
+  ///
+  /// Pubblica solo perché i test la invocano con un `SafPlatform` finto.
+  @visibleForTesting
+  static Future<List<ImportEntry>> extractFromSafDirectory(
+    Saf saf,
+    SafDocumentFile root,
+  ) async {
+    final entries = <ImportEntry>[];
+    var totalBytes = 0;
+
+    await for (final entry in saf.walk(root.uri)) {
+      final file = entry.file;
+      if (file.isDir) continue;
+
+      final location = mapSafEntryPath(entry.relativePath);
+      if (location == null) continue;
+      if (location.folders.length > maxFolderDepth) {
+        throw const FormatException(
+          'Percorso troppo profondo (massimo $maxFolderDepth livelli).',
+        );
+      }
+      final fileName = location.fileName;
+
+      if (entries.length >= maxImportedFiles) {
+        throw const FormatException(
+          'Troppi file da importare (massimo $maxImportedFiles).',
+        );
+      }
+      // La dimensione dichiarata dal provider viene controllata prima di
+      // leggere; quella effettiva dopo, perché può mentire.
+      if (file.length > maxEntryBytes) {
+        throw FormatException(
+          'Il file "$fileName" supera ${_mb(maxEntryBytes)}.',
+        );
+      }
+      if (totalBytes + file.length > maxTotalUncompressedBytes) {
+        throw FormatException(
+          'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).',
+        );
+      }
+
+      final bytes = await saf.readFileBytes(file.uri);
+      if (bytes.length > maxEntryBytes) {
+        throw FormatException(
+          'Il file "$fileName" supera ${_mb(maxEntryBytes)}.',
+        );
+      }
+      totalBytes += bytes.length;
+      if (totalBytes > maxTotalUncompressedBytes) {
+        throw FormatException(
+          'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).',
+        );
+      }
+
+      entries.add(
+        ImportEntry(
+          folderPathSegments: location.folders,
+          fileName: fileName,
+          rawContent: utf8.decode(bytes, allowMalformed: true),
         ),
       );
     }
