@@ -25,6 +25,10 @@ concurrency:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    env:
+      # Make a release build fail if android/key.properties is missing instead
+      # of silently producing an unsigned/debug-signed APK.
+      SCRIPTA_REQUIRE_RELEASE_SIGNING: '1'
 
     steps:
       - name: Checkout Repository
@@ -53,6 +57,47 @@ jobs:
       - name: Unit & widget tests
         run: flutter test
 
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            # A tag is a public release: do not publish it with a throwaway key.
+            if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              echo "::error::Release tag without ANDROID_KEYSTORE_BASE64: release signing is mandatory." >&2
+              exit 1
+            fi
+            # Branch build (not a release): use a temporary key only for CI.
+            echo "::warning::No keystore configured: signing this branch build with a temporary key."
+            EPHEMERAL_PASS="$(openssl rand -hex 16)"
+            keytool -genkeypair -v \
+              -keystore "$RUNNER_TEMP/upload-keystore.jks" \
+              -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias ephemeral -storepass "$EPHEMERAL_PASS" -keypass "$EPHEMERAL_PASS" \
+              -dname "CN=Scripta CI temporary key" > /dev/null
+            {
+              echo "storeFile=$RUNNER_TEMP/upload-keystore.jks"
+              echo "storePassword=$EPHEMERAL_PASS"
+              echo "keyAlias=ephemeral"
+              echo "keyPassword=$EPHEMERAL_PASS"
+            } > android/key.properties
+            exit 0
+          fi
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is set but a keystore credential is missing." >&2
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/upload-keystore.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+
       - name: Build Split APKs
         run: flutter build apk --release --split-per-abi
 
@@ -68,6 +113,23 @@ jobs:
       - name: Rename Universal APK
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/Scripta-universal.apk
+
+      - name: Verify release signature
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          APKSIGNER="$(find "$SDK/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found in $SDK/build-tools" >&2
+            exit 1
+          fi
+          for apk in build/app/outputs/flutter-apk/Scripta-*.apk; do
+            echo "== $apk =="
+            "$APKSIGNER" verify --print-certs "$apk" | sed -n '1,12p'
+            if "$APKSIGNER" verify --print-certs "$apk" | grep -qi 'CN=Android Debug'; then
+              echo "::error::$apk is signed with the Android debug key" >&2
+              exit 1
+            fi
+          done
 
       - name: Upload Artifacts to Release (tentativo 1)
         id: release_attempt_1
