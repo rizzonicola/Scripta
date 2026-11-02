@@ -46,7 +46,7 @@ Whether you're drafting quick thoughts on your phone or organizing complex proje
 
 ## ✨ Key Features
 
-- **📝 Markdown-First Editor**: Write in clean, standard Markdown with intelligent toolbar helpers, syntax highlighting, and an instant, fluid rendered reading view.
+- **📝 Markdown-First Editor**: Write in clean, standard Markdown with intelligent toolbar helpers and an instant, fluid rendered reading view.
 - **⚡ Local-First & Zero Latency**: Instantaneous startup and sub-millisecond search powered by SQLite WAL. Your notes reside on your device, fully accessible offline.
 - **🔄 Effortless Synchronization**: Privacy-respecting, asynchronous sync with self-hosted backends using Last-Write-Wins (LWW) conflict resolution and background debouncing.
 - **🎨 Modern, Adaptive Design**: Gorgeous light and dark color schemes, custom typography, subtle haptics, and a responsive layout that feels native on desktop, tablet, and mobile.

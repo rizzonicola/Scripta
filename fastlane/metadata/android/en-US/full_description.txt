@@ -1,10 +1,10 @@
 Scripta is a local-first Markdown note-taking app for Android, iOS, Linux, Windows and macOS. It is built for people who want fast, distraction-free writing without giving up control of their data.
 
 Features:
-- Markdown-first editor with syntax highlighting, a smart toolbar and an instant rendered reading view
+- Markdown-first editor with a smart toolbar and an instant rendered reading view
 - Edit and read-only modes, focus mode, and distraction-free writing
 - Local SQLite storage with fast offline search
-- Nested folders, tags, favorites, pinning and drag-and-drop organization
+- Nested folders, favorites, pinning and drag-and-drop organization
 - Optional self-hosted sync with last-write-wins conflict resolution
 - Import and export complete backups as ZIP archives or plain Markdown
 - Import an existing folder of Markdown files on Android using the Storage Access Framework
