@@ -56,6 +56,9 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+; Le associazioni "Apri con" modificano il registro: Explorer deve
+; accorgersene subito, senza un riavvio.
+ChangesAssociations=yes
 #if Arch == "arm64"
 ; Windows ARM64 nativo
 ArchitecturesAllowed=arm64
@@ -73,6 +76,22 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Registry]
+; "Apri con Scripta": si registra un ProgID e lo si aggiunge come scelta per
+; .md, .markdown e .txt, SENZA rubare l'associazione predefinita a Notepad o
+; ad altri editor. L'utente può selezionare Scripta dal menu "Apri con".
+;
+; OpenWithProgids vuole valori REG_NONE; Inno Setup non li sa creare, ma un
+; valore BINARY a lunghezza zero (ValueType binary senza ValueData) è accettato
+; da Windows e non richiede script esterni. Il flag svuota anche la chiave
+; OpenWithProgids alla disinstallazione se non restano altri programmi.
+Root: HKA; Subkey: "Software\Classes\.md\OpenWithProgids"; ValueType: binary; ValueName: "Scripta.Document"; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Classes\.markdown\OpenWithProgids"; ValueType: binary; ValueName: "Scripta.Document"; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Classes\.txt\OpenWithProgids"; ValueType: binary; ValueName: "Scripta.Document"; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Classes\Scripta.Document"; ValueType: string; ValueData: "Scripta Document"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Scripta.Document\DefaultIcon"; ValueType: string; ValueData: "{app}\{#AppExe},0"
+Root: HKA; Subkey: "Software\Classes\Scripta.Document\shell\open\command"; ValueType: string; ValueData: """{app}\{#AppExe}"" ""%1"""
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

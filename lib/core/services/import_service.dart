@@ -627,9 +627,8 @@ class ImportService {
   // Estrazione: cartella su filesystem
   // ---------------------------------------------------------------------
 
-  /// Legge ricorsivamente una cartella scelta dall'utente. Pubblica solo
-  /// perché i test la invocano su una cartella temporanea reale.
-  @visibleForTesting
+  /// Legge ricorsivamente una cartella scelta dall'utente o aperta
+  /// dall'esterno ("Apri con Scripta", drag & drop di una cartella).
   static Future<List<ImportEntry>> extractFromDirectory(Directory root) async {
     final entries = <ImportEntry>[];
     var totalBytes = 0;
@@ -837,8 +836,7 @@ class ImportService {
   }
 
   /// Materializza [entries] in cartelle e note. Riceve i due notifier invece
-  /// di un `WidgetRef` così i test lo usano con DAO finti, senza UI.
-  @visibleForTesting
+  /// di un `WidgetRef` così anche i test lo usano con DAO finti, senza UI.
   static Future<({int importedNotes, int importedFolders})> commitEntries(
     FolderNotifier folders,
     NotesNotifier notes,

@@ -1205,6 +1205,56 @@ class NotesNotifier extends StateNotifier<NotesState> {
     return newNote;
   }
 
+  /// Crea una nota con titolo e contenuto già pronti (apertura di un file
+  /// esterno o di una cartella) e la persiste SUBITO, senza passare dal
+  /// debounce dell'editor: se l'app viene chiusa nel mezzo secondo successivo,
+  /// il contenuto letto dal file non deve andare perso.
+  ///
+  /// Come [createNote], la nuova nota diventa quella attiva. A differenza
+  /// dell'importazione in blocco (che resta in background), qui l'utente ha
+  /// appena chiesto di aprire QUEL file: la nota deve comparire nell'editor.
+  Future<NoteModel> createNoteFromContent({
+    required String title,
+    required String content,
+    String? folderId,
+  }) async {
+    flushPendingSavesInBackground();
+    final now = DateTime.now();
+    final newOrderIndex = state.notes.isEmpty
+        ? 0
+        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a < b ? a : b) -
+              1;
+    final newNote = NoteModel(
+      id: _uuid.v4(),
+      title: title,
+      content: content,
+      folderId: folderId,
+      createdAt: now,
+      updatedAt: now,
+      orderIndex: newOrderIndex,
+    );
+
+    final previousNotes = state.notes;
+    final previousActiveId = state.activeNoteId;
+    state = state.copyWith(
+      notes: _sort([newNote, ...state.notes], state.sortOrder),
+      activeNoteId: () => newNote.id,
+    );
+
+    try {
+      await _persistStrict(() => _dao.upsert(newNote.toRow()));
+    } catch (_) {
+      if (mounted) {
+        state = state.copyWith(
+          notes: previousNotes,
+          activeNoteId: () => previousActiveId,
+        );
+      }
+      rethrow;
+    }
+    return newNote;
+  }
+
   void updateNote(String id, {String? title, String? content}) {
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;

@@ -4,13 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
 import 'core/database/app_database.dart';
+import 'core/services/external_open_service.dart';
 import 'core/services/session_state_service.dart';
 import 'core/services/window_decoration_service.dart';
 import 'core/utils/haptic_gating_binding.dart';
 import 'core/utils/perf_marks.dart';
 import 'features/settings/providers/settings_provider.dart';
 
-void main() async {
+void main(List<String> args) async {
   // Sostituisce WidgetsFlutterBinding.ensureInitialized(): la semplice
   // istanziazione registra la binding personalizzata come singleton (stesso
   // meccanismo di ensureInitialized(), vedi doc in haptic_gating_binding.dart),
@@ -18,6 +19,12 @@ void main() async {
   // "Leggera" di sopprimere anche la vibrazione nativa che Flutter genera
   // autonomamente durante la selezione di testo.
   ScriptaWidgetsFlutterBinding();
+
+  // "Apri con Scripta" su Linux/Windows arriva qui come argomento della riga
+  // di comando (il runner desktop li inoltra all'entrypoint Dart). Va letto
+  // subito: l'eventuale nota va creata dopo che i notifier esistono, ma i
+  // percorsi non devono andare persi durante l'avvio.
+  await ExternalOpenService.instance.initialize(args);
 
   // Inizializza il database factory corretto per la piattaforma (sqflite su
   // Android/iOS, sqflite_common_ffi su desktop) PRIMA che qualunque

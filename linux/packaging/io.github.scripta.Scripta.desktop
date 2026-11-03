@@ -7,5 +7,6 @@ Exec=scripta %U
 Icon=io.github.scripta.Scripta
 Terminal=false
 Categories=Office;TextEditor;Utility;
+MimeType=text/markdown;text/x-markdown;text/plain;inode/directory;
 StartupNotify=true
 StartupWMClass=scripta

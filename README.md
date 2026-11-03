@@ -54,6 +54,7 @@ Whether you're drafting quick thoughts on your phone or organizing complex proje
 - **🔍 Instant Search**: Real-time filtering and content search find what you need across your entire vault in milliseconds.
 - **📦 True Data Ownership**: Never get locked in. Import and export complete backups anytime with standard ZIP archives or plain Markdown files.
 - **⌨️ Desktop-Class Workflow**: Right-click context menus on notes, folders, "All notes" and empty areas (pin, move, duplicate, export, rename, delete, new note/folder, sorting) plus keyboard shortcuts for everything (`F1` shows the full list; `Ctrl` becomes `Cmd` on macOS).
+- **📥 Open Files & Folders Natively**: Open Markdown and plain-text files with Scripta from your file manager, or drag files and folders onto the window, to bring them in as new notes.
 
 ---
 

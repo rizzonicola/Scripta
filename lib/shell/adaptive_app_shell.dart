@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants/app_constants.dart';
 import '../core/l10n/app_localizations.dart';
+import '../core/l10n/desktop_strings.dart';
+import '../core/services/external_open_processor.dart';
+import '../core/services/external_open_service.dart';
 import '../core/services/session_state_service.dart';
 import '../core/utils/responsive_breakpoints.dart';
 import '../features/editor/presentation/note_editor_pane.dart';
@@ -94,10 +97,21 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
   MobileActiveView _mobileActiveView = MobileActiveView.notesList;
   bool _hasCheckedOnboarding = false;
 
+  /// File/cartelle ricevuti da "Apri con Scripta" o dal drag & drop. La coda
+  /// esiste perché più eventi possono arrivare mentre una cartella viene
+  /// importata: vanno elaborati uno alla volta, senza aprire più finestre di
+  /// avanzamento o sovrapporre scritture.
+  final List<String> _pendingExternalOpenPaths = <String>[];
+  bool _processingExternalOpenPaths = false;
+  void Function(List<String>)? _externalOpenListener;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _externalOpenListener = _onExternalOpenPaths;
+    ExternalOpenService.instance.attach(_externalOpenListener!);
 
     // Ripresa dell'ultima posizione (layout mobile a pannello singolo): se
     // l'app era stata chiusa sull'editor si riparte dall'editor, non dalla
@@ -113,6 +127,10 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
 
   @override
   void dispose() {
+    final listener = _externalOpenListener;
+    if (listener != null) {
+      ExternalOpenService.instance.detach(listener);
+    }
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -163,6 +181,70 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
   void _retryPendingWrites() {
     unawaited(ref.read(notesProvider.notifier).retryFailedWrites());
     unawaited(ref.read(folderProvider.notifier).retryPendingWrites());
+  }
+
+  void _onExternalOpenPaths(List<String> paths) {
+    if (paths.isEmpty) return;
+    _pendingExternalOpenPaths.addAll(paths);
+    unawaited(_drainExternalOpenPaths());
+  }
+
+  Future<void> _drainExternalOpenPaths() async {
+    if (_processingExternalOpenPaths) return;
+    _processingExternalOpenPaths = true;
+    try {
+      while (mounted && _pendingExternalOpenPaths.isNotEmpty) {
+        final batch = List<String>.of(_pendingExternalOpenPaths);
+        _pendingExternalOpenPaths.clear();
+
+        ExternalOpenOutcome outcome;
+        try {
+          outcome = await ExternalOpenProcessor.openPaths(
+            batch,
+            notes: ref.read(notesProvider.notifier),
+            folders: ref.read(folderProvider.notifier),
+          );
+        } catch (_) {
+          outcome = ExternalOpenOutcome(failedPaths: batch);
+        }
+        if (!mounted) return;
+        _showExternalOpenOutcome(outcome);
+      }
+    } finally {
+      _processingExternalOpenPaths = false;
+    }
+  }
+
+  void _showExternalOpenOutcome(ExternalOpenOutcome outcome) {
+    final ds = DesktopStrings.of(context);
+    String? message;
+    var isError = false;
+
+    if (outcome.failedPaths.isNotEmpty) {
+      message = ds.openFailed;
+      isError = true;
+    } else if (outcome.ignoredPaths.isNotEmpty) {
+      message = ds.openUnsupported;
+      isError = true;
+    } else if (outcome.openedFolders > 0) {
+      message = outcome.importedNotes == 0
+          ? ds.openFolderEmpty
+          : ds.openFolderDone(outcome.importedNotes, outcome.importedFolders);
+    } else if (outcome.openedFiles > 1) {
+      message = ds.openNotesDone(outcome.openedFiles);
+    }
+
+    if (message == null) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red.shade800 : null,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override

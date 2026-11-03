@@ -49,6 +49,24 @@ class DesktopStrings {
   String get metadataOrderHint => _t('metadataOrderHint');
   String get metadataInvalidOrder => _t('metadataInvalidOrder');
   String get metadataSaved => _t('metadataSaved');
+  String get dropToOpen => _t('dropToOpen');
+  String get openUnsupported => _t('openUnsupported');
+  String get openFailed => _t('openFailed');
+  String get openFolderEmpty => _t('openFolderEmpty');
+
+  /// Riepilogo dell'importazione di una cartella aperta dall'esterno. Il
+  /// conteggio delle note è sempre presente; le cartelle solo quando ne sono
+  /// state create di nuove.
+  String openFolderDone(int notes, int folders) {
+    final key = folders > 0 ? 'openFolderDoneFolders' : 'openFolderDone';
+    return _t(
+      key,
+    ).replaceAll('{notes}', '$notes').replaceAll('{folders}', '$folders');
+  }
+
+  /// Riepilogo di più file aperti insieme (drag & drop).
+  String openNotesDone(int count) =>
+      _t('openNotesDone').replaceAll('{count}', '$count');
 
   String command(String id) => _t('cmd.$id');
 
@@ -87,6 +105,15 @@ class DesktopStrings {
       'metadataOrderHint': 'Numero intero: valori più bassi compaiono prima',
       'metadataInvalidOrder': 'Inserisci un numero intero valido',
       'metadataSaved': 'Metadati aggiornati',
+      'dropToOpen': 'Rilascia per aprire come nuova nota',
+      'openUnsupported':
+          'Formato non supportato. Usa file .md, .markdown o .txt.',
+      'openFailed': 'Impossibile aprire il file o la cartella.',
+      'openFolderEmpty': 'Nessuna nota Markdown trovata nella cartella.',
+      'openFolderDone': 'Note importate: {notes}.',
+      'openFolderDoneFolders':
+          'Note importate: {notes}, nuove cartelle: {folders}.',
+      'openNotesDone': 'Note aperte: {count}.',
       'cmd.newNote': 'Nuova nota',
       'cmd.newFolder': 'Nuova cartella',
       'cmd.save': 'Salva e sincronizza',
@@ -145,6 +172,15 @@ class DesktopStrings {
       'metadataOrderHint': 'Integer: lower values appear first',
       'metadataInvalidOrder': 'Enter a valid integer',
       'metadataSaved': 'Metadata updated',
+      'dropToOpen': 'Drop to open as a new note',
+      'openUnsupported':
+          'Unsupported format. Use .md, .markdown or .txt files.',
+      'openFailed': 'Could not open the file or folder.',
+      'openFolderEmpty': 'No Markdown notes found in the folder.',
+      'openFolderDone': 'Notes imported: {notes}.',
+      'openFolderDoneFolders':
+          'Notes imported: {notes}, new folders: {folders}.',
+      'openNotesDone': 'Notes opened: {count}.',
       'cmd.newNote': 'New note',
       'cmd.newFolder': 'New folder',
       'cmd.save': 'Save & sync',
@@ -204,6 +240,15 @@ class DesktopStrings {
           'Entier : les valeurs basses apparaissent en premier',
       'metadataInvalidOrder': 'Saisissez un entier valide',
       'metadataSaved': 'Métadonnées mises à jour',
+      'dropToOpen': 'Déposez pour ouvrir comme nouvelle note',
+      'openUnsupported':
+          'Format non pris en charge. Utilisez des fichiers .md, .markdown ou .txt.',
+      'openFailed': 'Impossible d’ouvrir le fichier ou le dossier.',
+      'openFolderEmpty': 'Aucune note Markdown trouvée dans le dossier.',
+      'openFolderDone': 'Notes importées : {notes}.',
+      'openFolderDoneFolders':
+          'Notes importées : {notes}, nouveaux dossiers : {folders}.',
+      'openNotesDone': 'Notes ouvertes : {count}.',
       'cmd.newNote': 'Nouvelle note',
       'cmd.newFolder': 'Nouveau dossier',
       'cmd.save': 'Enregistrer et synchroniser',

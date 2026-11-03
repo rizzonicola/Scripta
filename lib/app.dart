@@ -9,6 +9,7 @@ import 'core/theme/color_schemes.dart';
 import 'core/utils/haptics_helper.dart';
 import 'features/settings/providers/settings_provider.dart';
 import 'shell/adaptive_app_shell.dart';
+import 'shell/desktop_file_drop_region.dart';
 import 'shell/session_persistence.dart';
 
 /// Temi chiaro e scuro, derivati SOLO da tema scelto e famiglia di font.
@@ -105,6 +106,12 @@ class ScriptaApp extends ConsumerWidget {
 
       // Home shell
       home: const AdaptiveAppShell(),
+
+      // Il drag & drop deve coprire TUTTA la finestra, comprese le route
+      // sovrapposte (dialog, menu): per questo sta nel builder di MaterialApp
+      // e non dentro lo shell. Su mobile/Web è un semplice passthrough.
+      builder: (context, child) =>
+          DesktopFileDropRegion(child: child ?? const SizedBox.shrink()),
     );
   }
 }
