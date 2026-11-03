@@ -180,4 +180,104 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'custom: la rotella scorre la lista e aggiorna l’indice durante il drag',
+    (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notes = container.read(notesProvider.notifier);
+      final folders = container.read(folderProvider.notifier);
+      await tester.runAsync(
+        () => _waitUntil(
+          () async => notes.initialLoadComplete && folders.initialLoadComplete,
+        ),
+      );
+
+      for (var i = 0; i < 20; i++) {
+        notes.createNote();
+      }
+      await notes.setSortOrder(NoteSortOrder.custom);
+      await tester.runAsync(notes.flushPendingSaves);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: AppTheme.lightTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(
+              body: SizedBox(width: 380, height: 500, child: NotesListView()),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(
+          of: find.byType(ReorderableListView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(
+        scrollable.position.maxScrollExtent,
+        greaterThan(0),
+        reason: 'servono abbastanza note perché la lista possa scorrere',
+      );
+
+      final before = _ids(container);
+      final draggedId = before.first;
+      final start = tester.getCenter(find.byType(NoteCard).first);
+
+      final gesture = await tester.startGesture(
+        start,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 100));
+      await gesture.moveBy(const Offset(0, 8));
+      await tester.pump();
+
+      expect(scrollable.position.pixels, 0);
+
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+          position: start,
+          scrollDelta: const Offset(0, 300),
+          kind: PointerDeviceKind.mouse,
+        ),
+      );
+      // Primo frame: la Scrollable applica la rotella e il post-frame
+      // programma il move sintetico. Secondo frame: il move aggiorna
+      // l'indice di inserimento sulle nuove geometrie.
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        scrollable.position.pixels,
+        greaterThan(0),
+        reason: 'la rotella deve scorrere la lista durante il trascinamento',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(
+        _ids(container).indexOf(draggedId),
+        greaterThan(0),
+        reason:
+            'dopo lo scroll la nota trascinata deve essere rilasciata più in basso',
+      );
+
+      // Il riordino persiste con scritture fire-and-forget: lasciarle
+      // completare prima che il test smonti l'albero (altrimenti restano
+      // timer sqflite pendenti nel fake async).
+      await tester.runAsync(() async {
+        await notes.flushPendingSaves();
+        await notes.refreshFromDb();
+      });
+    },
+  );
 }

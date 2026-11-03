@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
@@ -29,6 +30,20 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
 
+  /// Controller dedicato alla lista in modalità "ordine personalizzato":
+  /// serve a far scorrere la lista con la rotella anche mentre un elemento è
+  /// in trascinamento (vedi [_handlePointerSignal]).
+  final ScrollController _reorderScrollController = ScrollController();
+
+  bool _isReordering = false;
+  int? _dragPointer;
+  Offset? _dragPosition;
+  PointerDeviceKind? _dragPointerKind;
+  int _dragDevice = 0;
+  int _dragButtons = 0;
+  Duration _dragTimeStamp = Duration.zero;
+  bool _dragSyncScheduled = false;
+
   // Debounce della ricerca: il filtro (filteredNotesProvider) è in-memory e
   // quindi economico anche per singolo carattere, ma su liste di note molto
   // grandi ricalcolarlo e ricostruire l'intera ListView ad OGNI keystroke
@@ -51,7 +66,98 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
     _searchDebounceTimer?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _reorderScrollController.dispose();
     super.dispose();
+  }
+
+  // ---------------------------------------------------------------------
+  // Rotella durante il riordino.
+  //
+  // ReorderableListView aggiorna l'indice di inserimento solo quando arriva
+  // un PointerMoveEvent: la rotella, di per sé, cambia la posizione di
+  // scorrimento ma non muove il puntatore, quindi l'elemento trascinato
+  // resterebbe "agganciato" all'indice vecchio. Qui si intercettano gli
+  // eventi della rotella e, dopo che la lista ha scorso, si inietta un move
+  // sintetico alla stessa posizione: il proxy ricalcola l'indice sulle nuove
+  // geometrie, come se l'utente avesse spostato di poco il mouse.
+  // ---------------------------------------------------------------------
+  void _handlePointerDown(PointerDownEvent event) {
+    _dragPointer = event.pointer;
+    _dragPosition = event.position;
+    _dragPointerKind = event.kind;
+    _dragDevice = event.device;
+    _dragButtons = event.buttons;
+    _dragTimeStamp = event.timeStamp;
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _dragPointer) return;
+    _dragPosition = event.position;
+    _dragTimeStamp = event.timeStamp;
+  }
+
+  void _handlePointerEnd(PointerEvent event) {
+    if (event.pointer != _dragPointer) return;
+    _dragPointer = null;
+    _dragPosition = null;
+    _dragPointerKind = null;
+    _dragButtons = 0;
+    _dragTimeStamp = Duration.zero;
+  }
+
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (!_isReordering || event is! PointerScrollEvent) return;
+    final delta = event.scrollDelta.dy;
+    if (delta == 0) return;
+    _dragTimeStamp = event.timeStamp;
+
+    final before = _reorderScrollController.hasClients
+        ? _reorderScrollController.position.pixels
+        : null;
+
+    // Il resolver della PointerSignal è sincrono: quando questo callback
+    // post-frame gira, l'eventuale scroll gestito dalla Scrollable è già
+    // avvenuto (e il layout del prossimo frame lo rifletterà).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isReordering) return;
+      if (!_reorderScrollController.hasClients) return;
+      final position = _reorderScrollController.position;
+      if (before != null && (position.pixels - before).abs() < 0.5) {
+        // La Scrollable non ha applicato la rotella (il drag tiene il
+        // gesto): la applichiamo noi.
+        final target = (position.pixels + delta).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+        if (target != position.pixels) {
+          _reorderScrollController.jumpTo(target);
+        }
+      }
+      _scheduleDragSync();
+    });
+  }
+
+  void _scheduleDragSync() {
+    if (_dragSyncScheduled) return;
+    _dragSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _dragSyncScheduled = false;
+      if (!mounted || !_isReordering) return;
+      final pointer = _dragPointer;
+      final position = _dragPosition;
+      if (pointer == null || position == null) return;
+      GestureBinding.instance.handlePointerEvent(
+        PointerMoveEvent(
+          pointer: pointer,
+          position: position,
+          delta: Offset.zero,
+          kind: _dragPointerKind ?? PointerDeviceKind.mouse,
+          device: _dragDevice,
+          buttons: _dragButtons,
+          timeStamp: _dragTimeStamp,
+        ),
+      );
+    });
   }
 
   void _onSearchChanged(String value) {
@@ -335,69 +441,90 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
               child: noteIds.isEmpty
                   ? _buildEmptyState(context, l10n, theme)
                   : isCustomReorderActive
-                  ? ReorderableListView.builder(
-                      // La card intera è la superficie di drag: niente
-                      // maniglia predefinita.
-                      buildDefaultDragHandles: false,
-                      proxyDecorator: (child, index, animation) {
-                        return AnimatedBuilder(
-                          animation: animation,
-                          builder: (context, child) {
-                            final lift = Curves.easeOutCubic.transform(
-                              animation.value,
-                            );
-                            return Transform.scale(
-                              scale: 1 + (0.02 * lift),
-                              child: Material(
-                                color: Colors.transparent,
-                                elevation: 10 * lift,
-                                borderRadius: BorderRadius.circular(12),
-                                shadowColor: Colors.black.withValues(
-                                  alpha: 0.3,
-                                ),
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: child,
-                        );
-                      },
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: noteIds.length,
-                      onReorderItem: (oldIndex, newIndex) {
-                        // onReorderItem fornisce newIndex già corretto per
-                        // la rimozione dell'elemento; reorderNotes usa la
-                        // semantica classica di onReorder (la correzione
-                        // avviene al suo interno), quindi la si ripristina.
-                        final legacyNewIndex = newIndex > oldIndex
-                            ? newIndex + 1
-                            : newIndex;
-                        // Gli indici si riferiscono alla lista MOSTRATA
-                        // (filtrata per cartella): si passano anche gli id
-                        // visibili, così il provider sposta la nota giusta.
-                        ref
-                            .read(notesProvider.notifier)
-                            .reorderNotes(
-                              oldIndex,
-                              legacyNewIndex,
-                              visibleIds: noteIds.toList(),
-                            );
-                      },
-                      itemBuilder: (context, index) {
-                        final noteId = noteIds[index];
+                  ? Listener(
+                      onPointerDown: _handlePointerDown,
+                      onPointerMove: _handlePointerMove,
+                      onPointerUp: _handlePointerEnd,
+                      onPointerCancel: _handlePointerEnd,
+                      onPointerSignal: _handlePointerSignal,
+                      child: ReorderableListView.builder(
+                        scrollController: _reorderScrollController,
+                        // La card intera è la superficie di drag: niente
+                        // maniglia predefinita.
+                        buildDefaultDragHandles: false,
+                        onReorderStart: (_) => _isReordering = true,
+                        onReorderEnd: (_) {
+                          _isReordering = false;
+                          _dragSyncScheduled = false;
+                        },
+                        proxyDecorator: (child, index, animation) {
+                          // Il proxy vive nell'Overlay, sopra la lista: senza
+                          // IgnorePointer intercetterebbe la rotella (il
+                          // puntatore è sopra la card trascinata) e la lista
+                          // sotto non scorrerebbe. Il trascinamento non ne
+                          // risente: i move arrivano al gesto già attivo,
+                          // non passano da un nuovo hit test.
+                          return IgnorePointer(
+                            child: AnimatedBuilder(
+                              animation: animation,
+                              builder: (context, child) {
+                                final lift = Curves.easeOutCubic.transform(
+                                  animation.value,
+                                );
+                                return Transform.scale(
+                                  scale: 1 + (0.02 * lift),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    elevation: 10 * lift,
+                                    borderRadius: BorderRadius.circular(12),
+                                    shadowColor: Colors.black.withValues(
+                                      alpha: 0.3,
+                                    ),
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: child,
+                            ),
+                          );
+                        },
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: noteIds.length,
+                        onReorderItem: (oldIndex, newIndex) {
+                          // onReorderItem fornisce newIndex già corretto per
+                          // la rimozione dell'elemento; reorderNotes usa la
+                          // semantica classica di onReorder (la correzione
+                          // avviene al suo interno), quindi la si ripristina.
+                          final legacyNewIndex = newIndex > oldIndex
+                              ? newIndex + 1
+                              : newIndex;
+                          // Gli indici si riferiscono alla lista MOSTRATA
+                          // (filtrata per cartella): si passano anche gli id
+                          // visibili, così il provider sposta la nota giusta.
+                          ref
+                              .read(notesProvider.notifier)
+                              .reorderNotes(
+                                oldIndex,
+                                legacyNewIndex,
+                                visibleIds: noteIds.toList(),
+                              );
+                        },
+                        itemBuilder: (context, index) {
+                          final noteId = noteIds[index];
 
-                        // Long-press (touch) e long-click (mouse) sull'intera
-                        // card: il tap breve resta all'InkWell della nota.
-                        return ReorderableDelayedDragStartListener(
-                          key: ValueKey(noteId),
-                          index: index,
-                          child: _NoteListItem(
-                            noteId: noteId,
-                            isSelected: activeNoteId == noteId,
-                            onTap: _openNote,
-                          ),
-                        );
-                      },
+                          // Long-press (touch) e long-click (mouse) sull'intera
+                          // card: il tap breve resta all'InkWell della nota.
+                          return ReorderableDelayedDragStartListener(
+                            key: ValueKey(noteId),
+                            index: index,
+                            child: _NoteListItem(
+                              noteId: noteId,
+                              isSelected: activeNoteId == noteId,
+                              onTap: _openNote,
+                            ),
+                          );
+                        },
+                      ),
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(vertical: 8),
