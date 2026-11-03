@@ -65,7 +65,7 @@ class _MemoryFoldersDao implements FoldersDao {
   dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
 }
 
-/// SAF finto: riproduce `walk` e `readFileBytes` senza canali nativi. I URI
+/// SAF finto: riproduce `walk` e `readFileStream` senza canali nativi. I URI
 /// sono costruiti come li restituirebbe il provider Android; le letture sono
 /// contate per verificare che un file oltre il limite venga rifiutato prima
 /// di leggerne i byte.
@@ -81,6 +81,8 @@ class _FakeSafPlatform extends SafPlatform {
   final List<SafWalkEntry> _entries = [];
   final Map<String, Uint8List> _contents = {};
   int reads = 0;
+  int? lastBufferSize;
+  bool closed = false;
 
   void addDirectory(String path) {
     _entries.add(
@@ -127,11 +129,29 @@ class _FakeSafPlatform extends SafPlatform {
       Stream<SafWalkEntry>.fromIterable(_entries);
 
   @override
-  Future<Uint8List> readFileBytes(String uri, {int? start, int? count}) async {
+  Future<Stream<Uint8List>> readFileStream(
+    String uri, {
+    int? start,
+    int bufferSize = 4194304,
+  }) async {
     reads++;
+    lastBufferSize = bufferSize;
     final data = _contents[uri];
     if (data == null) throw StateError('file inatteso: $uri');
-    return data;
+    return _chunks(data, start ?? 0, bufferSize);
+  }
+
+  Stream<Uint8List> _chunks(Uint8List data, int from, int size) async* {
+    try {
+      var offset = from;
+      while (offset < data.length) {
+        final end = offset + size > data.length ? data.length : offset + size;
+        yield Uint8List.sublistView(data, offset, end);
+        offset = end;
+      }
+    } finally {
+      closed = true;
+    }
   }
 }
 
@@ -758,7 +778,44 @@ void main() {
         );
 
       await expectLater(extract(platform), throwsFormatException);
+      // La lettura si ferma al limite e chiude lo stream, senza leggere
+      // tutto il contenuto della dimensione dichiarata.
       expect(platform.reads, 1);
+      expect(platform.lastBufferSize, ImportService.safReadChunkBytes);
+      expect(platform.closed, isTrue);
+    });
+
+    test('una dimensione dichiarata corretta richiede una sola lettura',
+        () async {
+      final platform = _FakeSafPlatform()..addFile('nota.md', 'contenuto');
+
+      final entries = await extract(platform);
+
+      expect(entries.single.rawContent, 'contenuto');
+      expect(platform.reads, 1);
+      expect(platform.closed, isTrue);
+    });
+
+    test('se il provider dichiara meno byte del reale, la nota resta intera',
+        () async {
+      final platform = _FakeSafPlatform()
+        ..addFile('nota.md', 'contenuto', declaredLength: 1);
+
+      final entries = await extract(platform);
+
+      expect(entries.single.rawContent, 'contenuto');
+      expect(platform.reads, 1);
+      expect(platform.closed, isTrue);
+    });
+
+    test('una cartella con troppe voci viene rifiutata', () async {
+      final platform = _FakeSafPlatform();
+      for (var i = 0; i <= ImportService.maxZipEntries; i++) {
+        platform.addDirectory('dir$i');
+      }
+
+      await expectLater(extract(platform), throwsFormatException);
+      expect(platform.reads, 0);
     });
 
     test('percorsi fuori dalla radice e file non-nota vengono ignorati', () async {

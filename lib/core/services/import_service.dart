@@ -68,6 +68,11 @@ class ImportService {
   static const int maxFolderDepth = 32;
   static const int maxImportedFolders = 5000;
 
+  /// Blocco di lettura SAF. La dimensione dichiarata da un provider può
+  /// mentire: leggere a blocchi piccoli evita di allocare in un colpo solo
+  /// l'intero buffer dichiarato.
+  static const int safReadChunkBytes = 64 * 1024;
+
   /// Il manifest contiene una copia del testo di TUTTE le note (serve a
   /// ripristinare titolo/contenuto esatti quando il Markdown è ambiguo), quindi
   /// non può essere soggetto al limite di 10 MiB di una singola nota: un
@@ -706,8 +711,17 @@ class ImportService {
   ) async {
     final entries = <ImportEntry>[];
     var totalBytes = 0;
+    var visitedEntries = 0;
 
     await for (final entry in saf.walk(root.uri)) {
+      // Anche le voci non importabili contano: un provider può enumerare un
+      // albero enorme (o ciclico) e tenere l'app bloccata nella finestra di
+      // avanzamento. Il limite è lo stesso già usato per le voci ZIP.
+      if (++visitedEntries > maxZipEntries) {
+        throw const FormatException(
+          'Troppe voci nella cartella (massimo $maxZipEntries).',
+        );
+      }
       final file = entry.file;
       if (file.isDir) continue;
 
@@ -726,7 +740,10 @@ class ImportService {
         );
       }
       // La dimensione dichiarata dal provider viene controllata prima di
-      // leggere; quella effettiva dopo, perché può mentire.
+      // leggere; quella effettiva dopo, perché può mentire. La lettura è
+      // però a blocchi e si ferma al limite reale: un provider che dichiara
+      // una dimensione falsa (o che non termina mai) non può far allocare
+      // memoria illimitata prima del controllo successivo.
       if (file.length > maxEntryBytes) {
         throw FormatException(
           'Il file "$fileName" supera ${_mb(maxEntryBytes)}.',
@@ -737,8 +754,29 @@ class ImportService {
           'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)}).',
         );
       }
-
-      final bytes = await saf.readFileBytes(file.uri);
+      final remainingTotalBytes = maxTotalUncompressedBytes - totalBytes;
+      final readLimit = maxEntryBytes < remainingTotalBytes
+          ? maxEntryBytes
+          : remainingTotalBytes;
+      // Si accumula al massimo un byte oltre [readLimit], poi si chiude lo
+      // stream: basta a distinguere un file oltre il limite da uno valido.
+      final builder = BytesBuilder(copy: false);
+      var readBytes = 0;
+      await for (final chunk in await saf.readFileStream(
+        file.uri,
+        bufferSize: safReadChunkBytes,
+      )) {
+        if (chunk.isEmpty) break;
+        final missing = readLimit + 1 - readBytes;
+        if (chunk.length >= missing) {
+          builder.add(Uint8List.sublistView(chunk, 0, missing));
+          readBytes += missing;
+          break;
+        }
+        builder.add(chunk);
+        readBytes += chunk.length;
+      }
+      final bytes = builder.takeBytes();
       if (bytes.length > maxEntryBytes) {
         throw FormatException(
           'Il file "$fileName" supera ${_mb(maxEntryBytes)}.',
