@@ -1,0 +1,10 @@
+Version 1.1.1.
+
+- Choose a destination folder when importing a folder of Markdown files.
+- Reorder folders and move them into other folders with a long-press drag.
+- Open Markdown and plain-text files or whole folders with Scripta on
+  desktop, including by dropping them onto the window.
+- Keep scrolling the note list with the mouse wheel while dragging a note
+  in custom order.
+- Made Android folder import more robust against providers that report
+  incorrect file sizes.

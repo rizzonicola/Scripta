@@ -50,7 +50,7 @@ Whether you're drafting quick thoughts on your phone or organizing complex proje
 - **⚡ Local-First & Zero Latency**: Instantaneous startup and sub-millisecond search powered by SQLite WAL. Your notes reside on your device, fully accessible offline.
 - **🔄 Effortless Synchronization**: Privacy-respecting, asynchronous sync with self-hosted backends using Last-Write-Wins (LWW) conflict resolution and background debouncing.
 - **🎨 Modern, Adaptive Design**: Gorgeous light and dark color schemes, custom typography, subtle haptics, and a responsive layout that feels native on desktop, tablet, and mobile.
-- **📂 Hierarchical Organization**: Organize notes into nested folders, tag favorites, pin priority documents, and rearrange with drag-and-drop ease.
+- **📂 Hierarchical Organization**: Organize notes into nested folders, mark favorites, pin priority documents, and rearrange with drag-and-drop ease.
 - **🔍 Instant Search**: Real-time filtering and content search find what you need across your entire vault in milliseconds.
 - **📦 True Data Ownership**: Never get locked in. Import and export complete backups anytime with standard ZIP archives or plain Markdown files.
 - **⌨️ Desktop-Class Workflow**: Right-click context menus on notes, folders, "All notes" and empty areas (pin, move, duplicate, export, rename, delete, new note/folder, sorting) plus keyboard shortcuts for everything (`F1` shows the full list; `Ctrl` becomes `Cmd` on macOS).
