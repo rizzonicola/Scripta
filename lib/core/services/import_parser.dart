@@ -68,6 +68,38 @@ class ImportBundle {
   });
 }
 
+/// Replica [entries] anteponendo il nome della cartella importata — e
+/// l'eventuale percorso della destinazione scelta — ai percorsi relativi già
+/// calcolati da [mapFilePath]/[mapSafEntryPath].
+///
+/// L'estrazione di una cartella produce percorsi relativi alla cartella
+/// scelta (che quindi non compare). Per ricreare anche la cartella stessa
+/// sotto una destinazione dell'app serve un segmento in più:
+/// `['Lavoro'] + ['Progetti'] + ['Sotto']` → `Lavoro/Progetti/Sotto`.
+/// [destinationPath] vuoto significa radice ("Tutte le note").
+List<ImportEntry> nestImportEntriesUnderFolder(
+  List<ImportEntry> entries, {
+  required String rootFolderName,
+  List<String> destinationPath = const [],
+}) {
+  final folderName = rootFolderName.trim();
+  final prefix = <String>[
+    ...destinationPath,
+    if (folderName.isNotEmpty) folderName,
+  ];
+  if (prefix.isEmpty) return entries;
+
+  return [
+    for (final entry in entries)
+      ImportEntry(
+        folderPathSegments: [...prefix, ...entry.folderPathSegments],
+        fileName: entry.fileName,
+        rawContent: entry.rawContent,
+        manifestNote: entry.manifestNote,
+      ),
+  ];
+}
+
 /// Posizione di un file importato: cartelle (radice esclusa) e nome del file.
 typedef ImportLocation = ({List<String> folders, String fileName});
 

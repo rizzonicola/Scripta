@@ -40,8 +40,18 @@ class ExternalOpenOutcome {
 ///   regole di titolo/contenuto dell'importazione (vedi `parseNoteFile`);
 /// - una CARTELLA viene importata ricorsivamente con `ImportService`, quindi
 ///   conserva la struttura delle sottocartelle e non modifica note esistenti;
+///   la cartella stessa viene ricreata (con il suo nome) sotto la
+///   destinazione scelta tramite [chooseFolderDestination];
 /// - ogni voce è indipendente: un file illeggibile non impedisce di aprire gli
 ///   altri della stessa operazione.
+///
+/// [chooseFolderDestination] riceve il nome della cartella importata e
+/// restituisce il percorso delle cartelle di destinazione (vuoto = radice)
+/// oppure `null` se l'utente annulla. Senza callback l'importazione usa la
+/// radice, com'era prima dell'introduzione del selettore.
+typedef FolderImportDestinationPicker =
+    Future<List<String>?> Function(String folderName);
+
 class ExternalOpenProcessor {
   ExternalOpenProcessor._();
 
@@ -49,6 +59,7 @@ class ExternalOpenProcessor {
     Iterable<String> rawPaths, {
     required NotesNotifier notes,
     required FolderNotifier folders,
+    FolderImportDestinationPicker? chooseFolderDestination,
   }) async {
     var openedFiles = 0;
     var importedNotes = 0;
@@ -72,17 +83,37 @@ class ExternalOpenProcessor {
       }
 
       if (type == FileSystemEntityType.directory) {
-        openedFolders++;
+        final folderName = _importedFolderName(path);
+        final List<String> destination;
+        if (chooseFolderDestination == null) {
+          destination = const <String>[];
+        } else {
+          // La scelta arriva prima della lettura: l'utente vede subito che
+          // l'app ha ricevuto la cartella e non si legge nulla se annulla.
+          final chosen = await chooseFolderDestination(folderName);
+          if (chosen == null) continue;
+          destination = chosen;
+        }
+
         try {
           final entries = await ImportService.extractFromDirectory(
             Directory(path),
           );
-          if (entries.isEmpty) continue;
+          if (entries.isEmpty) {
+            openedFolders++;
+            continue;
+          }
+
           final result = await ImportService.commitEntries(
             folders,
             notes,
-            entries,
+            nestImportEntriesUnderFolder(
+              entries,
+              rootFolderName: folderName,
+              destinationPath: destination,
+            ),
           );
+          openedFolders++;
           importedNotes += result.importedNotes;
           importedFolders += result.importedFolders;
         } catch (_) {
@@ -139,5 +170,16 @@ class ExternalOpenProcessor {
       ignoredPaths: ignored,
       failedPaths: failed,
     );
+  }
+
+  /// Nome con cui ricreare la cartella importata. Per una radice di filesystem
+  /// (caso limite) non esiste un basename utile: si usa un nome neutro invece
+  /// di creare una cartella chiamata "/".
+  static String _importedFolderName(String path) {
+    final name = p.basename(p.normalize(path)).trim();
+    if (name.isEmpty || name == p.separator || name == '/' || name == r'\') {
+      return 'Cartella importata';
+    }
+    return name;
   }
 }

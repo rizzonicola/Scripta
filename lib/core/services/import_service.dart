@@ -16,9 +16,11 @@ import 'package:flutter/foundation.dart'
 // WEB-END
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import 'package:saf/saf.dart';
 
 import '../../features/folders/models/folder_node.dart';
+import '../../features/folders/presentation/folder_import_picker.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
 import '../../features/settings/providers/settings_provider.dart';
@@ -235,11 +237,22 @@ class ImportService {
         if (dir == null || !dir.isDir) return;
 
         if (!context.mounted) return;
+        final destination = await showFolderImportDestinationPicker(
+          context,
+          ref,
+          folderName: dir.name,
+        );
+        if (destination == null || !context.mounted) return;
+
         await _runImport(
           context,
           ref,
           () async => ImportBundle(
-            entries: await extractFromSafDirectory(saf, dir),
+            entries: nestImportEntriesUnderFolder(
+              await extractFromSafDirectory(saf, dir),
+              rootFolderName: dir.name,
+              destinationPath: destination,
+            ),
           ),
         );
         return;
@@ -250,12 +263,24 @@ class ImportService {
       );
       if (dirPath == null) return;
 
+      final folderName = p.basename(p.normalize(dirPath));
       if (!context.mounted) return;
+      final destination = await showFolderImportDestinationPicker(
+        context,
+        ref,
+        folderName: folderName,
+      );
+      if (destination == null || !context.mounted) return;
+
       await _runImport(
         context,
         ref,
         () async => ImportBundle(
-          entries: await extractFromDirectory(Directory(dirPath)),
+          entries: nestImportEntriesUnderFolder(
+            await extractFromDirectory(Directory(dirPath)),
+            rootFolderName: folderName,
+            destinationPath: destination,
+          ),
         ),
       );
     } catch (e) {

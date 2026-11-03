@@ -46,9 +46,14 @@ class FolderPickerDialog extends StatelessWidget {
     required this.destinations,
     required this.currentFolderId,
     required this.onSelected,
+    this.titleIcon = Icons.drive_file_move_outlined,
+    this.allowCurrentSelection = false,
   });
 
   final String title;
+
+  /// Icona mostrata accanto al titolo (default: "sposta").
+  final IconData titleIcon;
 
   /// Icona e testo della voce "nessuna cartella / radice".
   final IconData rootIcon;
@@ -64,13 +69,21 @@ class FolderPickerDialog extends StatelessWidget {
   /// destinazione chiude il dialog senza fare nulla.
   final String? currentFolderId;
 
+  /// Con `true` anche [currentFolderId] è una scelta valida e viene notificata
+  /// (serve all'importazione, dove non c'è una posizione "attuale" da
+  /// spostare e la radice evidenziata è solo la destinazione predefinita).
+  final bool allowCurrentSelection;
+
   /// Chiamata DOPO la chiusura del dialog con la cartella scelta (`null` =
-  /// nessuna cartella/radice), solo se diversa da [currentFolderId].
+  /// nessuna cartella/radice), solo se diversa da [currentFolderId] oppure se
+  /// [allowCurrentSelection] è `true`.
   final ValueChanged<String?> onSelected;
 
   void _choose(BuildContext context, String? folderId) {
     Navigator.of(context).pop();
-    if (folderId != currentFolderId) onSelected(folderId);
+    if (allowCurrentSelection || folderId != currentFolderId) {
+      onSelected(folderId);
+    }
   }
 
   @override
@@ -83,7 +96,7 @@ class FolderPickerDialog extends StatelessWidget {
     return AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.drive_file_move_outlined, size: 22, color: primary),
+          Icon(titleIcon, size: 22, color: primary),
           const SizedBox(width: 8),
           Expanded(child: Text(title, overflow: TextOverflow.ellipsis)),
         ],

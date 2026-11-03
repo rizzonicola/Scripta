@@ -16,6 +16,50 @@ void _expectZip(String entry, List<String> folders, String fileName) {
 }
 
 void main() {
+  group('nestImportEntriesUnderFolder', () {
+    ImportEntry entry(List<String> folders) => ImportEntry(
+      folderPathSegments: folders,
+      fileName: 'Nota.md',
+      rawContent: 'testo',
+    );
+
+    test('alla radice ricrea solo la cartella importata', () {
+      final result = nestImportEntriesUnderFolder([
+        entry(const ['Sotto']),
+      ], rootFolderName: 'Progetti');
+
+      expect(result.single.folderPathSegments, ['Progetti', 'Sotto']);
+      expect(result.single.fileName, 'Nota.md');
+      expect(result.single.rawContent, 'testo');
+    });
+
+    test('antepone il percorso della destinazione scelta', () {
+      final result = nestImportEntriesUnderFolder(
+        [entry(const [])],
+        rootFolderName: 'Progetti',
+        destinationPath: const ['Lavoro', 'Archivio'],
+      );
+
+      expect(result.single.folderPathSegments, [
+        'Lavoro',
+        'Archivio',
+        'Progetti',
+      ]);
+    });
+
+    test('un nome vuoto non aggiunge un segmento', () {
+      final result = nestImportEntriesUnderFolder(
+        [
+          entry(const ['Sotto']),
+        ],
+        rootFolderName: '   ',
+        destinationPath: const ['Lavoro'],
+      );
+
+      expect(result.single.folderPathSegments, ['Lavoro', 'Sotto']);
+    });
+  });
+
   group('mapZipEntryPath: radice e Non_Catalogate', () {
     test(
       'le note di Non_Catalogate tornano alla radice (nessuna cartella)',

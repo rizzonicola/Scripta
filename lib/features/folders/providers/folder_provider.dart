@@ -419,6 +419,28 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   FolderNode? findNode(String id) => _findNode(state.rootFolders, id);
 
+  /// Percorso dei nomi dalla radice fino a [folderId] (radice esclusa).
+  ///
+  /// Restituisce una lista vuota per `null` o per una cartella inesistente.
+  /// Serve a chi deve ricreare un albero partendo da un percorso di nomi,
+  /// come l'importazione di una cartella esterna sotto una destinazione.
+  List<String> folderPathSegments(String? folderId) {
+    if (folderId == null) return const [];
+    final rowsById = {for (final row in _activeRows) row.id: row};
+    final path = <String>[];
+    final visited = <String>{};
+    String? currentId = folderId;
+    while (currentId != null) {
+      // Difesa da righe corrotte con un ciclo di parent_id.
+      if (!visited.add(currentId)) return const [];
+      final row = rowsById[currentId];
+      if (row == null) return const [];
+      path.insert(0, row.name);
+      currentId = row.parentId;
+    }
+    return path;
+  }
+
   FolderNode? _findNode(List<FolderNode> list, String id) {
     for (final node in list) {
       if (node.id == id) return node;

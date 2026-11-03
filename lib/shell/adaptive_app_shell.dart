@@ -12,6 +12,7 @@ import '../core/services/session_state_service.dart';
 import '../core/utils/responsive_breakpoints.dart';
 import '../features/editor/presentation/note_editor_pane.dart';
 import '../features/editor/providers/editor_provider.dart';
+import '../features/folders/presentation/folder_import_picker.dart';
 import '../features/folders/presentation/folder_tree_view.dart';
 import '../features/folders/providers/folder_provider.dart';
 import '../features/notes/presentation/notes_list_view.dart';
@@ -203,6 +204,7 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
             batch,
             notes: ref.read(notesProvider.notifier),
             folders: ref.read(folderProvider.notifier),
+            chooseFolderDestination: _chooseFolderImportDestination,
           );
         } catch (_) {
           outcome = ExternalOpenOutcome(failedPaths: batch);
@@ -213,6 +215,15 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     } finally {
       _processingExternalOpenPaths = false;
     }
+  }
+
+  Future<List<String>?> _chooseFolderImportDestination(String folderName) {
+    if (!mounted) return Future.value(null);
+    return showFolderImportDestinationPicker(
+      context,
+      ref,
+      folderName: folderName,
+    );
   }
 
   void _showExternalOpenOutcome(ExternalOpenOutcome outcome) {

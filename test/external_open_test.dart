@@ -141,15 +141,34 @@ void main() {
       await tempDir.delete(recursive: true);
     });
 
-    Future<ExternalOpenOutcome> open(Iterable<String> paths) async {
+    Future<ExternalOpenOutcome> open(
+      Iterable<String> paths, {
+      FolderImportDestinationPicker? chooseFolderDestination,
+    }) async {
       final outcome = await ExternalOpenProcessor.openPaths(
         paths,
         notes: notes,
         folders: folders,
+        chooseFolderDestination: chooseFolderDestination,
       );
       await _settle();
       return outcome;
     }
+
+    test('folderPathSegments restituisce i nomi dalla radice', () {
+      final lavoro = folders.addFolder('Lavoro');
+      final progetti = folders.addFolder('Progetti', parentId: lavoro.id);
+      final sotto = folders.addFolder('Sotto', parentId: progetti.id);
+
+      expect(folders.folderPathSegments(sotto.id), [
+        'Lavoro',
+        'Progetti',
+        'Sotto',
+      ]);
+      expect(folders.folderPathSegments(lavoro.id), ['Lavoro']);
+      expect(folders.folderPathSegments(null), isEmpty);
+      expect(folders.folderPathSegments('inesistente'), isEmpty);
+    });
 
     test('un file Markdown diventa una nuova nota attiva', () async {
       final file = File(p.join(tempDir.path, 'Riunione.md'));
@@ -194,7 +213,7 @@ void main() {
     });
 
     test(
-      'una cartella importa note e sottocartelle senza attivare una nota',
+      'una cartella ricrea se stessa e le sottocartelle senza attivare note',
       () async {
         final nested = Directory(p.join(tempDir.path, 'Progetti', 'Sotto'));
         await nested.create(recursive: true);
@@ -207,13 +226,82 @@ void main() {
 
         expect(outcome.openedFolders, 1);
         expect(outcome.importedNotes, 2);
-        expect(outcome.importedFolders, 1);
+        expect(outcome.importedFolders, 2);
         expect(outcome.failedPaths, isEmpty);
         expect(notesDao.rows, hasLength(2));
-        expect(foldersDao.rows.values.map((f) => f.name), contains('Sotto'));
         expect(notes.state.activeNoteId, isNull);
+
+        final progetti = foldersDao.rows.values.firstWhere(
+          (f) => f.name == 'Progetti',
+        );
+        expect(progetti.parentId, isNull);
+        final sotto = foldersDao.rows.values.firstWhere(
+          (f) => f.name == 'Sotto',
+        );
+        expect(sotto.parentId, progetti.id);
+
+        final appunti = notesDao.rows.values.firstWhere(
+          (n) => n.title == 'Appunti',
+        );
+        final nota = notesDao.rows.values.firstWhere((n) => n.title == 'Nota');
+        expect(appunti.folderId, progetti.id);
+        expect(nota.folderId, sotto.id);
       },
     );
+
+    test(
+      'la cartella importata viene creata nella destinazione scelta',
+      () async {
+        final nested = Directory(p.join(tempDir.path, 'Progetti', 'Sotto'));
+        await nested.create(recursive: true);
+        await File(p.join(nested.path, 'Nota.md')).writeAsString('testo');
+
+        final lavoro = folders.addFolder('Lavoro');
+        await _settle();
+
+        String? requestedName;
+        final outcome = await open(
+          [p.join(tempDir.path, 'Progetti')],
+          chooseFolderDestination: (folderName) async {
+            requestedName = folderName;
+            return ['Lavoro'];
+          },
+        );
+
+        expect(requestedName, 'Progetti');
+        expect(outcome.importedNotes, 1);
+        expect(outcome.importedFolders, 2);
+
+        final lavoroRow = foldersDao.rows[lavoro.id]!;
+        final progetti = foldersDao.rows.values.firstWhere(
+          (f) => f.name == 'Progetti',
+        );
+        expect(progetti.parentId, lavoroRow.id);
+        final sotto = foldersDao.rows.values.firstWhere(
+          (f) => f.name == 'Sotto',
+        );
+        expect(sotto.parentId, progetti.id);
+        final nota = notesDao.rows.values.single;
+        expect(nota.folderId, sotto.id);
+      },
+    );
+
+    test('annullare la destinazione non importa nulla', () async {
+      final dir = Directory(p.join(tempDir.path, 'Progetti'));
+      await dir.create();
+      await File(p.join(dir.path, 'Nota.md')).writeAsString('testo');
+
+      final outcome = await open([
+        dir.path,
+      ], chooseFolderDestination: (_) async => null);
+
+      expect(outcome.openedFolders, 0);
+      expect(outcome.importedNotes, 0);
+      expect(outcome.importedFolders, 0);
+      expect(outcome.failedPaths, isEmpty);
+      expect(notesDao.rows, isEmpty);
+      expect(foldersDao.rows, isEmpty);
+    });
 
     test('una cartella vuota non crea note', () async {
       final empty = Directory(p.join(tempDir.path, 'Vuota'));

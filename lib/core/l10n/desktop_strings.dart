@@ -53,6 +53,12 @@ class DesktopStrings {
   String get openUnsupported => _t('openUnsupported');
   String get openFailed => _t('openFailed');
   String get openFolderEmpty => _t('openFolderEmpty');
+  String get importFolderRoot => _t('importFolderRoot');
+  String get importFolderNoDestinations => _t('importFolderNoDestinations');
+
+  /// Titolo del selettore di destinazione per una cartella importata.
+  String importFolderTitle(String folderName) =>
+      _t('importFolderTitle').replaceAll('{name}', folderName);
 
   /// Riepilogo dell'importazione di una cartella aperta dall'esterno. Il
   /// conteggio delle note è sempre presente; le cartelle solo quando ne sono
@@ -114,6 +120,9 @@ class DesktopStrings {
       'openFolderDoneFolders':
           'Note importate: {notes}, nuove cartelle: {folders}.',
       'openNotesDone': 'Note aperte: {count}.',
+      'importFolderTitle': 'Importa "{name}" in...',
+      'importFolderRoot': 'Tutte le note (radice)',
+      'importFolderNoDestinations': 'Nessuna sottocartella disponibile',
       'cmd.newNote': 'Nuova nota',
       'cmd.newFolder': 'Nuova cartella',
       'cmd.save': 'Salva e sincronizza',
@@ -181,6 +190,9 @@ class DesktopStrings {
       'openFolderDoneFolders':
           'Notes imported: {notes}, new folders: {folders}.',
       'openNotesDone': 'Notes opened: {count}.',
+      'importFolderTitle': 'Import "{name}" into...',
+      'importFolderRoot': 'All notes (root)',
+      'importFolderNoDestinations': 'No subfolders available',
       'cmd.newNote': 'New note',
       'cmd.newFolder': 'New folder',
       'cmd.save': 'Save & sync',
@@ -249,6 +261,9 @@ class DesktopStrings {
       'openFolderDoneFolders':
           'Notes importées : {notes}, nouveaux dossiers : {folders}.',
       'openNotesDone': 'Notes ouvertes : {count}.',
+      'importFolderTitle': 'Importer "{name}" dans...',
+      'importFolderRoot': 'Toutes les notes (racine)',
+      'importFolderNoDestinations': 'Aucun sous-dossier disponible',
       'cmd.newNote': 'Nouvelle note',
       'cmd.newFolder': 'Nouveau dossier',
       'cmd.save': 'Enregistrer et synchroniser',
