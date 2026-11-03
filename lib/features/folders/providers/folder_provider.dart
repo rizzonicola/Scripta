@@ -299,11 +299,21 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   FolderNode addFolder(String name, {String? parentId}) {
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    var maxOrder = 0;
+    var hasManualOrder = false;
+    for (final sibling in _activeRows) {
+      if (sibling.parentId != parentId) continue;
+      if (sibling.orderIndex > 0) hasManualOrder = true;
+      if (sibling.orderIndex > maxOrder) maxOrder = sibling.orderIndex;
+    }
     final row = FolderRow(
       id: _uuid.v4(),
       name: name.trim(),
       parentId: parentId,
       isExpanded: true,
+      // Con un ordine manuale già attivo, la nuova cartella va in fondo;
+      // altrimenti resta "non ordinata" (0) e si inserisce alfabeticamente.
+      orderIndex: hasManualOrder ? maxOrder + 1 : 0,
       updatedAt: now,
       deletedAt: null,
     );
@@ -317,6 +327,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
       name: row.name,
       parentId: row.parentId,
       isExpanded: row.isExpanded,
+      orderIndex: row.orderIndex,
       children: const [],
     );
   }
@@ -465,27 +476,171 @@ class FolderNotifier extends StateNotifier<FolderState> {
   }
 
   /// Sposta una cartella sotto un nuovo genitore (o in radice se
-  /// `newParentId` è null). A differenza della generazione basata su
-  /// percorsi, questo è ESATTAMENTE un aggiornamento del campo `parent_id`:
-  /// nessun rename, nessuna riscrittura ricorsiva dei figli (che restano
-  /// collegati tramite il proprio `parent_id`, invariato).
+  /// `newParentId` è null), in coda ai fratelli. A differenza della
+  /// generazione basata su percorsi, questo è ESATTAMENTE un aggiornamento del
+  /// campo `parent_id`: nessun rename, nessuna riscrittura ricorsiva dei figli
+  /// (che restano collegati tramite il proprio `parent_id`, invariato).
   bool moveFolder(String folderId, String? newParentId) {
+    final siblings = _orderedSiblings(newParentId, excludeId: folderId);
+    return _moveFolderToIndex(folderId, newParentId, siblings.length);
+  }
+
+  /// Sposta [folderId] rispetto alla cartella [targetId], secondo la zona di
+  /// rilascio scelta nella UI:
+  ///  * [FolderDropPosition.before] -> sorella prima del bersaglio;
+  ///  * [FolderDropPosition.inside] -> ultima figlia del bersaglio;
+  ///  * [FolderDropPosition.after] -> sorella dopo il bersaglio; se il
+  ///    bersaglio è espanso e ha figli, diventa la PRIMA figlia (il "buco"
+  ///    visivo subito sotto la riga del genitore).
+  ///
+  /// Restituisce `false` se lo spostamento è vietato (se stessa o un proprio
+  /// discendente) o se non cambierebbe nulla.
+  bool moveFolderRelative(
+    String folderId,
+    String targetId,
+    FolderDropPosition position,
+  ) {
+    if (folderId == targetId) return false;
+    final target = _activeRows.where((r) => r.id == targetId).firstOrNull;
+    if (target == null) return false;
+
+    final String? newParentId;
+    final int insertAt;
+    switch (position) {
+      case FolderDropPosition.before:
+        newParentId = target.parentId;
+        insertAt = _orderedSiblings(
+          newParentId,
+          excludeId: folderId,
+        ).indexWhere((r) => r.id == targetId);
+        if (insertAt < 0) return false;
+      case FolderDropPosition.inside:
+        newParentId = targetId;
+        insertAt = _orderedSiblings(newParentId, excludeId: folderId).length;
+      case FolderDropPosition.after:
+        final targetNode = findNode(targetId);
+        final hasVisibleChildren =
+            targetNode != null &&
+            targetNode.isExpanded &&
+            targetNode.children.isNotEmpty;
+        if (hasVisibleChildren) {
+          newParentId = targetId;
+          insertAt = 0;
+        } else {
+          newParentId = target.parentId;
+          insertAt =
+              _orderedSiblings(
+                newParentId,
+                excludeId: folderId,
+              ).indexWhere((r) => r.id == targetId) +
+              1;
+        }
+    }
+
+    return _moveFolderToIndex(folderId, newParentId, insertAt);
+  }
+
+  /// Vero se [folderId] può essere trascinata su [targetId] (non su se
+  /// stessa né dentro un proprio discendente). Usato dalla UI per rifiutare
+  /// in anticipo i bersagli non validi, senza mostrare indicatori ingannevoli.
+  bool canMoveFolder(String folderId, String targetId) {
+    if (folderId == targetId) return false;
+    return !isDescendantOf(folderId, targetId);
+  }
+
+  static int _compareSiblings(FolderRow a, FolderRow b) =>
+      FolderNode.compareSiblingValues(
+        a.orderIndex,
+        a.name,
+        b.orderIndex,
+        b.name,
+      );
+
+  /// Righe attive figlie di [parentId], ordinate come in [FolderNode]
+  /// (ordine manuale, poi nome). Con [excludeId] si esclude la cartella in
+  /// movimento, così gli indici di inserimento sono già "senza di lei".
+  List<FolderRow> _orderedSiblings(String? parentId, {String? excludeId}) {
+    return _activeRows
+        .where((r) => r.parentId == parentId && r.id != excludeId)
+        .toList()
+      ..sort(_compareSiblings);
+  }
+
+  /// Nucleo comune di tutti gli spostamenti: aggiorna `parent_id` (solo se
+  /// cambia, con bump di `updated_at` per la sync) e riscrive le posizioni
+  /// manuali dei fratelli coinvolti. L'ordine non tocca `updated_at` né
+  /// `dirty`; il genitore nuovo invece sì, perché è una modifica strutturale.
+  bool _moveFolderToIndex(String folderId, String? newParentId, int insertAt) {
     if (folderId == newParentId) return false;
     if (newParentId != null && isDescendantOf(folderId, newParentId)) {
       return false;
     }
 
-    final idx = _activeRows.indexWhere((r) => r.id == folderId);
-    if (idx == -1) return false;
+    final dragged = _activeRows.where((r) => r.id == folderId).firstOrNull;
+    if (dragged == null) return false;
 
+    final oldParentId = dragged.parentId;
+    final newSiblings = _orderedSiblings(newParentId, excludeId: folderId);
+    final clamped = insertAt.clamp(0, newSiblings.length);
+
+    // Nessun cambiamento reale: evita riscritture e notifiche inutili.
+    if (oldParentId == newParentId) {
+      final currentIds = _orderedSiblings(
+        oldParentId,
+      ).map((r) => r.id).toList(growable: false);
+      final proposed = [...newSiblings];
+      proposed.insert(clamped, dragged);
+      var same = true;
+      for (var i = 0; i < currentIds.length; i++) {
+        if (currentIds[i] != proposed[i].id) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return false;
+    }
+
+    final parentChanged = oldParentId != newParentId;
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final updated = _activeRows[idx].copyWith(
-      parentId: newParentId,
-      updatedAt: now,
-    );
-    _activeRows = [..._activeRows]..[idx] = updated;
+
+    // Ordine manuale 1-based: 0 resta riservato a "nessun ordine manuale".
+    newSiblings.insert(clamped, dragged);
+    final newOrder = <String, int>{};
+    for (var i = 0; i < newSiblings.length; i++) {
+      newOrder[newSiblings[i].id] = i + 1;
+    }
+    if (parentChanged) {
+      final oldSiblings = _orderedSiblings(oldParentId, excludeId: folderId);
+      for (var i = 0; i < oldSiblings.length; i++) {
+        newOrder[oldSiblings[i].id] = i + 1;
+      }
+    }
+
+    final updatedRows = <FolderRow>[];
+    for (final row in _activeRows) {
+      if (row.id == folderId) {
+        updatedRows.add(
+          row.copyWith(
+            parentId: newParentId,
+            orderIndex: newOrder[folderId],
+            updatedAt: parentChanged ? now : row.updatedAt,
+          ),
+        );
+        continue;
+      }
+      final order = newOrder[row.id];
+      updatedRows.add(order == null ? row : row.copyWith(orderIndex: order));
+    }
+    _activeRows = updatedRows;
     _publishState();
-    unawaited(_enqueueWrite(() => _foldersDao.upsert(updated)));
+
+    final movedRow = _activeRows.firstWhere((r) => r.id == folderId);
+    unawaited(
+      _enqueueWrite(() async {
+        if (parentChanged) await _foldersDao.upsert(movedRow);
+        await _foldersDao.setOrderIndexes(newOrder);
+      }),
+    );
     return true;
   }
 }

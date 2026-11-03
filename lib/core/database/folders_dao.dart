@@ -11,6 +11,12 @@ class FolderRow {
   final String name;
   final String? parentId;
   final bool isExpanded;
+
+  /// Posizione manuale tra i fratelli (stesso `parent_id`). È un dato
+  /// puramente LOCALE, come [isExpanded]: non viaggia nella sync e non tocca
+  /// `updated_at`, così riordinare non genera traffico verso il server.
+  final int orderIndex;
+
   final int updatedAt;
   final int? deletedAt;
 
@@ -19,6 +25,7 @@ class FolderRow {
     required this.name,
     required this.parentId,
     required this.isExpanded,
+    this.orderIndex = 0,
     required this.updatedAt,
     required this.deletedAt,
   });
@@ -30,6 +37,9 @@ class FolderRow {
     name: m['name'] as String,
     parentId: m['parent_id'] as String?,
     isExpanded: (m['is_expanded'] as int) != 0,
+    // Le righe lette da un database precedente alla v4 non hanno la colonna;
+    // il default 0 le fa ricadere sull'ordinamento alfabetico.
+    orderIndex: (m['order_index'] as int?) ?? 0,
     updatedAt: m['updated_at'] as int,
     deletedAt: m['deleted_at'] as int?,
   );
@@ -39,6 +49,7 @@ class FolderRow {
     'name': name,
     'parent_id': parentId,
     'is_expanded': isExpanded ? 1 : 0,
+    'order_index': orderIndex,
     'updated_at': updatedAt,
     'deleted_at': deletedAt,
   };
@@ -47,6 +58,7 @@ class FolderRow {
     String? name,
     Object? parentId = _unset,
     bool? isExpanded,
+    int? orderIndex,
     int? updatedAt,
     Object? deletedAt = _unset,
   }) {
@@ -57,6 +69,7 @@ class FolderRow {
           ? this.parentId
           : parentId as String?,
       isExpanded: isExpanded ?? this.isExpanded,
+      orderIndex: orderIndex ?? this.orderIndex,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: identical(deletedAt, _unset)
           ? this.deletedAt
@@ -122,9 +135,14 @@ List<FolderRow> sortFoldersParentsFirst(List<FolderRow> rows) {
 }
 
 /// Metadati minimi di una riga locale per la risoluzione LWW in
-/// [FoldersDao.applyRemoteLWWBatch] (`isExpanded` è solo locale e va sempre
-/// preservato).
-typedef _LocalFolderMeta = ({bool isExpanded, int updatedAt, bool dirty});
+/// [FoldersDao.applyRemoteLWWBatch] (`isExpanded` e `orderIndex` sono solo
+/// locali e vanno sempre preservati).
+typedef _LocalFolderMeta = ({
+  bool isExpanded,
+  int orderIndex,
+  int updatedAt,
+  bool dirty,
+});
 
 /// Data Access Object per le cartelle. Ogni mutazione locale imposta
 /// `updated_at` (LWW) e `dirty = 1` (cosa inviare al server); le righe
@@ -146,12 +164,35 @@ class FoldersDao {
     );
   }
 
+  /// Scrive le posizioni manuali tra fratelli in un'unica transazione.
+  /// Come [setExpanded], è puro stato UI locale: non tocca `updated_at` né
+  /// `dirty`, quindi riordinare non genera traffico di sync.
+  Future<void> setOrderIndexes(Map<String, int> indexes) async {
+    if (indexes.isEmpty) return;
+    final db = await _db;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final entry in indexes.entries) {
+        batch.update(
+          'folders',
+          {'order_index': entry.value},
+          where: 'id = ?',
+          whereArgs: [entry.key],
+        );
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
   Future<List<FolderRow>> getActive() async {
     final db = await _db;
     final rows = await db.query(
       'folders',
       where: 'deleted_at IS NULL',
-      orderBy: 'name COLLATE NOCASE ASC',
+      // 0 = "nessun ordine manuale": in coda, in ordine alfabetico.
+      orderBy:
+          'CASE WHEN order_index = 0 THEN 1 ELSE 0 END, '
+          'order_index ASC, name COLLATE NOCASE ASC',
     );
     return rows.map(FolderRow.fromMap).toList();
   }
@@ -187,7 +228,8 @@ class FoldersDao {
   /// `NotesDao.applyRemoteLWWBatch`: la copia remota vince se la riga locale
   /// non esiste, è pulita (`dirty = 0`) o è meno recente; una modifica locale
   /// sporca e più recente non viene mai sovrascritta. Le righe applicate
-  /// diventano pulite. `isExpanded` è solo locale e viene sempre preservato.
+  /// diventano pulite. `isExpanded` e `orderIndex` sono solo locali e vengono
+  /// sempre preservati.
   /// Stesso schema di costo: letture raggruppate per blocco di id + un solo
   /// batch di scritture.
   Future<void> applyRemoteLWWBatch(List<FolderRow> remotes) async {
@@ -197,12 +239,13 @@ class FoldersDao {
       final local = <String, _LocalFolderMeta>{};
       for (final ids in chunked([for (final r in remotes) r.id])) {
         final rows = await txn.rawQuery(
-          'SELECT id, is_expanded, updated_at, dirty FROM folders WHERE id IN (${sqlPlaceholders(ids.length)})',
+          'SELECT id, is_expanded, order_index, updated_at, dirty FROM folders WHERE id IN (${sqlPlaceholders(ids.length)})',
           ids,
         );
         for (final row in rows) {
           local[row['id'] as String] = (
             isExpanded: (row['is_expanded'] as int) != 0,
+            orderIndex: (row['order_index'] as int?) ?? 0,
             updatedAt: row['updated_at'] as int,
             dirty: (row['dirty'] as int? ?? 1) != 0,
           );
@@ -213,19 +256,25 @@ class FoldersDao {
       for (final remote in remotes) {
         final existing = local[remote.id];
         final bool isExpanded;
+        final int orderIndex;
         if (existing == null) {
           isExpanded = remote.isExpanded;
+          orderIndex = remote.orderIndex;
         } else if (existing.dirty && remote.updatedAt < existing.updatedAt) {
           continue; // modifica locale non ancora inviata e più recente: resta
         } else {
           isExpanded = existing.isExpanded;
+          orderIndex = existing.orderIndex;
         }
         batch.insert('folders', {
-          ...remote.copyWith(isExpanded: isExpanded).toMap(),
+          ...remote
+              .copyWith(isExpanded: isExpanded, orderIndex: orderIndex)
+              .toMap(),
           'dirty': 0,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
         local[remote.id] = (
           isExpanded: isExpanded,
+          orderIndex: orderIndex,
           updatedAt: remote.updatedAt,
           dirty: false,
         );

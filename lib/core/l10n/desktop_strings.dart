@@ -55,6 +55,7 @@ class DesktopStrings {
   String get openFolderEmpty => _t('openFolderEmpty');
   String get importFolderRoot => _t('importFolderRoot');
   String get importFolderNoDestinations => _t('importFolderNoDestinations');
+  String get moveToRoot => _t('moveToRoot');
 
   /// Titolo del selettore di destinazione per una cartella importata.
   String importFolderTitle(String folderName) =>
@@ -123,6 +124,7 @@ class DesktopStrings {
       'importFolderTitle': 'Importa "{name}" in...',
       'importFolderRoot': 'Tutte le note (radice)',
       'importFolderNoDestinations': 'Nessuna sottocartella disponibile',
+      'moveToRoot': 'Sposta nella radice',
       'cmd.newNote': 'Nuova nota',
       'cmd.newFolder': 'Nuova cartella',
       'cmd.save': 'Salva e sincronizza',
@@ -193,6 +195,7 @@ class DesktopStrings {
       'importFolderTitle': 'Import "{name}" into...',
       'importFolderRoot': 'All notes (root)',
       'importFolderNoDestinations': 'No subfolders available',
+      'moveToRoot': 'Move to root',
       'cmd.newNote': 'New note',
       'cmd.newFolder': 'New folder',
       'cmd.save': 'Save & sync',
@@ -264,6 +267,7 @@ class DesktopStrings {
       'importFolderTitle': 'Importer "{name}" dans...',
       'importFolderRoot': 'Toutes les notes (racine)',
       'importFolderNoDestinations': 'Aucun sous-dossier disponible',
+      'moveToRoot': 'Déplacer à la racine',
       'cmd.newNote': 'Nouvelle note',
       'cmd.newFolder': 'Nouveau dossier',
       'cmd.save': 'Enregistrer et synchroniser',

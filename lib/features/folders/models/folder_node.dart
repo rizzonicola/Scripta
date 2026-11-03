@@ -16,13 +16,40 @@ class FolderNode {
   final List<FolderNode> children;
   final bool isExpanded;
 
+  /// Posizione manuale tra i fratelli. È un dato LOCALE (come [isExpanded]):
+  /// non viaggia nella sync. `0` significa "nessun ordine manuale": in quel
+  /// caso i fratelli restano in ordine alfabetico.
+  final int orderIndex;
+
   const FolderNode({
     required this.id,
     required this.name,
     this.parentId,
     this.children = const [],
     this.isExpanded = true,
+    this.orderIndex = 0,
   });
+
+  /// Ordinamento dei fratelli: chi ha un ordine manuale ([orderIndex] > 0)
+  /// viene prima; `0` significa "non ordinata" e finisce in coda, in ordine
+  /// alfabetico. Così un albero mai riordinato resta alfabetico, mentre dopo
+  /// un riordino manuale le cartelle nuove (locali o arrivate dalla sync)
+  /// finiscono in fondo invece di saltare in cima.
+  static int compareSiblingValues(
+    int orderA,
+    String nameA,
+    int orderB,
+    String nameB,
+  ) {
+    if (orderA == 0 && orderB != 0) return 1;
+    if (orderB == 0 && orderA != 0) return -1;
+    final byOrder = orderA.compareTo(orderB);
+    if (byOrder != 0) return byOrder;
+    return nameA.toLowerCase().compareTo(nameB.toLowerCase());
+  }
+
+  int compareToSibling(FolderNode other) =>
+      compareSiblingValues(orderIndex, name, other.orderIndex, other.name);
 
   /// Costruisce la foresta di alberi (le cartelle radice, ciascuna con i
   /// propri figli annidati ricorsivamente) a partire dall'elenco piatto delle
@@ -34,7 +61,14 @@ class FolderNode {
       childrenOf.putIfAbsent(row.parentId, () => []).add(row);
     }
     for (final list in childrenOf.values) {
-      list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      list.sort(
+        (a, b) => FolderNode.compareSiblingValues(
+          a.orderIndex,
+          a.name,
+          b.orderIndex,
+          b.name,
+        ),
+      );
     }
 
     FolderNode build(FolderRow row) {
@@ -44,6 +78,7 @@ class FolderNode {
         name: row.name,
         parentId: row.parentId,
         isExpanded: row.isExpanded,
+        orderIndex: row.orderIndex,
         children: childRows.map(build).toList(),
       );
     }
@@ -97,4 +132,18 @@ class FolderNode {
     collect(start);
     return result;
   }
+}
+
+/// Zona della riga su cui è avvenuto il rilascio durante il trascinamento di
+/// una cartella.
+enum FolderDropPosition {
+  /// Prima della cartella bersaglio, come sorella.
+  before,
+
+  /// Dentro la cartella bersaglio, in coda ai figli.
+  inside,
+
+  /// Dopo la cartella bersaglio (o come primo figlio, se la cartella è
+  /// espansa e ha già dei figli visibili: è il "buco" subito sotto la riga).
+  after,
 }

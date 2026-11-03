@@ -20,7 +20,8 @@ import '../utils/perf_marks.dart';
 /// della tabella `notes` (non più su file separati).
 ///
 ///   folders(id TEXT PK, name, parent_id NULLABLE, is_expanded (solo UI,
-///           MAI inviato al server), updated_at, deleted_at NULLABLE)
+///           MAI inviato al server), order_index (solo UI, MAI inviato al
+///           server), updated_at, deleted_at NULLABLE)
 ///   notes(id TEXT PK, title, content, folder_id NULLABLE, is_favorite,
 ///         is_pinned, order_index, created_at (metadato sincronizzato),
 ///         updated_at, deleted_at NULLABLE)
@@ -44,7 +45,9 @@ class AppDatabase {
   ///        tabella note (contenuto incluso). L'indice parziale contiene solo
   ///        le righe cancellate (poche), quindi non costa spazio né scritture
   ///        sulle note attive.
-  static const int _schemaVersion = 3;
+  ///   4 -> colonna `order_index` su folders: ordine manuale tra fratelli,
+  ///        puramente locale come `is_expanded`, mai inviato al server.
+  static const int _schemaVersion = 4;
   static final AppDatabase instance = AppDatabase._();
 
   Database? _db;
@@ -177,6 +180,7 @@ class AppDatabase {
             name        TEXT NOT NULL,
             parent_id   TEXT,
             is_expanded INTEGER NOT NULL DEFAULT 1,
+            order_index INTEGER NOT NULL DEFAULT 0,
             updated_at  INTEGER NOT NULL,
             deleted_at  INTEGER,
             dirty       INTEGER NOT NULL DEFAULT 1
@@ -273,6 +277,12 @@ class AppDatabase {
 
     if (oldVersion < 3) {
       await _createTombstoneIndexes(db);
+    }
+
+    if (oldVersion < 4) {
+      await db.execute(
+        'ALTER TABLE folders ADD COLUMN order_index INTEGER NOT NULL DEFAULT 0',
+      );
     }
   }
 
