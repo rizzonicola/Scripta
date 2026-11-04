@@ -70,12 +70,18 @@ void main() {
       );
     });
 
-    test('decodifica gli URI file:// di Linux e macOS', () {
+    test('decodifica gli URI file:// nel percorso nativo della piattaforma', () {
+      // `Uri.toFilePath` usa il separatore della piattaforma: su Windows un
+      // URI POSIX diventa un percorso con backslash. Il test verifica la
+      // conversione, non un separatore specifico.
+      final expected = Platform.isWindows
+          ? r'\tmp\Note con spazi.md'
+          : '/tmp/Note con spazi.md';
       expect(
         ExternalOpenService.normalizeOpenTarget(
           'file:///tmp/Note%20con%20spazi.md',
         ),
-        '/tmp/Note con spazi.md',
+        expected,
       );
     });
 
