@@ -286,6 +286,47 @@ class SyncApiService {
     }
   }
 
+  /// Esegue una POST di autenticazione e traduce i soli errori di trasporto in
+  /// [SyncApiException]. Gli status HTTP restano al chiamante, che distingue
+  /// login e refresh.
+  Future<http.Response> _postAuth(
+    Uri uri,
+    Map<String, dynamic> payload, {
+    required String timeoutMessage,
+  }) async {
+    try {
+      return await _client
+          .post(
+            uri,
+            headers: _headers(contentType: 'application/json'),
+            body: json.encode(payload),
+          )
+          .timeout(_authTimeout);
+    } on TimeoutException {
+      throw SyncApiException(timeoutMessage);
+    } on Exception {
+      // SocketException, ClientException, TLS...: la richiesta non ha prodotto
+      // una risposta HTTP. Non esporre dettagli potenzialmente sensibili.
+      throw const SyncApiException(connectionErrorMessage);
+    }
+  }
+
+  /// Decodifica e valida una risposta 200 di login/refresh. Un JSON malformato
+  /// o un token mancante diventano un 502 non transitorio.
+  LoginResponseDto _parseAuthResponse(
+    http.Response response, {
+    required bool requireRefreshToken,
+  }) {
+    try {
+      final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
+      final dto = LoginResponseDto.fromJson(decoded);
+      _validateAuthResponse(dto, requireRefreshToken: requireRefreshToken);
+      return dto;
+    } catch (_) {
+      throw const SyncApiException(invalidServerResponseMessage, 502);
+    }
+  }
+
   /// Authenticates user and returns JWT credentials
   Future<LoginResponseDto> login({
     required String baseUrl,
@@ -295,80 +336,58 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/auth/login');
 
-    final http.Response response;
-    try {
-      response = await _client
-          .post(
-            uri,
-            headers: _headers(contentType: 'application/json'),
-            body: json.encode({'username': username, 'password': password}),
-          )
-          .timeout(_authTimeout);
-    } on TimeoutException {
+    final response = await _postAuth(
+      uri,
+      {'username': username, 'password': password},
       // Il chiamante distingue un timeout da una risposta HTTP: senza status
       // code il login può ritentare dentro il proprio budget.
-      throw const SyncApiException(
-        'Tempo scaduto durante la connessione al server',
-      );
-    } on Exception {
-      // SocketException, ClientException, TLS...: la richiesta non ha prodotto
-      // una risposta HTTP. Non esporre dettagli potenzialmente sensibili.
-      throw const SyncApiException(connectionErrorMessage);
-    }
+      timeoutMessage: 'Tempo scaduto durante la connessione al server',
+    );
 
     if (response.statusCode == 200) {
-      try {
-        final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
-        final dto = LoginResponseDto.fromJson(decoded);
-        _validateAuthResponse(dto, requireRefreshToken: false);
-        return dto;
-      } catch (_) {
-        // 502 = risposta non valida, non transitoria: ritentare la stessa
-        // richiesta non può migliorare il JSON.
-        throw const SyncApiException(invalidServerResponseMessage, 502);
-      }
-    } else {
-      final body = bodyText(response);
-      final message = _extractError(body, 'Errore durante l\'autenticazione');
-      final code = _extractErrorCode(body);
-      if (response.statusCode == 401) {
-        throw SyncApiException(
-          'Credenziali non valide',
-          401,
-          const [],
-          code ?? 'invalid_credentials',
-        );
-      }
-      if (response.statusCode == 403 && code == 'account_blocked') {
-        throw const SyncApiException(
-          'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
-          403,
-          [],
-          'account_blocked',
-        );
-      }
-      if (response.statusCode == 429) {
-        throw SyncApiException.withRetryAfter(
-          'Troppi tentativi di accesso. Attendi qualche minuto e riprova.',
-          response.statusCode,
-          parseRetryAfter(response.headers['retry-after']) ??
-              const Duration(seconds: 5),
-          code: code ?? 'rate_limited',
-        );
-      }
-      if (response.statusCode == 503) {
-        final retryAfter = parseRetryAfter(response.headers['retry-after']);
-        if (retryAfter != null) {
-          throw SyncApiException.withRetryAfter(
-            message,
-            response.statusCode,
-            retryAfter,
-            code: code ?? 'service_unavailable',
-          );
-        }
-      }
-      throw SyncApiException(message, response.statusCode, const [], code);
+      return _parseAuthResponse(response, requireRefreshToken: false);
     }
+
+    final body = bodyText(response);
+    final message = _extractError(body, 'Errore durante l\'autenticazione');
+    final code = _extractErrorCode(body);
+    if (response.statusCode == 401) {
+      throw SyncApiException(
+        'Credenziali non valide',
+        401,
+        const [],
+        code ?? 'invalid_credentials',
+      );
+    }
+    if (response.statusCode == 403 && code == 'account_blocked') {
+      throw const SyncApiException(
+        'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+        403,
+        [],
+        'account_blocked',
+      );
+    }
+    if (response.statusCode == 429) {
+      throw SyncApiException.withRetryAfter(
+        'Troppi tentativi di accesso. Attendi qualche minuto e riprova.',
+        response.statusCode,
+        parseRetryAfter(response.headers['retry-after']) ??
+            const Duration(seconds: 5),
+        code: code ?? 'rate_limited',
+      );
+    }
+    if (response.statusCode == 503) {
+      final retryAfter = parseRetryAfter(response.headers['retry-after']);
+      if (retryAfter != null) {
+        throw SyncApiException.withRetryAfter(
+          message,
+          response.statusCode,
+          retryAfter,
+          code: code ?? 'service_unavailable',
+        );
+      }
+    }
+    throw SyncApiException(message, response.statusCode, const [], code);
   }
 
   /// Rinnova la sessione con il refresh token (POST /api/v1/auth/refresh).
@@ -381,32 +400,14 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/auth/refresh');
 
-    final http.Response response;
-    try {
-      response = await _client
-          .post(
-            uri,
-            headers: _headers(contentType: 'application/json'),
-            body: json.encode({'refresh_token': refreshToken}),
-          )
-          .timeout(_authTimeout);
-    } on TimeoutException {
-      throw const SyncApiException(
-        'Tempo scaduto durante il rinnovo della sessione',
-      );
-    } on Exception {
-      throw const SyncApiException(connectionErrorMessage);
-    }
+    final response = await _postAuth(
+      uri,
+      {'refresh_token': refreshToken},
+      timeoutMessage: 'Tempo scaduto durante il rinnovo della sessione',
+    );
 
     if (response.statusCode == 200) {
-      try {
-        final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
-        final dto = LoginResponseDto.fromJson(decoded);
-        _validateAuthResponse(dto, requireRefreshToken: true);
-        return dto;
-      } catch (_) {
-        throw const SyncApiException(invalidServerResponseMessage, 502);
-      }
+      return _parseAuthResponse(response, requireRefreshToken: true);
     }
     throw _apiError(response, 'Impossibile rinnovare la sessione');
   }
