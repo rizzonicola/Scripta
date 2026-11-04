@@ -136,6 +136,80 @@ jobs:
             fi
           done
 
+      - name: Build AAB for Google Play
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+
+          # L'AAB serve solo a Google Play. Lo costruiamo solo sui tag perché
+          # solo i tag usano il keystore reale: le run su branch firmano con
+          # una chiave temporanea, inutilizzabile per Play.
+          AAB_DIR="build/app/outputs/bundle/release"
+          rm -f "$AAB_DIR"/*.aab
+
+          set +e
+          flutter build appbundle --release
+          BUILD_EXIT=$?
+          set -e
+
+          # Flutter esce con errore se non trova apkanalyzer (cmdline-tools),
+          # anche quando Gradle ha già prodotto un AAB firmato. Accettiamo
+          # quel caso solo se il file esiste e supera tutte le verifiche sotto;
+          # un errore reale di Gradle non produce l'AAB.
+          if [[ ! -f "$AAB_DIR/app-release.aab" ]]; then
+            echo "::error::flutter build appbundle failed (exit $BUILD_EXIT) and produced no AAB." >&2
+            exit 1
+          fi
+          if [[ "$BUILD_EXIT" -ne 0 ]]; then
+            echo "::warning::flutter build appbundle exited $BUILD_EXIT, but the AAB exists; verifying it before continuing."
+          fi
+
+          VERSION="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1 | tr -d '[:space:]')"
+          VERSION_NAME="${VERSION%%+*}"
+          VERSION_CODE="${VERSION##*+}"
+          if [[ -z "$VERSION_NAME" || -z "$VERSION_CODE" || "$VERSION_NAME" == "$VERSION" ]]; then
+            echo "::error::Invalid version in pubspec.yaml: '$VERSION' (expected name+code)" >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION_CODE" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid versionCode in pubspec.yaml: '$VERSION_CODE'" >&2
+            exit 1
+          fi
+
+          AAB="$AAB_DIR/Scripta-${VERSION_NAME}-${VERSION_CODE}.aab"
+          mv "$AAB_DIR/app-release.aab" "$AAB"
+          echo "AAB_PATH=$AAB" >> "$GITHUB_ENV"
+
+          echo "== $AAB =="
+          ls -lh "$AAB"
+
+          # Un AAB valido per Play deve contenere il manifest e BundleConfig.pb.
+          jar tf "$AAB" | grep -q '^BundleConfig.pb$'
+          jar tf "$AAB" | grep -q '^base/manifest/AndroidManifest.xml$'
+
+          # Verifica la firma JAR dell'AAB: Play rifiuta un bundle non firmato.
+          JARSIGNER_OUTPUT="$(jarsigner -verify -certs "$AAB" 2>&1)"
+          echo "$JARSIGNER_OUTPUT" | tail -n 5
+          echo "$JARSIGNER_OUTPUT" | grep -q 'jar verified'
+
+          # La chiave debug non deve mai finire in un AAB destinato a Play.
+          keytool -printcert -jarfile "$AAB" | sed -n '1,12p'
+          if keytool -printcert -jarfile "$AAB" | grep -qi 'CN=Android Debug'; then
+            echo "::error::$AAB is signed with the Android debug key" >&2
+            exit 1
+          fi
+
+          sha256sum "$AAB"
+
+      - name: Upload AAB artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Scripta-AAB-${{ github.ref_name }}
+          path: ${{ env.AAB_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload Artifacts to Release (tentativo 1)
         id: release_attempt_1
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -147,6 +221,7 @@ jobs:
             build/app/outputs/flutter-apk/Scripta-arm64-v8a.apk
             build/app/outputs/flutter-apk/Scripta-x86_64.apk
             build/app/outputs/flutter-apk/Scripta-universal.apk
+            ${{ env.AAB_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -163,5 +238,6 @@ jobs:
             build/app/outputs/flutter-apk/Scripta-arm64-v8a.apk
             build/app/outputs/flutter-apk/Scripta-x86_64.apk
             build/app/outputs/flutter-apk/Scripta-universal.apk
+            ${{ env.AAB_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
