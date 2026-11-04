@@ -252,5 +252,47 @@ void main() {
       expect(dto.userId, 'usr_123');
       expect(dto.username, 'mario.rossi');
     });
+
+    test('OrderingState scarta valori non finiti e chiavi non previste', () {
+      final state = OrderingState.fromJson({
+        'version': double.infinity,
+        'data': {
+          'folders': {
+            'a': 2,
+            'b': double.infinity,
+            'c': -1,
+            'd': 0x80000000,
+            'e': 'x',
+          },
+          'sort_modes': {'all': 'custom', 'bad': 3},
+          'folder_orders': {
+            'a': ['n1', 2, 'n2'],
+            'bad': 'x',
+          },
+          'evil': {'deep': true},
+        },
+      });
+
+      // Un blob ostile non deve far fallire la sync né finire nello snapshot.
+      expect(state.version, 0);
+      expect(state.data, {
+        'folders': {'a': 2},
+        'sort_modes': {'all': 'custom'},
+        'folder_orders': {
+          'a': ['n1', 'n2'],
+        },
+      });
+      expect(OrderingState.fromJson({'version': 0x80000000}).version, 0);
+      expect(OrderingState.fromJson({'version': 7}).version, 7);
+    });
+
+    test('StorageInfo ignora valori non finiti', () {
+      final storage = StorageInfo.fromJson({
+        'usage_bytes': double.infinity,
+        'quota_bytes': 1024,
+      });
+      expect(storage.usageBytes, 0);
+      expect(storage.quotaBytes, 1024);
+    });
   });
 }

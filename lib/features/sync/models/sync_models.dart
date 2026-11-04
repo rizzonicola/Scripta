@@ -154,6 +154,15 @@ class OrderingPush {
   };
 }
 
+/// Converte un valore JSON in un intero non negativo e finito. Un server
+/// compromesso o un blob corrotto potrebbe inviare `Infinity`, `NaN` o numeri
+/// fuori scala: non devono far fallire la serializzazione della sync.
+int? _finiteNonNegativeInt(Object? value) {
+  if (value is! num || !value.isFinite) return null;
+  final converted = value.toInt();
+  return converted >= 0 ? converted : null;
+}
+
 /// Stato di posizionamento restituito dal server a ogni sync.
 class OrderingState {
   final int version;
@@ -161,12 +170,53 @@ class OrderingState {
 
   const OrderingState({required this.version, this.data = const {}});
 
-  factory OrderingState.fromJson(Map<String, dynamic> json) => OrderingState(
-    version: (json['version'] as num?)?.toInt() ?? 0,
-    data: json['data'] is Map
-        ? (json['data'] as Map).cast<String, dynamic>()
-        : const {},
-  );
+  factory OrderingState.fromJson(Map<String, dynamic> json) {
+    final rawVersion = _finiteNonNegativeInt(json['version']);
+    return OrderingState(
+      // Il server usa int64; un valore fuori scala renderebbe poi impossibile
+      // costruire un base_version valido per il push successivo.
+      version: rawVersion != null && rawVersion <= 0x7fffffff ? rawVersion : 0,
+      data: _sanitizeData(json['data']),
+    );
+  }
+
+  /// Conserva solo le chiavi e i tipi previsti dal contratto. Oltre a evitare
+  /// crash su valori non finiti, impedisce che un blob arbitrario finisca
+  /// nello snapshot locale e venga rispedito al server.
+  static Map<String, dynamic> _sanitizeData(Object? raw) {
+    final source = raw is Map ? raw : const {};
+    final folders = <String, int>{};
+    final rawFolders = source['folders'];
+    if (rawFolders is Map) {
+      rawFolders.forEach((key, value) {
+        final index = _finiteNonNegativeInt(value);
+        if (key is String && index != null && index <= 0x7fffffff) {
+          folders[key] = index;
+        }
+      });
+    }
+    final sortModes = <String, String>{};
+    final rawModes = source['sort_modes'];
+    if (rawModes is Map) {
+      rawModes.forEach((key, value) {
+        if (key is String && value is String) sortModes[key] = value;
+      });
+    }
+    final folderOrders = <String, List<String>>{};
+    final rawOrders = source['folder_orders'];
+    if (rawOrders is Map) {
+      rawOrders.forEach((key, value) {
+        if (key is String && value is List) {
+          folderOrders[key] = value.whereType<String>().toList();
+        }
+      });
+    }
+    return {
+      'folders': folders,
+      'sort_modes': sortModes,
+      'folder_orders': folderOrders,
+    };
+  }
 }
 
 /// Occupazione e tetto dello spazio di sincronizzazione dell'account.
@@ -178,8 +228,8 @@ class StorageInfo {
   const StorageInfo({this.usageBytes = 0, this.quotaBytes = 0});
 
   factory StorageInfo.fromJson(Map<String, dynamic> json) => StorageInfo(
-    usageBytes: (json['usage_bytes'] as num?)?.toInt() ?? 0,
-    quotaBytes: (json['quota_bytes'] as num?)?.toInt() ?? 0,
+    usageBytes: _finiteNonNegativeInt(json['usage_bytes']) ?? 0,
+    quotaBytes: _finiteNonNegativeInt(json['quota_bytes']) ?? 0,
   );
 
   bool get quotaExceeded => quotaBytes > 0 && usageBytes >= quotaBytes;

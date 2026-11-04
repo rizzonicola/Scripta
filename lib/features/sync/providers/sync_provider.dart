@@ -1351,9 +1351,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     final rawFolders = data['folders'];
     if (rawFolders is Map) {
       rawFolders.forEach((key, value) {
-        if (key is String && value is num) {
+        if (key is String && value is num && value.isFinite) {
           final index = value.toInt();
-          if (index > 0) positions[key] = index;
+          if (index > 0 && index <= 0x7fffffff) positions[key] = index;
         }
       });
     }
