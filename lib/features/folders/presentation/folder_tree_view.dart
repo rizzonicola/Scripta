@@ -515,7 +515,7 @@ class _DraggableFolderRowState extends ConsumerState<_DraggableFolderRow> {
                         border: Border.all(
                           color: Theme.of(
                             context,
-                          ).colorScheme.primary.withValues(alpha: 0.55),
+                          ).colorScheme.primary.withValues(alpha: 0.35),
                         ),
                       )
                     : null,
@@ -524,15 +524,15 @@ class _DraggableFolderRowState extends ConsumerState<_DraggableFolderRow> {
             ),
             if (zone == FolderDropPosition.before)
               Positioned(
-                left: lineDepth * 12.0 + 10,
-                right: 6,
+                left: lineDepth * 12.0 + 8,
+                right: 8,
                 top: -1,
                 child: const _InsertionLine(),
               ),
             if (zone == FolderDropPosition.after)
               Positioned(
-                left: lineDepth * 12.0 + 10,
-                right: 6,
+                left: lineDepth * 12.0 + 8,
+                right: 8,
                 bottom: -1,
                 child: const _InsertionLine(),
               ),
@@ -589,12 +589,6 @@ class _FolderDragFeedback extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Icon(
-                  Icons.drag_indicator_rounded,
-                  size: 16,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
               ],
             ),
           ),
@@ -604,40 +598,35 @@ class _FolderDragFeedback extends StatelessWidget {
   }
 }
 
-/// Linea di inserimento tra due righe, con un pallino iniziale che la rende
-/// visibile anche su sfondi poco contrastati.
+/// Segno di inserimento tra due righe: una linea sottile che parte dal
+/// livello della cartella. Niente pallino né alone: deve leggersi come lo
+/// spazio che si apre, non come un altro elemento della barra laterale.
 class _InsertionLine extends StatelessWidget {
   const _InsertionLine();
 
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    return SizedBox(
-      height: 6,
-      child: Row(
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: primary, shape: BoxShape.circle),
+    return IgnorePointer(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        builder: (context, t, child) => Opacity(
+          opacity: t,
+          child: Transform.scale(
+            scaleX: 0.94 + 0.06 * t,
+            alignment: Alignment.centerLeft,
+            child: child,
           ),
-          Expanded(
-            child: Container(
-              height: 2,
-              margin: const EdgeInsets.only(left: 2),
-              decoration: BoxDecoration(
-                color: primary,
-                borderRadius: BorderRadius.circular(2),
-                boxShadow: [
-                  BoxShadow(
-                    color: primary.withValues(alpha: 0.35),
-                    blurRadius: 4,
-                  ),
-                ],
-              ),
-            ),
+        ),
+        child: Container(
+          height: 2,
+          decoration: BoxDecoration(
+            color: primary.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(1),
           ),
-        ],
+        ),
       ),
     );
   }
