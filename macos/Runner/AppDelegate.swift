@@ -27,7 +27,11 @@ private final class ExternalOpenLifecycleDelegate: NSObject, FlutterAppLifecycle
     }
   }
 
-  func handleOpenURLs(_ urls: [URL]) -> Bool {
+  // Xcode 26 importa il requisito Objective-C `handleOpenURLs:` con il nome
+  // Swift `handleOpen(_:)`. Il selector esplicito mantiene il collegamento
+  // con FlutterAppLifecycleDelegate anche sulle versioni precedenti di Xcode.
+  @objc(handleOpenURLs:)
+  func handleOpen(_ urls: [URL]) -> Bool {
     let paths = urls.filter { $0.isFileURL }.map { $0.path }
     guard !paths.isEmpty else { return false }
 
