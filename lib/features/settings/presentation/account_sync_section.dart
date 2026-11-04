@@ -60,15 +60,20 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
         : '${value.toStringAsFixed(1)} ${units[unit]}';
   }
 
-  Future<void> _confirmResetOrdering(
+  /// Conferma un'azione distruttiva. Restituisce true solo se l'utente
+  /// conferma e il widget è ancora montato.
+  Future<bool> _confirmDestructiveAction(
     BuildContext context,
-    AppLocalizations l10n,
-  ) async {
+    AppLocalizations l10n, {
+    required String title,
+    required String message,
+    required String action,
+  }) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.deleteOrderingDataConfirmTitle),
-        content: Text(l10n.deleteOrderingDataConfirmMessage),
+        title: Text(title),
+        content: Text(message),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -79,12 +84,26 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
               foregroundColor: Theme.of(dialogContext).dangerColor,
             ),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(l10n.deleteOrderingDataAction),
+            child: Text(action),
           ),
         ],
       ),
     );
-    if (confirmed != true || !mounted || !context.mounted) return;
+    return confirmed == true && mounted && context.mounted;
+  }
+
+  Future<void> _confirmResetOrdering(
+    BuildContext context,
+    AppLocalizations l10n,
+  ) async {
+    final confirmed = await _confirmDestructiveAction(
+      context,
+      l10n,
+      title: l10n.deleteOrderingDataConfirmTitle,
+      message: l10n.deleteOrderingDataConfirmMessage,
+      action: l10n.deleteOrderingDataAction,
+    );
+    if (!confirmed) return;
 
     setState(() => _resettingOrdering = true);
     final ok = await ref.read(syncProvider.notifier).resetOrdering();
@@ -93,9 +112,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          ok ? l10n.orderingDataDeleted : l10n.orderingResetFailed,
-        ),
+        content: Text(ok ? l10n.orderingDataDeleted : l10n.orderingResetFailed),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -105,27 +122,14 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
     BuildContext context,
     AppLocalizations l10n,
   ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.logoutAllDevicesConfirmTitle),
-        content: Text(l10n.logoutAllDevicesConfirmMessage),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(l10n.cancel),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(dialogContext).dangerColor,
-            ),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(l10n.logoutAllDevicesConfirmAction),
-          ),
-        ],
-      ),
+    final confirmed = await _confirmDestructiveAction(
+      context,
+      l10n,
+      title: l10n.logoutAllDevicesConfirmTitle,
+      message: l10n.logoutAllDevicesConfirmMessage,
+      action: l10n.logoutAllDevicesConfirmAction,
     );
-    if (confirmed != true || !mounted || !context.mounted) return;
+    if (!confirmed) return;
 
     setState(() => _loggingOutAll = true);
     final revoked = await ref.read(syncProvider.notifier).logoutAllDevices();
@@ -185,6 +189,11 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
     );
   }
 
+  ShapeBorder _sectionCardShape(ThemeData theme) => RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(16),
+    side: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.25)),
+  );
+
   Widget _buildAccountCard(
     BuildContext context,
     ThemeData theme,
@@ -193,12 +202,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
   ) {
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: theme.colorScheme.outline.withValues(alpha: 0.25),
-        ),
-      ),
+      shape: _sectionCardShape(theme),
       child: Padding(
         padding: const EdgeInsets.all(18.0),
         child: Column(
@@ -332,9 +336,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                     const SizedBox(height: 4),
                     Text(
                       l10n.quotaExceededMessage,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontSize: 12,
-                      ),
+                      style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
                     ),
                     if (syncConfig.storageQuotaBytes > 0) ...[
                       const SizedBox(height: 6),
@@ -647,12 +649,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
 
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: theme.colorScheme.outline.withValues(alpha: 0.25),
-        ),
-      ),
+      shape: _sectionCardShape(theme),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(

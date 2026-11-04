@@ -14,6 +14,32 @@ import '../models/folder_node.dart';
 import '../providers/folder_provider.dart';
 import 'folder_dialogs.dart';
 
+/// Voci di trasferimento dati condivise fra menu contestuale e overflow.
+List<ContextMenuEntry> _exportImportEntries(
+  BuildContext context,
+  WidgetRef ref,
+  DesktopStrings ds,
+) => [
+  ContextMenuEntry(
+    label: ds.exportAllZip,
+    icon: Icons.archive_outlined,
+    onSelected: () => ExportService.exportAllAsZip(context, ref),
+  ),
+  ContextMenuEntry(
+    label: ds.importNotes,
+    icon: Icons.file_upload_outlined,
+    onSelected: () => ImportService.showImportOptions(context, ref),
+  ),
+];
+
+ContextMenuEntry _shortcutsEntry(BuildContext context, DesktopStrings ds) =>
+    ContextMenuEntry(
+      label: ds.keyboardShortcuts,
+      icon: Icons.keyboard_alt_outlined,
+      shortcut: commandShortcutLabel(AppCommand.help),
+      onSelected: () => ShortcutsHelpDialog.show(context),
+    );
+
 /// Menu di "Tutte le note" / spazio vuoto della barra laterale.
 List<ContextMenuEntry> workspaceMenuEntries(
   BuildContext context,
@@ -38,23 +64,9 @@ List<ContextMenuEntry> workspaceMenuEntries(
       onSelected: () => showAddFolderDialog(context, ref),
     ),
     const ContextMenuEntry.divider(),
-    ContextMenuEntry(
-      label: ds.exportAllZip,
-      icon: Icons.archive_outlined,
-      onSelected: () => ExportService.exportAllAsZip(context, ref),
-    ),
-    ContextMenuEntry(
-      label: ds.importNotes,
-      icon: Icons.file_upload_outlined,
-      onSelected: () => ImportService.showImportOptions(context, ref),
-    ),
+    ..._exportImportEntries(context, ref, ds),
     const ContextMenuEntry.divider(),
-    ContextMenuEntry(
-      label: ds.keyboardShortcuts,
-      icon: Icons.keyboard_alt_outlined,
-      shortcut: commandShortcutLabel(AppCommand.help),
-      onSelected: () => ShortcutsHelpDialog.show(context),
-    ),
+    _shortcutsEntry(context, ds),
   ];
 }
 
@@ -65,23 +77,8 @@ List<ContextMenuEntry> workspaceOverflowEntries(
 ) {
   final ds = DesktopStrings.of(context);
   return [
-    ContextMenuEntry(
-      label: ds.exportAllZip,
-      icon: Icons.archive_outlined,
-      onSelected: () => ExportService.exportAllAsZip(context, ref),
-    ),
-    ContextMenuEntry(
-      label: ds.importNotes,
-      icon: Icons.file_upload_outlined,
-      onSelected: () => ImportService.showImportOptions(context, ref),
-    ),
-    if (isDesktopPlatform)
-      ContextMenuEntry(
-        label: ds.keyboardShortcuts,
-        icon: Icons.keyboard_alt_outlined,
-        shortcut: commandShortcutLabel(AppCommand.help),
-        onSelected: () => ShortcutsHelpDialog.show(context),
-      ),
+    ..._exportImportEntries(context, ref, ds),
+    if (isDesktopPlatform) _shortcutsEntry(context, ds),
   ];
 }
 

@@ -29,6 +29,12 @@ class _FakeDao implements NotesDao {
   Future<NoteRow?> getById(String id) async => rows[id];
 
   @override
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async => [
+    for (final id in ids)
+      if (rows[id] != null) rows[id]!,
+  ];
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
 }
 

@@ -673,6 +673,48 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       error.statusCode == 403 &&
       error.code == 'account_blocked';
 
+  /// Gestisce un errore di una richiesta autenticata: chiude la sessione su
+  /// 401/account bloccato, altrimenti aggiorna solo lo stato di
+  /// raggiungibilità. Con [mark], un fallimento "vecchio" (qualcosa è
+  /// riuscito nel frattempo) non riporta Offline. Restituisce false se la
+  /// sessione è cambiata durante la richiesta.
+  Future<bool> _handleRequestError(
+    Object error,
+    int generation,
+    String serverUrl, {
+    _ReachabilityMark? mark,
+  }) async {
+    if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+      return false;
+    }
+    if (error is SyncApiException && error.statusCode == 401) {
+      final reason = error.message;
+      state = state.copyWith(
+        isAuthenticated: false,
+        lastError: () => reason,
+        lastSyncMessage: () =>
+            'Sessione scaduta: effettua nuovamente l\'accesso',
+      );
+      await _endSession(generation);
+      return true;
+    }
+    if (error is SyncApiException && _isAccountBlocked(error)) {
+      state = state.copyWith(
+        isAuthenticated: false,
+        lastError: () => error.message,
+        lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
+      );
+      await _endSession(generation);
+      return true;
+    }
+    if (mark == null || !_reachedServerSince(mark)) {
+      final nextOnline = _serverRespondedTo(error);
+      state = state.copyWith(isOnline: nextOnline);
+      _rememberOnline(nextOnline);
+    }
+    return true;
+  }
+
   /// True when the error represents a connectivity/timeout problem (as
   /// opposed to an authenticated/HTTP-level error), and therefore eligible
   /// for the automatic retry mechanism.
@@ -1314,9 +1356,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   static Object? _canonicalOrderingValue(Object? value) {
     if (value is Map) {
       final keys = value.keys.map((k) => k.toString()).toList()..sort();
-      return {
-        for (final key in keys) key: _canonicalOrderingValue(value[key]),
-      };
+      return {for (final key in keys) key: _canonicalOrderingValue(value[key])};
     }
     if (value is List) return value.map(_canonicalOrderingValue).toList();
     return value;
@@ -1404,30 +1444,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         return true;
       });
     } catch (e) {
-      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
-        return false;
-      }
-      if (e is SyncApiException && e.statusCode == 401) {
-        final reason = e.message;
-        state = state.copyWith(
-          isAuthenticated: false,
-          lastError: () => reason,
-          lastSyncMessage: () =>
-              'Sessione scaduta: effettua nuovamente l\'accesso',
-        );
-        await _endSession(generation);
-      } else if (e is SyncApiException && _isAccountBlocked(e)) {
-        state = state.copyWith(
-          isAuthenticated: false,
-          lastError: () => e.message,
-          lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
-        );
-        await _endSession(generation);
-      } else {
-        final nextOnline = _serverRespondedTo(e);
-        state = state.copyWith(isOnline: nextOnline);
-        _rememberOnline(nextOnline);
-      }
+      await _handleRequestError(e, generation, serverUrl);
       return false;
     }
   }
@@ -1712,15 +1729,17 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           final remoteOrdering = response.ordering;
           if (remoteOrdering != null) {
             if (state.syncOrdering) {
-              final currentOrdering = _encodeOrdering(
-                await _exportOrdering(),
-              );
+              final currentOrdering = _encodeOrdering(await _exportOrdering());
               final remoteJson = _encodeOrdering(remoteOrdering.data);
               if (currentOrdering == orderingJson) {
                 if (remoteJson != currentOrdering) {
                   orderingChanged = await _applyOrdering(remoteOrdering.data);
+                  _orderingSnapshot = _encodeOrdering(await _exportOrdering());
+                } else {
+                  // Nessuna modifica remota: riusa il JSON già calcolato
+                  // invece di rileggere le cartelle dal database.
+                  _orderingSnapshot = currentOrdering;
                 }
-                _orderingSnapshot = _encodeOrdering(await _exportOrdering());
               } else {
                 _orderingSnapshot = remoteJson;
               }
@@ -1816,8 +1835,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           }
           final wasQuotaExceeded = state.quotaExceeded;
           final storage = response.storage;
-          final quotaExceeded =
-              storage?.quotaExceeded ?? state.quotaExceeded;
+          final quotaExceeded = storage?.quotaExceeded ?? state.quotaExceeded;
           state = state.copyWith(
             isOnline: true,
             isSyncing: false,
@@ -1825,10 +1843,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             lastSyncMessage: () =>
                 'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
             lastError: () => null,
-            storageUsageBytes:
-                storage?.usageBytes ?? state.storageUsageBytes,
-            storageQuotaBytes:
-                storage?.quotaBytes ?? state.storageQuotaBytes,
+            storageUsageBytes: storage?.usageBytes ?? state.storageUsageBytes,
+            storageQuotaBytes: storage?.quotaBytes ?? state.storageQuotaBytes,
             quotaExceeded: quotaExceeded,
             quotaWarningTick: quotaExceeded && !wasQuotaExceeded
                 ? state.quotaWarningTick + 1
@@ -2002,34 +2018,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             ),
       );
     } catch (e) {
-      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
-        return;
-      }
-      if (e is SyncApiException && e.statusCode == 401) {
-        final reason = e.message;
-        state = state.copyWith(
-          isAuthenticated: false,
-          lastError: () => reason,
-          lastSyncMessage: () =>
-              'Sessione scaduta: effettua nuovamente l\'accesso',
-        );
-        await _endSession(generation);
-      } else if (e is SyncApiException && _isAccountBlocked(e)) {
-        state = state.copyWith(
-          isAuthenticated: false,
-          lastError: () => e.message,
-          lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
-        );
-        await _endSession(generation);
-      } else if (!_reachedServerSince(mark)) {
-        // Se nel frattempo un'altra richiesta è riuscita (all'avvio gira in
-        // parallelo alla sync), questo fallimento è vecchio: vedi
-        // [_reachabilityMark]. Se invece il server ha risposto con un errore,
-        // resta Online: non è un problema di raggiungibilità.
-        final nextOnline = _serverRespondedTo(e);
-        state = state.copyWith(isOnline: nextOnline);
-        _rememberOnline(nextOnline);
-      }
+      // Se nel frattempo un'altra richiesta è riuscita (all'avvio gira in
+      // parallelo alla sync), questo fallimento è vecchio: vedi
+      // [_reachabilityMark].
+      await _handleRequestError(e, generation, serverUrl, mark: mark);
     }
   }
 
@@ -2055,30 +2047,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       );
       return _isCurrentSession(generation) && serverUrl == state.serverUrl;
     } catch (e) {
-      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
-        return false;
-      }
-      if (e is SyncApiException && e.statusCode == 401) {
-        final reason = e.message;
-        state = state.copyWith(
-          isAuthenticated: false,
-          lastError: () => reason,
-          lastSyncMessage: () =>
-              'Sessione scaduta: effettua nuovamente l\'accesso',
-        );
-        await _endSession(generation);
-      } else if (e is SyncApiException && _isAccountBlocked(e)) {
-        state = state.copyWith(
-          isAuthenticated: false,
-          lastError: () => e.message,
-          lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
-        );
-        await _endSession(generation);
-      } else {
-        final nextOnline = _serverRespondedTo(e);
-        state = state.copyWith(isOnline: nextOnline);
-        _rememberOnline(nextOnline);
-      }
+      await _handleRequestError(e, generation, serverUrl);
       return false;
     }
   }

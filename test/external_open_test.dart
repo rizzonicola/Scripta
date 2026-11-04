@@ -24,6 +24,12 @@ class _MemoryNotesDao implements NotesDao {
       rows.values.where((r) => !r.isDeleted).toList();
 
   @override
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async => [
+    for (final id in ids)
+      if (rows[id] != null) rows[id]!,
+  ];
+
+  @override
   Future<void> upsert(NoteRow row) async => rows[row.id] = row;
 
   @override
@@ -70,20 +76,23 @@ void main() {
       );
     });
 
-    test('decodifica gli URI file:// nel percorso nativo della piattaforma', () {
-      // `Uri.toFilePath` usa il separatore della piattaforma: su Windows un
-      // URI POSIX diventa un percorso con backslash. Il test verifica la
-      // conversione, non un separatore specifico.
-      final expected = Platform.isWindows
-          ? r'\tmp\Note con spazi.md'
-          : '/tmp/Note con spazi.md';
-      expect(
-        ExternalOpenService.normalizeOpenTarget(
-          'file:///tmp/Note%20con%20spazi.md',
-        ),
-        expected,
-      );
-    });
+    test(
+      'decodifica gli URI file:// nel percorso nativo della piattaforma',
+      () {
+        // `Uri.toFilePath` usa il separatore della piattaforma: su Windows un
+        // URI POSIX diventa un percorso con backslash. Il test verifica la
+        // conversione, non un separatore specifico.
+        final expected = Platform.isWindows
+            ? r'\tmp\Note con spazi.md'
+            : '/tmp/Note con spazi.md';
+        expect(
+          ExternalOpenService.normalizeOpenTarget(
+            'file:///tmp/Note%20con%20spazi.md',
+          ),
+          expected,
+        );
+      },
+    );
 
     test('riconosce i percorsi Windows senza scambiarli per URI', () {
       expect(

@@ -21,6 +21,12 @@ class FakeNotesDao implements NotesDao {
   Future<NoteRow?> getById(String id) async => _rows[id];
 
   @override
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async => [
+    for (final id in ids)
+      if (_rows[id] != null) _rows[id]!,
+  ];
+
+  @override
   Future<void> upsert(NoteRow row) async {
     if (failUpserts) throw StateError('disco pieno');
     _rows[row.id] = row;

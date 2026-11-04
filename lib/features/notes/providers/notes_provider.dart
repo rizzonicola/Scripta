@@ -220,9 +220,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   Map<String, dynamic> exportOrdering() {
     final alive = state.notes.map((n) => n.id).toSet();
     return {
-      'sort_modes': {
-        for (final e in _sortModes.entries) e.key: e.value.name,
-      },
+      'sort_modes': {for (final e in _sortModes.entries) e.key: e.value.name},
       'folder_orders': {
         for (final e in _folderCustomOrders.entries)
           e.key: e.value.where(alive.contains).toList(),
@@ -609,13 +607,13 @@ class NotesNotifier extends StateNotifier<NotesState> {
       if (!mounted) return;
 
       final before = state.notes;
-      final rows = await Future.wait(ids.map(_dao.getById));
+      final rows = await _dao.getByIds(ids);
       if (!mounted) return;
       if (!identical(state.notes, before)) continue; // stato cambiato: rileggi
 
       final replacements = <String, NoteModel>{
         for (final row in rows)
-          if (row != null && !row.isDeleted) row.id: NoteModel.fromRow(row),
+          if (!row.isDeleted) row.id: NoteModel.fromRow(row),
       };
       final pending = _pendingNote;
       NoteModel preferPending(NoteModel fresh) =>
@@ -1240,18 +1238,23 @@ class NotesNotifier extends StateNotifier<NotesState> {
     return newNotes.length;
   }
 
+  /// Indice per una nuova nota in cima all'ordine manuale: un valore
+  /// INFERIORE al minimo esistente, invece di incrementare in memoria l'indice
+  /// di tutte le altre. Quell'incremento non veniva mai scritto su SQLite,
+  /// quindi in DB restavano molte note con lo stesso `order_index` e, al
+  /// riavvio, l'ordine manuale risultava scombinato.
+  int _nextTopOrderIndex() {
+    if (state.notes.isEmpty) return 0;
+    return state.notes
+            .map((n) => n.orderIndex)
+            .reduce((a, b) => a < b ? a : b) -
+        1;
+  }
+
   NoteModel createNote({String? folderId}) {
     flushPendingSavesInBackground();
     final now = DateTime.now();
-    // La nuova nota va in cima all'ordine manuale con un indice INFERIORE al
-    // minimo esistente, invece di incrementare in memoria l'indice di tutte
-    // le altre: quell'incremento non veniva mai scritto su SQLite, quindi
-    // in DB restavano molte note con lo stesso `order_index` e, al riavvio,
-    // l'ordine manuale risultava scombinato.
-    final newOrderIndex = state.notes.isEmpty
-        ? 0
-        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a < b ? a : b) -
-              1;
+    final newOrderIndex = _nextTopOrderIndex();
     final newNote = NoteModel(
       id: _uuid.v4(),
       title: '',
@@ -1285,10 +1288,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   }) async {
     flushPendingSavesInBackground();
     final now = DateTime.now();
-    final newOrderIndex = state.notes.isEmpty
-        ? 0
-        : state.notes.map((n) => n.orderIndex).reduce((a, b) => a < b ? a : b) -
-              1;
+    final newOrderIndex = _nextTopOrderIndex();
     final newNote = NoteModel(
       id: _uuid.v4(),
       title: title,
@@ -1438,39 +1438,37 @@ class NotesNotifier extends StateNotifier<NotesState> {
     return state.notes.firstWhere((n) => n.id == copy.id, orElse: () => copy);
   }
 
-  Future<void> togglePin(String id) async {
-    await flushPendingSaves(); // vedi moveNote
-    final index = state.notes.indexWhere((n) => n.id == id);
-    if (index == -1) return;
+  Future<void> togglePin(String id) => _toggleNoteFlag(
+    id,
+    (note) =>
+        note.copyWith(isPinned: !note.isPinned, updatedAt: DateTime.now()),
+  );
 
-    final existing = state.notes[index];
-    final updatedNote = existing.copyWith(
-      isPinned: !existing.isPinned,
-      updatedAt: DateTime.now(),
-    );
+  Future<void> toggleFavorite(String id) => _toggleNoteFlag(
+    id,
+    (note) =>
+        note.copyWith(isFavorite: !note.isFavorite, updatedAt: DateTime.now()),
+  );
 
+  /// Sostituisce la nota in [index] mantenendo l'ordinamento corrente.
+  void _replaceNoteAt(int index, NoteModel note) {
     final updatedList = List<NoteModel>.from(state.notes);
-    updatedList[index] = updatedNote;
-
+    updatedList[index] = note;
     state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
-    await _persist(() => _dao.upsert(updatedNote.toRow()));
   }
 
-  Future<void> toggleFavorite(String id) async {
+  /// Applica un flag a una nota esistente, riordina e persiste. La scrittura
+  /// passa dalla coda come le altre modifiche (vedi [moveNote]).
+  Future<void> _toggleNoteFlag(
+    String id,
+    NoteModel Function(NoteModel note) update,
+  ) async {
     await flushPendingSaves();
     final index = state.notes.indexWhere((n) => n.id == id);
     if (index == -1) return;
 
-    final existing = state.notes[index];
-    final updatedNote = existing.copyWith(
-      isFavorite: !existing.isFavorite,
-      updatedAt: DateTime.now(),
-    );
-
-    final updatedList = List<NoteModel>.from(state.notes);
-    updatedList[index] = updatedNote;
-
-    state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
+    final updatedNote = update(state.notes[index]);
+    _replaceNoteAt(index, updatedNote);
     await _persist(() => _dao.upsert(updatedNote.toRow()));
   }
 
@@ -1514,9 +1512,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
       updatedAt: now,
     );
 
-    final updatedList = List<NoteModel>.from(state.notes);
-    updatedList[index] = updatedNote;
-    state = state.copyWith(notes: _sort(updatedList, state.sortOrder));
+    _replaceNoteAt(index, updatedNote);
 
     await _persist(() => _dao.upsert(updatedNote.toRow()));
   }

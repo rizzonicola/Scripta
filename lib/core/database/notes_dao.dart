@@ -136,6 +136,32 @@ class NotesDao {
     return NoteRow.fromMap(rows.first);
   }
 
+  /// Legge più note con una sola query (a blocchi, per restare sotto il
+  /// limite di parametri SQLite). Una sync che tocca N note non deve fare N
+  /// round-trip sul database.
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async {
+    final list = ids.toList();
+    if (list.isEmpty) return const [];
+
+    final db = await _db;
+    final rows = <NoteRow>[];
+    const chunkSize = 500;
+    for (var start = 0; start < list.length; start += chunkSize) {
+      final end = start + chunkSize < list.length
+          ? start + chunkSize
+          : list.length;
+      final chunk = list.sublist(start, end);
+      final placeholders = List.filled(chunk.length, '?').join(',');
+      final part = await db.query(
+        'notes',
+        where: 'id IN ($placeholders)',
+        whereArgs: chunk,
+      );
+      rows.addAll(part.map(NoteRow.fromMap));
+    }
+    return rows;
+  }
+
   /// Scrittura LOCALE (mutazione dell'utente): la riga viene marcata
   /// `dirty = 1`, cioè "da inviare al server". Il flag è la sola fonte di
   /// verità per la selezione del push: NON si confronta più `updated_at`

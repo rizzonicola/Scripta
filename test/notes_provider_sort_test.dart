@@ -12,6 +12,11 @@ class _FakeDao implements NotesDao {
   Future<List<NoteRow>> getActive() async =>
       rows.values.where((r) => !r.isDeleted).toList();
   @override
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async => [
+    for (final id in ids)
+      if (rows[id] != null) rows[id]!,
+  ];
+  @override
   Future<void> upsert(NoteRow row) async => rows[row.id] = row;
   @override
   Future<void> upsertBatch(List<NoteRow> list) async {

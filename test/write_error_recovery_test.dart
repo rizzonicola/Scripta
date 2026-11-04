@@ -30,6 +30,12 @@ class _FlakyNotesDao implements NotesDao {
       rows.values.where((r) => !r.isDeleted).toList();
 
   @override
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async => [
+    for (final id in ids)
+      if (rows[id] != null) rows[id]!,
+  ];
+
+  @override
   Future<void> upsert(NoteRow row) async {
     upsertAttempts++;
     if (failAlways || failuresRemaining > 0) {
@@ -77,6 +83,9 @@ class _FlakyFoldersDao implements FoldersDao {
 class _EmptyNotesDao implements NotesDao {
   @override
   Future<List<NoteRow>> getActive() async => const [];
+
+  @override
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async => const [];
 
   @override
   dynamic noSuchMethod(Invocation invocation) => Future<void>.value();

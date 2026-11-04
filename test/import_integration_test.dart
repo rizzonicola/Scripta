@@ -38,6 +38,12 @@ class _MemoryNotesDao implements NotesDao {
       rows.values.where((r) => !r.isDeleted).toList();
 
   @override
+  Future<List<NoteRow>> getByIds(Iterable<String> ids) async => [
+    for (final id in ids)
+      if (rows[id] != null) rows[id]!,
+  ];
+
+  @override
   Future<void> upsert(NoteRow row) async => rows[row.id] = row;
 
   @override
@@ -757,56 +763,66 @@ void main() {
       },
     );
 
-    test('un file sopra il limite viene rifiutato senza essere letto', () async {
-      final platform = _FakeSafPlatform()
-        ..addFile(
-          'Grande.md',
-          'x',
-          declaredLength: ImportService.maxEntryBytes + 1,
-        );
+    test(
+      'un file sopra il limite viene rifiutato senza essere letto',
+      () async {
+        final platform = _FakeSafPlatform()
+          ..addFile(
+            'Grande.md',
+            'x',
+            declaredLength: ImportService.maxEntryBytes + 1,
+          );
 
-      await expectLater(extract(platform), throwsFormatException);
-      expect(platform.reads, 0);
-    });
+        await expectLater(extract(platform), throwsFormatException);
+        expect(platform.reads, 0);
+      },
+    );
 
-    test('la dimensione effettiva viene ricontrollata dopo la lettura', () async {
-      final platform = _FakeSafPlatform()
-        ..addBytes(
-          'Grande.md',
-          Uint8List(ImportService.maxEntryBytes + 1),
-          declaredLength: 1,
-        );
+    test(
+      'la dimensione effettiva viene ricontrollata dopo la lettura',
+      () async {
+        final platform = _FakeSafPlatform()
+          ..addBytes(
+            'Grande.md',
+            Uint8List(ImportService.maxEntryBytes + 1),
+            declaredLength: 1,
+          );
 
-      await expectLater(extract(platform), throwsFormatException);
-      // La lettura si ferma al limite e chiude lo stream, senza leggere
-      // tutto il contenuto della dimensione dichiarata.
-      expect(platform.reads, 1);
-      expect(platform.lastBufferSize, ImportService.safReadChunkBytes);
-      expect(platform.closed, isTrue);
-    });
+        await expectLater(extract(platform), throwsFormatException);
+        // La lettura si ferma al limite e chiude lo stream, senza leggere
+        // tutto il contenuto della dimensione dichiarata.
+        expect(platform.reads, 1);
+        expect(platform.lastBufferSize, ImportService.safReadChunkBytes);
+        expect(platform.closed, isTrue);
+      },
+    );
 
-    test('una dimensione dichiarata corretta richiede una sola lettura',
-        () async {
-      final platform = _FakeSafPlatform()..addFile('nota.md', 'contenuto');
+    test(
+      'una dimensione dichiarata corretta richiede una sola lettura',
+      () async {
+        final platform = _FakeSafPlatform()..addFile('nota.md', 'contenuto');
 
-      final entries = await extract(platform);
+        final entries = await extract(platform);
 
-      expect(entries.single.rawContent, 'contenuto');
-      expect(platform.reads, 1);
-      expect(platform.closed, isTrue);
-    });
+        expect(entries.single.rawContent, 'contenuto');
+        expect(platform.reads, 1);
+        expect(platform.closed, isTrue);
+      },
+    );
 
-    test('se il provider dichiara meno byte del reale, la nota resta intera',
-        () async {
-      final platform = _FakeSafPlatform()
-        ..addFile('nota.md', 'contenuto', declaredLength: 1);
+    test(
+      'se il provider dichiara meno byte del reale, la nota resta intera',
+      () async {
+        final platform = _FakeSafPlatform()
+          ..addFile('nota.md', 'contenuto', declaredLength: 1);
 
-      final entries = await extract(platform);
+        final entries = await extract(platform);
 
-      expect(entries.single.rawContent, 'contenuto');
-      expect(platform.reads, 1);
-      expect(platform.closed, isTrue);
-    });
+        expect(entries.single.rawContent, 'contenuto');
+        expect(platform.reads, 1);
+        expect(platform.closed, isTrue);
+      },
+    );
 
     test('una cartella con troppe voci viene rifiutata', () async {
       final platform = _FakeSafPlatform();
@@ -818,21 +834,24 @@ void main() {
       expect(platform.reads, 0);
     });
 
-    test('percorsi fuori dalla radice e file non-nota vengono ignorati', () async {
-      final platform = _FakeSafPlatform()
-        ..addFile('../fuori.md', 'x')
-        ..addFile('Lavoro/../../fuori.md', 'x')
-        ..addFile('/assoluto.md', 'x')
-        ..addFile('Lavoro/immagine.png', 'png')
-        ..addFile('Lavoro/nota.md', 'dentro');
+    test(
+      'percorsi fuori dalla radice e file non-nota vengono ignorati',
+      () async {
+        final platform = _FakeSafPlatform()
+          ..addFile('../fuori.md', 'x')
+          ..addFile('Lavoro/../../fuori.md', 'x')
+          ..addFile('/assoluto.md', 'x')
+          ..addFile('Lavoro/immagine.png', 'png')
+          ..addFile('Lavoro/nota.md', 'dentro');
 
-      final entries = await extract(platform);
+        final entries = await extract(platform);
 
-      expect(entries, hasLength(1));
-      expect(entries.single.folderPathSegments, ['Lavoro']);
-      expect(entries.single.fileName, 'nota.md');
-      expect(entries.single.rawContent, 'dentro');
-      expect(platform.reads, 1);
-    });
+        expect(entries, hasLength(1));
+        expect(entries.single.folderPathSegments, ['Lavoro']);
+        expect(entries.single.fileName, 'nota.md');
+        expect(entries.single.rawContent, 'dentro');
+        expect(platform.reads, 1);
+      },
+    );
   });
 }
