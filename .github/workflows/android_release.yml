@@ -33,6 +33,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -64,14 +66,13 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            # A tag is a public release: do not publish it with a throwaway key.
-            if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-              echo "::error::Release tag without ANDROID_KEYSTORE_BASE64: release signing is mandatory." >&2
-              exit 1
-            fi
-            # Branch build (not a release): use a temporary key only for CI.
-            echo "::warning::No keystore configured: signing this branch build with a temporary key."
+          # The real keystore must NEVER be materialized for a ref that a
+          # writer can dispatch or push. Only a v*.*.* tag may use it: a
+          # workflow_dispatch run on a branch checks out branch-controlled
+          # Gradle code, which could read and exfiltrate the key during the
+          # build. Branch builds always get an ephemeral throwaway key.
+          if [[ "${GITHUB_REF:-}" != refs/tags/* ]]; then
+            echo "::notice::Non-tag build: signing with an ephemeral CI key."
             EPHEMERAL_PASS="$(openssl rand -hex 16)"
             keytool -genkeypair -v \
               -keystore "$RUNNER_TEMP/upload-keystore.jks" \
@@ -85,6 +86,10 @@ jobs:
               echo "keyPassword=$EPHEMERAL_PASS"
             } > android/key.properties
             exit 0
+          fi
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::Release tag without ANDROID_KEYSTORE_BASE64: release signing is mandatory." >&2
+            exit 1
           fi
           if [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
             echo "::error::ANDROID_KEYSTORE_BASE64 is set but a keystore credential is missing." >&2
