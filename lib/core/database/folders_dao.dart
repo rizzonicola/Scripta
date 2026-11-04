@@ -197,6 +197,15 @@ class FoldersDao {
     return rows.map(FolderRow.fromMap).toList();
   }
 
+  /// Vero se esiste almeno una riga (anche tombstone). Vedi
+  /// NotesDao.hasAny: è il segnale usato dal login per non adottare una
+  /// libreria locale senza identità sotto un account diverso.
+  Future<bool> hasAny() async {
+    final db = await _db;
+    final rows = await db.query('folders', columns: ['id'], limit: 1);
+    return rows.isNotEmpty;
+  }
+
   Future<FolderRow?> getById(String id) async {
     final db = await _db;
     final rows = await db.query(

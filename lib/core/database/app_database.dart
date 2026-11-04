@@ -225,6 +225,11 @@ class AppDatabase {
             value TEXT NOT NULL
           )
         ''');
+        // Marcatore di "libreria creata da questa versione": permette al
+        // login di adottare note scritte offline prima del primo accesso su
+        // un'installazione nuova, senza adottare una libreria legacy che non
+        // ha alcuna identità account (vedi SyncNotifier.login).
+        await db.insert('sync_meta', {'key': 'local_library_v1', 'value': '1'});
       },
       onUpgrade: _onUpgrade,
     );

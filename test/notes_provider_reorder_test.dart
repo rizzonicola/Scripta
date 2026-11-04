@@ -13,6 +13,9 @@ class _FakeDao implements NotesDao {
   Duration getActiveDelay = Duration.zero;
 
   @override
+  Future<bool> hasAny() async => rows.isNotEmpty;
+
+  @override
   Future<List<NoteRow>> getActive() async {
     final snapshot = rows.values.where((r) => !r.isDeleted).toList();
     if (getActiveDelay > Duration.zero) {

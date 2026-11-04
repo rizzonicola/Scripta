@@ -11,6 +11,9 @@ class FakeNotesDao implements NotesDao {
   bool failUpserts = false;
 
   @override
+  Future<bool> hasAny() async => _rows.isNotEmpty;
+
+  @override
   Future<List<NoteRow>> getActive() async =>
       _rows.values.where((r) => !r.isDeleted).toList();
 

@@ -306,6 +306,27 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     await _clearTokenExpiry();
   }
 
+  /// Registra l'identità dell'account che sta per essere dimenticato, PRIMA
+  /// che `clearAuth` cancelli userId e sessione. Serve a distinguere un
+  /// logout (le note restano e appartengono ancora a quell'account) da una
+  /// libreria legacy senza proprietario: senza questa traccia il login
+  /// successivo potrebbe adottare le note sotto un account diverso.
+  Future<void> _stampCurrentAccountIdentity() async {
+    try {
+      final session = await _secureStorage.getSession();
+      if (session == null ||
+          session.userId.isEmpty ||
+          session.serverUrl.isEmpty) {
+        return;
+      }
+      await _syncMetaDao.setAccountIdentity(
+        _accountIdentity(session.serverUrl, session.userId),
+      );
+    } catch (_) {
+      // Best effort: non deve impedire logout o 401.
+    }
+  }
+
   /// Chiude la sessione [generation] per un 401 o per un account bloccato.
   /// Incrementa la generazione PRIMA di cancellare, così ogni altra risposta
   /// in volo della stessa sessione viene scartata; se nel frattempo è partito
@@ -316,6 +337,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _ref.read(settingsProvider.notifier).discardPendingPush();
     await _withSessionWriteLock(() async {
       if (_sessionGeneration != endedGeneration) return;
+      await _stampCurrentAccountIdentity();
       await _clearAuthCredentials();
     });
     if (_sessionGeneration == endedGeneration) {
@@ -905,15 +927,22 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         // l'identità in `sync_meta` non esisteva ancora).
         final switchedByIdentity =
             previousIdentity != null && previousIdentity != newIdentity;
-        // Installazione legacy senza identity e senza userId, ma con un
-        // cursore di sync già avanzato: esistono dati locali di un account
-        // precedente che non possiamo attribuire con certezza. Si azzerano
-        // (euristica conservativa), perché rischiare un push cross-account è
-        // peggio che perdere dati locali già sincronizzati.
-        final legacyWithCursor =
+        // Installazione legacy senza identity e senza userId: le righe locali
+        // non sono attribuibili con certezza a nessun account. Un cursore
+        // avanzato è prova di una sync precedente, ma anche un cursore 0 con
+        // note/cartelle presenti può essere la libreria di un account uscito
+        // da una versione pre-identità. Solo un database creato da questa
+        // versione (marcatore locale) può adottare in sicurezza le note
+        // scritte offline prima del primo login; in tutti gli altri casi si
+        // azzera, perché un push cross-account è peggio della perdita di dati
+        // locali non attribuibili.
+        final hasLocalData =
+            await _notesDao.hasAny() || await _foldersDao.hasAny();
+        final legacyWithoutOwner =
             previousIdentity == null &&
             (previousUserId == null || previousUserId.isEmpty) &&
-            await _syncMetaDao.getSyncCursor() > 0;
+            !await _syncMetaDao.hasFreshLibraryMarker() &&
+            (await _syncMetaDao.getSyncCursor() > 0 || hasLocalData);
         final switchedByLegacy =
             previousIdentity == null &&
             ((previousUserId != null &&
@@ -921,7 +950,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
                     (previousUserId != response.userId ||
                         _normalizedServerUrl(previousUrl ?? '') !=
                             normalizedUrl)) ||
-                legacyWithCursor);
+                legacyWithoutOwner);
         if (switchedByIdentity || switchedByLegacy) {
           await _resetForAccountSwitch(newIdentity);
         } else {
@@ -1057,6 +1086,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // credenziali appena scritte: la sessione nuova vince.
     await _withSessionWriteLock(() async {
       if (_sessionGeneration != generation) return;
+      await _stampCurrentAccountIdentity();
       await _clearAuthCredentials();
     });
     if (!_isCurrentSession(generation)) return;

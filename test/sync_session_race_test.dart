@@ -510,6 +510,14 @@ void main() {
       addTearDown(h.container.dispose);
 
       final notesDao = NotesDao();
+      // Un database legacy è precedente al marcatore: lo si rimuove per
+      // riprodurre l'installazione che il login deve trattare con cautela.
+      final db = await AppDatabase.instance.db;
+      await db.delete(
+        'sync_meta',
+        where: 'key = ?',
+        whereArgs: ['local_library_v1'],
+      );
       await notesDao.upsert(
         const NoteRow(
           id: 'nota-legacy',
@@ -534,7 +542,7 @@ void main() {
   );
 
   test(
-    'legacy senza cursore: il primo login conserva le note solo-offline',
+    'installazione nuova: il primo login conserva le note solo-offline',
     () async {
       final server = _RaceServer();
       final h = _Harness(server);
@@ -556,9 +564,48 @@ void main() {
         ),
       );
 
-      // Cursore 0: nessuna prova che la nota appartenga a un altro account.
+      // Il database è stato creato da questa versione (marcatore presente):
+      // non esiste un account precedente da cui poter ereditare la nota.
       expect(await h.login('nuovo'), isTrue);
       expect(await notesDao.getById('nota-offline'), isNotNull);
+    },
+  );
+
+  test(
+    'legacy senza cursore: una libreria senza proprietario non viene adottata',
+    () async {
+      final server = _RaceServer();
+      final h = _Harness(server);
+      addTearDown(h.container.dispose);
+
+      // Simula un database creato prima del marcatore di libreria: senza
+      // identity e userId una nota locale può appartenere a un account
+      // precedente uscito prima dell'aggiornamento.
+      final db = await AppDatabase.instance.db;
+      await db.delete(
+        'sync_meta',
+        where: 'key = ?',
+        whereArgs: ['local_library_v1'],
+      );
+
+      final notesDao = NotesDao();
+      await notesDao.upsert(
+        const NoteRow(
+          id: 'nota-legacy-senza-cursore',
+          title: 'Legacy',
+          content: 'non attribuibile',
+          folderId: null,
+          isFavorite: false,
+          isPinned: false,
+          orderIndex: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          deletedAt: null,
+        ),
+      );
+
+      expect(await h.login('nuovo'), isTrue);
+      expect(await notesDao.getById('nota-legacy-senza-cursore'), isNull);
     },
   );
 

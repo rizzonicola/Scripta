@@ -115,6 +115,15 @@ class NotesDao {
     return rows.map(NoteRow.fromMap).toList();
   }
 
+  /// Vero se esiste almeno una riga (anche tombstone). Serve al login per
+  /// distinguere un'installazione davvero vuota da una libreria locale che
+  /// non ha un'identità account associata (vedi SyncNotifier.login).
+  Future<bool> hasAny() async {
+    final db = await _db;
+    final rows = await db.query('notes', columns: ['id'], limit: 1);
+    return rows.isNotEmpty;
+  }
+
   Future<NoteRow?> getById(String id) async {
     final db = await _db;
     final rows = await db.query(

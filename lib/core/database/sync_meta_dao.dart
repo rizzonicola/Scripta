@@ -11,6 +11,21 @@ import 'app_database.dart';
 class SyncMetaDao {
   static const _cursorKey = 'last_synced_at';
   static const _accountIdentityKey = 'account_identity';
+  static const _freshLibraryKey = 'local_library_v1';
+
+  /// Vero se il database è stato creato da una versione che marca la libreria
+  /// iniziale. I database preesistenti non hanno il marcatore: le loro righe
+  /// senza identità non sono attribuibili con certezza a un account.
+  Future<bool> hasFreshLibraryMarker() async {
+    final db = await _db;
+    final rows = await db.query(
+      'sync_meta',
+      where: 'key = ?',
+      whereArgs: [_freshLibraryKey],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
 
   Future<Database> get _db => AppDatabase.instance.db;
 
