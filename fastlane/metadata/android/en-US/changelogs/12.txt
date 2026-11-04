@@ -1,0 +1,6 @@
+Version 1.1.2.
+
+- Sync folder order, note order and sort mode across devices.
+- Show sync storage usage and warn when the account is almost full.
+- Validate ordering data received from the server more strictly.
+- Faster note refresh during sync and lighter database access.

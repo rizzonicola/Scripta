@@ -1,6 +1,6 @@
 class AppConstants {
   static const String appName = 'Scripta';
-  static const String appVersion = '1.1.1';
+  static const String appVersion = '1.1.2';
   static const String githubUrl = 'https://github.com/rizzonicola/Scripta';
 
   // NESSUN server di default: l'app non deve mai inviare credenziali o dati
