@@ -280,6 +280,27 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       }
     });
 
+    // Avviso UNA volta per transizione "quota superata" (non a ogni retry):
+    // il contatore cambia solo quando lo stato passa da normale a esaurito.
+    ref.listen<int>(syncProvider.select((s) => s.quotaWarningTick), (
+      previous,
+      next,
+    ) {
+      if (next <= 0) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !context.mounted) return;
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        if (messenger == null) return;
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context).quotaExceededSnack),
+            backgroundColor: Colors.orange.shade800,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      });
+    });
+
     final editorFocusMode = ref.watch(
       editorProvider.select((s) => s.isFocusMode),
     );

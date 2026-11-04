@@ -325,6 +325,48 @@ class AppLocalizationsFr extends AppLocalizations {
   String get inactivityMinDefault => 'Minimum : 10s • Défaut : 30s';
 
   @override
+  String get syncOrdering => 'Synchroniser l\'ordre';
+
+  @override
+  String get syncOrderingDesc =>
+      'Gardez l\'ordre des dossiers, l\'ordre manuel des notes et les critères de tri alignés sur tous vos appareils';
+
+  @override
+  String get deleteOrderingData => 'Supprimer les données de positionnement';
+
+  @override
+  String get deleteOrderingDataConfirmTitle =>
+      'Supprimer les données de positionnement ?';
+
+  @override
+  String get deleteOrderingDataConfirmMessage =>
+      'L\'ordre des dossiers et des notes ainsi que les critères de tri seront réinitialisés sur tous les appareils liés à ce compte.';
+
+  @override
+  String get deleteOrderingDataAction => 'Supprimer les données';
+
+  @override
+  String get orderingDataDeleted => 'Données de positionnement supprimées';
+
+  @override
+  String get orderingResetFailed =>
+      'Impossible de supprimer les données de positionnement';
+
+  @override
+  String get quotaExceededTitle => 'Synchronisation suspendue';
+
+  @override
+  String get quotaExceededMessage =>
+      'L\'espace de stockage de votre compte est plein. Les modifications restent sur cet appareil et seront synchronisées dès que vous libérerez de l\'espace ou que l\'administrateur augmentera le quota.';
+
+  @override
+  String get quotaExceededSnack =>
+      'Synchronisation suspendue : quota de stockage du compte atteint.';
+
+  @override
+  String get storageUsageLabel => 'Espace utilisé';
+
+  @override
   String get serverUrlLabel => 'URL du serveur backend';
 
   @override

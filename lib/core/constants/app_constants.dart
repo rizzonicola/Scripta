@@ -56,6 +56,13 @@ class AppConstants {
   static const String prefLastSyncTime = 'scripta_last_sync_timestamp';
   static const String prefLastOnline = 'scripta_last_online';
   static const String prefTokenExpiresAt = 'scripta_token_expires_at_ms';
+  static const String prefSyncOrdering = 'scripta_sync_ordering';
+  // Ultimo blob di posizionamento confermato dal server (JSON canonico) e
+  // versione su cui costruire il prossimo push. Servono a riconoscere le
+  // modifiche locali e a evitare di sovrascrivere un reset fatto altrove.
+  static const String prefOrderingSnapshot = 'scripta_ordering_snapshot';
+  static const String prefOrderingVersion = 'scripta_ordering_version';
+  static const String prefQuotaExceeded = 'scripta_quota_exceeded';
 
   /// Prefisso delle chiavi usate dal fallback iOS/macOS di SecureStorageService.
   static const String prefSecureFallbackPrefix = 'scripta_secure_fallback_';

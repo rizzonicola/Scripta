@@ -700,6 +700,78 @@ abstract class AppLocalizations {
   /// **'Minimum: 10s • Default: 30s'**
   String get inactivityMinDefault;
 
+  /// No description provided for @syncOrdering.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync ordering'**
+  String get syncOrdering;
+
+  /// No description provided for @syncOrderingDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep folder order, manual note order and sort criteria aligned across your devices'**
+  String get syncOrderingDesc;
+
+  /// No description provided for @deleteOrderingData.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete positioning data'**
+  String get deleteOrderingData;
+
+  /// No description provided for @deleteOrderingDataConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete positioning data?'**
+  String get deleteOrderingDataConfirmTitle;
+
+  /// No description provided for @deleteOrderingDataConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder and note order and sort criteria will be reset on every device connected to this account.'**
+  String get deleteOrderingDataConfirmMessage;
+
+  /// No description provided for @deleteOrderingDataAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete data'**
+  String get deleteOrderingDataAction;
+
+  /// No description provided for @orderingDataDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Positioning data deleted'**
+  String get orderingDataDeleted;
+
+  /// No description provided for @orderingResetFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not delete positioning data'**
+  String get orderingResetFailed;
+
+  /// No description provided for @quotaExceededTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync suspended'**
+  String get quotaExceededTitle;
+
+  /// No description provided for @quotaExceededMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account storage is full. Changes stay on this device and will sync once you free up space or the administrator increases the quota.'**
+  String get quotaExceededMessage;
+
+  /// No description provided for @quotaExceededSnack.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync suspended: account storage quota reached.'**
+  String get quotaExceededSnack;
+
+  /// No description provided for @storageUsageLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage used'**
+  String get storageUsageLabel;
+
   /// No description provided for @serverUrlLabel.
   ///
   /// In en, this message translates to:

@@ -195,6 +195,9 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     final isOnline = ref.watch(
                       syncProvider.select((s) => s.isOnline),
                     );
+                    final quotaExceeded = ref.watch(
+                      syncProvider.select((s) => s.quotaExceeded),
+                    );
 
                     if (!isAuthenticated) {
                       return IconButton(
@@ -226,11 +229,15 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                             ? Icons.cloud_done_outlined
                             : Icons.cloud_off_outlined,
                         size: 19,
-                        color: isOnline
+                        color: quotaExceeded
+                            ? theme.warningColor
+                            : isOnline
                             ? theme.successColor
                             : theme.warningColor,
                       ),
-                      tooltip: isOnline
+                      tooltip: quotaExceeded
+                          ? 'Sincronizzazione sospesa: quota di archiviazione esaurita'
+                          : isOnline
                           ? 'Sincronizzato: Online (Tocca per sincronizzare)'
                           : 'Server non raggiungibile (Offline)',
                       visualDensity: VisualDensity.compact,

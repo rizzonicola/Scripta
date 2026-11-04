@@ -323,6 +323,46 @@ class AppLocalizationsEn extends AppLocalizations {
   String get inactivityMinDefault => 'Minimum: 10s • Default: 30s';
 
   @override
+  String get syncOrdering => 'Sync ordering';
+
+  @override
+  String get syncOrderingDesc =>
+      'Keep folder order, manual note order and sort criteria aligned across your devices';
+
+  @override
+  String get deleteOrderingData => 'Delete positioning data';
+
+  @override
+  String get deleteOrderingDataConfirmTitle => 'Delete positioning data?';
+
+  @override
+  String get deleteOrderingDataConfirmMessage =>
+      'Folder and note order and sort criteria will be reset on every device connected to this account.';
+
+  @override
+  String get deleteOrderingDataAction => 'Delete data';
+
+  @override
+  String get orderingDataDeleted => 'Positioning data deleted';
+
+  @override
+  String get orderingResetFailed => 'Could not delete positioning data';
+
+  @override
+  String get quotaExceededTitle => 'Sync suspended';
+
+  @override
+  String get quotaExceededMessage =>
+      'Your account storage is full. Changes stay on this device and will sync once you free up space or the administrator increases the quota.';
+
+  @override
+  String get quotaExceededSnack =>
+      'Sync suspended: account storage quota reached.';
+
+  @override
+  String get storageUsageLabel => 'Storage used';
+
+  @override
   String get serverUrlLabel => 'Backend Server URL';
 
   @override

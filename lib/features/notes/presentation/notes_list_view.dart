@@ -13,6 +13,7 @@ import '../../folders/presentation/folder_dialogs.dart'
 import '../../../core/theme/color_schemes.dart';
 import '../../editor/providers/note_search_provider.dart';
 import '../../folders/providers/folder_provider.dart';
+import '../../sync/providers/sync_provider.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
 import 'note_card.dart';
@@ -244,7 +245,10 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
         icon: icon,
         description: description,
         isChecked: activeSort == order,
-        onSelected: () => ref.read(notesProvider.notifier).setSortOrder(order),
+        onSelected: () {
+          ref.read(notesProvider.notifier).setSortOrder(order);
+          ref.read(syncProvider.notifier).onOrderingChanged();
+        },
       );
     }
 
@@ -508,6 +512,9 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                                 legacyNewIndex,
                                 visibleIds: noteIds.toList(),
                               );
+                          ref
+                              .read(syncProvider.notifier)
+                              .onOrderingChanged();
                         },
                         itemBuilder: (context, index) {
                           final noteId = noteIds[index];
@@ -558,7 +565,10 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
       return ContextMenuEntry(
         label: label,
         isChecked: activeSort == order,
-        onSelected: () => ref.read(notesProvider.notifier).setSortOrder(order),
+        onSelected: () {
+          ref.read(notesProvider.notifier).setSortOrder(order);
+          ref.read(syncProvider.notifier).onOrderingChanged();
+        },
       );
     }
 

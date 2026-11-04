@@ -130,10 +130,13 @@ class _FolderTreeViewState extends ConsumerState<FolderTreeView> {
     final oldParent = folders.findNode(draggedId)?.parentId;
     if (!folders.moveFolderRelative(draggedId, targetId, position)) return;
     final newParent = folders.findNode(draggedId)?.parentId;
-    // L'ordine è locale, il cambio di genitore no: solo quest'ultimo deve
-    // raggiungere il server.
+    // Il cambio di genitore è una modifica strutturale; il solo riordino
+    // viaggia nel blob di posizionamento (se la sync dell'ordinamento è
+    // attiva).
     if (oldParent != newParent) {
       ref.read(syncProvider.notifier).onFolderStructureChanged();
+    } else {
+      ref.read(syncProvider.notifier).onOrderingChanged();
     }
   }
 
@@ -143,6 +146,8 @@ class _FolderTreeViewState extends ConsumerState<FolderTreeView> {
     if (!folders.moveFolder(draggedId, null)) return;
     if (oldParent != null) {
       ref.read(syncProvider.notifier).onFolderStructureChanged();
+    } else {
+      ref.read(syncProvider.notifier).onOrderingChanged();
     }
   }
 

@@ -519,6 +519,7 @@ class SyncApiService {
     required int lastSyncedAt,
     required List<FolderChangeDto> folders,
     required List<NoteChangeDto> notes,
+    OrderingPush? ordering,
   }) async {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/sync');
@@ -527,6 +528,7 @@ class SyncApiService {
       lastSyncedAt: lastSyncedAt,
       folders: folders,
       notes: notes,
+      ordering: ordering,
     );
     final requestBody = await _encodeSyncBody(payload);
 
@@ -607,6 +609,27 @@ class SyncApiService {
         _extractErrorCode(body),
       );
     }
+  }
+
+  /// Azzera sul server il blob di posizionamento dell'account e restituisce la
+  /// nuova versione. Gli altri dispositivi la applicheranno alla prossima sync.
+  Future<int> resetOrdering({
+    required String baseUrl,
+    required String token,
+  }) async {
+    final clean = _cleanUrl(baseUrl);
+    final uri = Uri.parse('$clean/api/v1/ordering/reset');
+
+    final response = await _client
+        .post(uri, headers: _headers(token: token))
+        .timeout(_settingsTimeout);
+
+    if (response.statusCode == 200) {
+      final decoded =
+          json.decode(bodyText(response)) as Map<String, dynamic>;
+      return (decoded['version'] as num?)?.toInt() ?? 0;
+    }
+    _apiError(response, 'Impossibile eliminare i dati di posizionamento');
   }
 
   /// POST con timeout «a progressi» (Y-05). Il corpo parte a blocchi e la

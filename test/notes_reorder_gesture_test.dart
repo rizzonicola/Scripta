@@ -7,13 +7,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
+import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:scripta/features/notes/models/note_model.dart';
 import 'package:scripta/features/notes/presentation/note_card.dart';
 import 'package:scripta/features/notes/presentation/notes_list_view.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
+import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// La lista note, riordinando, sveglia il motore di sync (per il blob di
+/// posizionamento): senza sessione salvata non deve toccare il keystore.
+class _NoAuthStorage extends SecureStorageService {
+  const _NoAuthStorage();
+
+  @override
+  Future<StoredSession?> getSession() async => null;
+
+  @override
+  Future<String?> getServerUrl() async => null;
+
+  @override
+  Future<String?> getUsername() async => null;
+}
+
+ProviderContainer _container() => ProviderContainer(
+  overrides: [secureStorageProvider.overrideWithValue(const _NoAuthStorage())],
+);
 
 Future<void> _waitUntil(
   Future<bool> Function() condition, {
@@ -68,7 +89,7 @@ void main() {
   testWidgets(
     'custom: niente maniglia, tap breve apre, long-press e long-click trascinano',
     (tester) async {
-      final container = ProviderContainer();
+      final container = _container();
       addTearDown(container.dispose);
       final notes = container.read(notesProvider.notifier);
       final folders = container.read(folderProvider.notifier);
@@ -184,7 +205,7 @@ void main() {
   testWidgets(
     'custom: la rotella scorre la lista e aggiorna l’indice durante il drag',
     (tester) async {
-      final container = ProviderContainer();
+      final container = _container();
       addTearDown(container.dispose);
       final notes = container.read(notesProvider.notifier);
       final folders = container.read(folderProvider.notifier);

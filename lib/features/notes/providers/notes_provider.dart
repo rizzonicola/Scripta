@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
-    show debugPrint, listEquals, visibleForTesting;
+    show debugPrint, listEquals, mapEquals, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Riverpod 3: StateNotifier/StateNotifierProvider sono "legacy" (spostati
 // in questo import separato, non rimossi). NotesNotifier resta
@@ -213,6 +213,71 @@ class NotesNotifier extends StateNotifier<NotesState> {
       jsonEncode(cleaned),
     );
   }
+
+  /// Blob di posizionamento delle note per la sync: criteri di ordinamento per
+  /// vista e ordini manuali delle cartelle. Gli id di note non più attive
+  /// vengono scartati, così il blob non cresce con i tombstone.
+  Map<String, dynamic> exportOrdering() {
+    final alive = state.notes.map((n) => n.id).toSet();
+    return {
+      'sort_modes': {
+        for (final e in _sortModes.entries) e.key: e.value.name,
+      },
+      'folder_orders': {
+        for (final e in _folderCustomOrders.entries)
+          e.key: e.value.where(alive.contains).toList(),
+      },
+    };
+  }
+
+  /// Applica il blob di posizionamento ricevuto dal server. Restituisce true
+  /// se qualcosa è cambiato rispetto allo stato locale.
+  Future<bool> applyOrdering(Map<String, dynamic> data) async {
+    final modes = <String, NoteSortOrder>{};
+    final rawModes = data['sort_modes'];
+    if (rawModes is Map) {
+      rawModes.forEach((key, value) {
+        if (key is! String || value is! String) return;
+        final parsed = _parseSort(value);
+        if (parsed != null) modes[key] = parsed;
+      });
+    }
+    final orders = <String, List<String>>{};
+    final rawOrders = data['folder_orders'];
+    if (rawOrders is Map) {
+      rawOrders.forEach((key, value) {
+        if (key is! String || value is! List) return;
+        orders[key] = value.whereType<String>().toList();
+      });
+    }
+
+    final changed =
+        !mapEquals(_sortModes, modes) ||
+        _folderCustomOrders.length != orders.length ||
+        orders.entries.any(
+          (e) => !listEquals(_folderCustomOrders[e.key], e.value),
+        );
+    _sortModes
+      ..clear()
+      ..addAll(modes);
+    _folderCustomOrders
+      ..clear()
+      ..addAll(orders);
+    await _persistSortModes();
+    await _persistFolderOrders();
+    if (mounted) {
+      final order = _sortFor(_scope);
+      state = state.copyWith(
+        notes: _sort(state.notes, order),
+        sortOrder: order,
+      );
+    }
+    return changed;
+  }
+
+  /// Azzera i dati di posizionamento delle note (usato dal reset account e
+  /// dal cambio account).
+  Future<void> clearOrdering() => applyOrdering(const {});
 
   /// La nota con modifiche testuali non ancora scritte su SQLite, catturata
   /// ESPLICITAMENTE al momento della battitura (vedi [_debouncedPersist]).

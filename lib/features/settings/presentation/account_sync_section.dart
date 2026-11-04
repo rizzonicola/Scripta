@@ -20,6 +20,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
   late final TextEditingController _passwordController;
   bool _obscurePassword = true;
   bool _loggingOutAll = false;
+  bool _resettingOrdering = false;
 
   @override
   void initState() {
@@ -43,6 +44,61 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
   String _formatTimestamp(DateTime? dateTime, String neverText) {
     if (dateTime == null) return neverText;
     return DateFormat('dd/MM/yyyy HH:mm:ss').format(dateTime);
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var value = bytes.toDouble();
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return unit == 0
+        ? '$bytes B'
+        : '${value.toStringAsFixed(1)} ${units[unit]}';
+  }
+
+  Future<void> _confirmResetOrdering(
+    BuildContext context,
+    AppLocalizations l10n,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.deleteOrderingDataConfirmTitle),
+        content: Text(l10n.deleteOrderingDataConfirmMessage),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).dangerColor,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.deleteOrderingDataAction),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || !context.mounted) return;
+
+    setState(() => _resettingOrdering = true);
+    final ok = await ref.read(syncProvider.notifier).resetOrdering();
+    if (!mounted || !context.mounted) return;
+    setState(() => _resettingOrdering = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? l10n.orderingDataDeleted : l10n.orderingResetFailed,
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _confirmLogoutAll(
@@ -234,6 +290,62 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                         ),
                       ),
                     ),
+                  ],
+                ),
+              ),
+            ],
+
+            if (syncConfig.quotaExceeded) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.warningColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: theme.warningColor.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.pause_circle_outline_rounded,
+                          size: 16,
+                          color: theme.warningColor,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            l10n.quotaExceededTitle,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.warningColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      l10n.quotaExceededMessage,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (syncConfig.storageQuotaBytes > 0) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        '${l10n.storageUsageLabel}: ${_formatBytes(syncConfig.storageUsageBytes)} / ${_formatBytes(syncConfig.storageQuotaBytes)}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -722,6 +834,48 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                 ),
               ),
             ],
+
+            const Divider(height: 1),
+
+            // Posizionamento: ordine cartelle/note e criteri di ordinamento.
+            SwitchListTile(
+              secondary: const Icon(Icons.swap_vert_rounded),
+              title: Text(l10n.syncOrdering),
+              subtitle: Text(
+                l10n.syncOrderingDesc,
+                style: const TextStyle(fontSize: 12),
+              ),
+              value: syncConfig.syncOrdering,
+              onChanged: (val) => notifier.setSyncOrdering(val),
+            ),
+
+            if (syncConfig.isAuthenticated)
+              Padding(
+                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _resettingOrdering
+                        ? null
+                        : () => _confirmResetOrdering(context, l10n),
+                    icon: _resettingOrdering
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_outline_rounded, size: 16),
+                    label: Text(l10n.deleteOrderingData),
+                    style: TextButton.styleFrom(
+                      foregroundColor: theme.dangerColor,
+                      textStyle: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

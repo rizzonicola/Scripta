@@ -118,17 +118,71 @@ class SyncRequest {
   final List<FolderChangeDto> folders;
   final List<NoteChangeDto> notes;
 
+  /// Presente solo quando il client ha modifiche locali di posizionamento da
+  /// inviare. Assente = non toccare lo stato del server.
+  final OrderingPush? ordering;
+
   const SyncRequest({
     required this.lastSyncedAt,
     required this.folders,
     required this.notes,
+    this.ordering,
   });
 
   Map<String, dynamic> toJson() => {
     'last_synced_at': lastSyncedAt,
     'folders': folders.map((f) => f.toJson()).toList(),
     'notes': notes.map((n) => n.toJson()).toList(),
+    if (ordering != null) 'ordering': ordering!.toJson(),
   };
+}
+
+/// Blob di posizionamento inviato al server (ordine cartelle, ordinamento per
+/// vista, ordini manuali delle note). Il server lo conserva senza
+/// interpretarlo. [baseVersion] è la versione su cui il client ha costruito la
+/// modifica: se non coincide con quella corrente il server ignora il push e
+/// restituisce lo stato autoritativo (vedi [OrderingState]).
+class OrderingPush {
+  final int baseVersion;
+  final Map<String, dynamic> data;
+
+  const OrderingPush({required this.baseVersion, required this.data});
+
+  Map<String, dynamic> toJson() => {
+    'base_version': baseVersion,
+    'data': data,
+  };
+}
+
+/// Stato di posizionamento restituito dal server a ogni sync.
+class OrderingState {
+  final int version;
+  final Map<String, dynamic> data;
+
+  const OrderingState({required this.version, this.data = const {}});
+
+  factory OrderingState.fromJson(Map<String, dynamic> json) => OrderingState(
+    version: (json['version'] as num?)?.toInt() ?? 0,
+    data: json['data'] is Map
+        ? (json['data'] as Map).cast<String, dynamic>()
+        : const {},
+  );
+}
+
+/// Occupazione e tetto dello spazio di sincronizzazione dell'account.
+/// [quotaBytes] = 0 significa illimitato.
+class StorageInfo {
+  final int usageBytes;
+  final int quotaBytes;
+
+  const StorageInfo({this.usageBytes = 0, this.quotaBytes = 0});
+
+  factory StorageInfo.fromJson(Map<String, dynamic> json) => StorageInfo(
+    usageBytes: (json['usage_bytes'] as num?)?.toInt() ?? 0,
+    quotaBytes: (json['quota_bytes'] as num?)?.toInt() ?? 0,
+  );
+
+  bool get quotaExceeded => quotaBytes > 0 && usageBytes >= quotaBytes;
 }
 
 /// Response body da POST /api/v1/sync — speculare a `models.SyncResponse`.
@@ -200,12 +254,21 @@ class SyncResponse {
   /// Capability del server; null se la risposta non le contiene.
   final ServerCaps? caps;
 
+  /// Stato di posizionamento; null con i server che non lo supportano (in quel
+  /// caso il client non applica e non considera sincronizzato nulla).
+  final OrderingState? ordering;
+
+  /// Occupazione/quota dell'account; null con i server precedenti.
+  final StorageInfo? storage;
+
   const SyncResponse({
     required this.serverTime,
     this.fullResync = false,
     this.folders = const [],
     this.notes = const [],
     this.caps,
+    this.ordering,
+    this.storage,
   });
 
   factory SyncResponse.fromJson(Map<String, dynamic> json) {
@@ -224,6 +287,12 @@ class SyncResponse {
           const [],
       caps: json['caps'] is Map<String, dynamic>
           ? ServerCaps.fromJson(json['caps'] as Map<String, dynamic>)
+          : null,
+      ordering: json['ordering'] is Map<String, dynamic>
+          ? OrderingState.fromJson(json['ordering'] as Map<String, dynamic>)
+          : null,
+      storage: json['storage'] is Map<String, dynamic>
+          ? StorageInfo.fromJson(json['storage'] as Map<String, dynamic>)
           : null,
     );
   }

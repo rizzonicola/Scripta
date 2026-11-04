@@ -41,6 +41,10 @@ void main() {
       300,
       scrollable: find.byType(Scrollable).first,
     );
+    // La tile può restare solo parzialmente visibile in fondo allo viewport:
+    // il tap al centro finirebbe fuori schermo.
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
 
     await tester.tap(toggle);

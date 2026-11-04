@@ -9,6 +9,11 @@ class SyncConfig {
   final bool isAuthenticated;
   final bool isOnline;
   final bool isSyncing;
+  final bool syncOrdering;
+  final bool quotaExceeded;
+  final int storageUsageBytes;
+  final int storageQuotaBytes; // 0 = illimitato
+  final int quotaWarningTick;
   final DateTime? lastSyncTime;
   final String? lastSyncMessage;
   final String? lastError;
@@ -24,6 +29,11 @@ class SyncConfig {
     this.isAuthenticated = false,
     this.isOnline = false,
     this.isSyncing = false,
+    this.syncOrdering = true,
+    this.quotaExceeded = false,
+    this.storageUsageBytes = 0,
+    this.storageQuotaBytes = 0,
+    this.quotaWarningTick = 0,
     this.lastSyncTime,
     this.lastSyncMessage,
     this.lastError,
@@ -40,6 +50,11 @@ class SyncConfig {
     bool? isAuthenticated,
     bool? isOnline,
     bool? isSyncing,
+    bool? syncOrdering,
+    bool? quotaExceeded,
+    int? storageUsageBytes,
+    int? storageQuotaBytes,
+    int? quotaWarningTick,
     DateTime? Function()? lastSyncTime,
     String? Function()? lastSyncMessage,
     String? Function()? lastError,
@@ -55,6 +70,11 @@ class SyncConfig {
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
       isOnline: isOnline ?? this.isOnline,
       isSyncing: isSyncing ?? this.isSyncing,
+      syncOrdering: syncOrdering ?? this.syncOrdering,
+      quotaExceeded: quotaExceeded ?? this.quotaExceeded,
+      storageUsageBytes: storageUsageBytes ?? this.storageUsageBytes,
+      storageQuotaBytes: storageQuotaBytes ?? this.storageQuotaBytes,
+      quotaWarningTick: quotaWarningTick ?? this.quotaWarningTick,
       lastSyncTime: lastSyncTime != null ? lastSyncTime() : this.lastSyncTime,
       lastSyncMessage: lastSyncMessage != null
           ? lastSyncMessage()
@@ -84,6 +104,11 @@ class SyncConfig {
         other.isAuthenticated == isAuthenticated &&
         other.isOnline == isOnline &&
         other.isSyncing == isSyncing &&
+        other.syncOrdering == syncOrdering &&
+        other.quotaExceeded == quotaExceeded &&
+        other.storageUsageBytes == storageUsageBytes &&
+        other.storageQuotaBytes == storageQuotaBytes &&
+        other.quotaWarningTick == quotaWarningTick &&
         other.lastSyncTime == lastSyncTime &&
         other.lastSyncMessage == lastSyncMessage &&
         other.lastError == lastError;
@@ -101,6 +126,11 @@ class SyncConfig {
     isAuthenticated,
     isOnline,
     isSyncing,
+    syncOrdering,
+    quotaExceeded,
+    storageUsageBytes,
+    storageQuotaBytes,
+    quotaWarningTick,
     lastSyncTime,
     lastSyncMessage,
     lastError,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' show Random;
 
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
@@ -62,6 +63,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   static const _prefInactivitySeconds = AppConstants.prefSyncInactivitySeconds;
   static const _prefLastSyncTime = AppConstants.prefLastSyncTime;
   static const _prefLastOnline = AppConstants.prefLastOnline;
+  static const _prefSyncOrdering = AppConstants.prefSyncOrdering;
+  static const _prefOrderingSnapshot = AppConstants.prefOrderingSnapshot;
+  static const _prefOrderingVersion = AppConstants.prefOrderingVersion;
+  static const _prefQuotaExceeded = AppConstants.prefQuotaExceeded;
 
   /// Scadenza del token (millisecondi Unix), calcolata dall'`expires_at` della
   /// login (Y-13-A). Non è un segreto: sta fra le preferenze.
@@ -117,7 +122,18 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   Timer? _inactivityTimer;
   Timer? _noteSwitchDebounceTimer;
   Timer? _folderStructureDebounceTimer;
+  Timer? _orderingDebounceTimer;
   Timer? _connectivityTimer;
+
+  /// Ultima versione del blob di posizionamento vista dal server e impronta
+  /// canonica dell'ultimo stato sincronizzato. Il confronto con l'impronta
+  /// locale dice se ci sono modifiche di posizionamento da inviare.
+  int _orderingVersion = 0;
+  String _orderingSnapshot = _emptyOrderingJson;
+
+  /// Forma canonica del blob vuoto (vedi [_encodeOrdering]).
+  static const String _emptyOrderingJson =
+      '{"folder_orders":{},"folders":{},"sort_modes":{}}';
 
   /// Vero se un trigger (cambio nota, modifica cartelle, inattività,
   /// lifecycle...) è arrivato MENTRE una sync era già in corso. Prima quel
@@ -520,6 +536,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
+    _orderingDebounceTimer?.cancel();
     _connectivityTimer?.cancel();
     super.dispose();
   }
@@ -532,6 +549,11 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     final noteSwitchSync = prefs.getBool(_prefNoteSwitchSync) ?? true;
     final inactivitySync = prefs.getBool(_prefInactivitySync) ?? false;
     final inactivitySeconds = prefs.getInt(_prefInactivitySeconds) ?? 30;
+    final orderingSync = prefs.getBool(_prefSyncOrdering) ?? true;
+    final quotaExceeded = prefs.getBool(_prefQuotaExceeded) ?? false;
+    _orderingVersion = prefs.getInt(_prefOrderingVersion) ?? 0;
+    _orderingSnapshot =
+        prefs.getString(_prefOrderingSnapshot) ?? _emptyOrderingJson;
 
     final lastSyncMillis = prefs.getInt(_prefLastSyncTime);
     final lastSyncTime = lastSyncMillis != null
@@ -567,6 +589,8 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       syncOnNoteSwitch: noteSwitchSync,
       syncOnInactivity: inactivitySync,
       inactivitySeconds: inactivitySeconds.clamp(10, 300),
+      syncOrdering: orderingSync,
+      quotaExceeded: quotaExceeded,
       serverUrl: savedServerUrl,
       username: () => savedUsername,
       isAuthenticated: hasToken,
@@ -846,6 +870,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // Annulla/attende l'autosave prima della cancellazione: un upsert tardivo
     // riscriverebbe una nota appena eliminata.
     await _ref.read(notesProvider.notifier).prepareForAccountReset();
+    // I criteri di ordinamento e gli ordini manuali ora appartengono
+    // all'account: non devono passare al successivo.
+    await _ref.read(notesProvider.notifier).clearOrdering();
     await _notesDao.hardDeleteAll();
     await _foldersDao.hardDeleteAll();
     await _syncMetaDao.clearSyncState(accountIdentity: newIdentity);
@@ -853,8 +880,13 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // precedente e non deve essere ripresa dal nuovo.
     await SessionStateService.clear();
 
+    _orderingVersion = 0;
+    _orderingSnapshot = _emptyOrderingJson;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefLastSyncTime);
+    await prefs.remove(_prefOrderingVersion);
+    await prefs.remove(_prefOrderingSnapshot);
+    await prefs.remove(_prefQuotaExceeded);
 
     await _ref.read(folderProvider.notifier).refreshFromDb();
     await _ref.read(notesProvider.notifier).refreshFromDb();
@@ -864,6 +896,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         lastSyncTime: () => null,
         lastSyncMessage: () => null,
         lastError: () => null,
+        quotaExceeded: false,
+        storageUsageBytes: 0,
+        storageQuotaBytes: 0,
       );
     }
   }
@@ -1140,6 +1175,33 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     await prefs.setInt(_prefInactivitySeconds, clamped);
   }
 
+  /// Attiva/disattiva la sincronizzazione del posizionamento. Riattivandola,
+  /// il prossimo giro invia l'ordine locale corrente (l'impronta viene
+  /// invalidata): le modifiche fatte mentre era disattivata non si perdono.
+  Future<void> setSyncOrdering(bool value) async {
+    state = state.copyWith(syncOrdering: value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefSyncOrdering, value);
+    if (value) {
+      _orderingSnapshot = '';
+      unawaited(triggerSync());
+    }
+  }
+
+  /// Notifica una modifica locale di posizionamento (ordine cartelle, criteri
+  /// di ordinamento o ordine manuale delle note). Il confronto con
+  /// l'impronta avviene in [triggerSync]; qui serve solo a non aspettare il
+  /// prossimo trigger di sync.
+  void onOrderingChanged() {
+    if (!state.isAuthenticated || !state.syncOrdering) return;
+    _orderingDebounceTimer?.cancel();
+    _orderingDebounceTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted && state.syncOrdering) {
+        unawaited(triggerSync());
+      }
+    });
+  }
+
   /// Called whenever note contents change to reset inactivity debounce timer
   void notifyEditorActivity() {
     if (!state.isAuthenticated || !state.syncOnInactivity) return;
@@ -1225,6 +1287,149 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     // internamente eventuali timer residui, quindi è sicuro anche se non
     // era mai stato fermato).
     _startConnectivityWatchdog();
+  }
+
+  /// Posizioni manuali delle cartelle attive (solo quelle con un ordine
+  /// esplicito: 0 = nessun ordine, in coda alfabetica).
+  Future<Map<String, int>> _exportFolderPositions() async {
+    final rows = await _foldersDao.getActive();
+    return {
+      for (final row in rows)
+        if (row.orderIndex > 0) row.id: row.orderIndex,
+    };
+  }
+
+  /// Blob completo di posizionamento: ordine cartelle + ordinamenti delle note.
+  Future<Map<String, dynamic>> _exportOrdering() async {
+    final notes = _ref.read(notesProvider.notifier).exportOrdering();
+    return {
+      'folders': await _exportFolderPositions(),
+      'sort_modes': notes['sort_modes'] ?? const <String, String>{},
+      'folder_orders': notes['folder_orders'] ?? const <String, List<String>>{},
+    };
+  }
+
+  /// Serializzazione canonica (chiavi ordinate) per confrontare due blob senza
+  /// dipendere dall'ordine di inserimento delle mappe.
+  static Object? _canonicalOrderingValue(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.map((k) => k.toString()).toList()..sort();
+      return {
+        for (final key in keys) key: _canonicalOrderingValue(value[key]),
+      };
+    }
+    if (value is List) return value.map(_canonicalOrderingValue).toList();
+    return value;
+  }
+
+  static String _encodeOrdering(Map<String, dynamic> data) =>
+      jsonEncode(_canonicalOrderingValue(data));
+
+  Future<void> _persistOrderingState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefOrderingSnapshot, _orderingSnapshot);
+      await prefs.setInt(_prefOrderingVersion, _orderingVersion);
+    } catch (_) {
+      // Best effort: al peggio il prossimo avvio rimanda il blob una volta.
+    }
+  }
+
+  Future<void> _persistQuotaExceeded(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefQuotaExceeded, value);
+    } catch (_) {}
+  }
+
+  /// Applica un blob di posizionamento: azzera le posizioni delle cartelle non
+  /// elencate (così un reset remoto libera anche le posizioni locali) e
+  /// sostituisce criteri/ordini delle note. Restituisce true se qualcosa è
+  /// cambiato.
+  Future<bool> _applyOrdering(Map<String, dynamic> data) async {
+    final positions = <String, int>{};
+    final rawFolders = data['folders'];
+    if (rawFolders is Map) {
+      rawFolders.forEach((key, value) {
+        if (key is String && value is num) {
+          final index = value.toInt();
+          if (index > 0) positions[key] = index;
+        }
+      });
+    }
+
+    final rows = await _foldersDao.getActive();
+    final updates = <String, int>{};
+    for (final row in rows) {
+      final wanted = positions[row.id] ?? 0;
+      if (row.orderIndex != wanted) updates[row.id] = wanted;
+    }
+    if (updates.isNotEmpty) await _foldersDao.setOrderIndexes(updates);
+
+    final notesChanged = await _ref
+        .read(notesProvider.notifier)
+        .applyOrdering(data);
+    return updates.isNotEmpty || notesChanged;
+  }
+
+  /// Azzera il posizionamento dell'account: il server svuota il blob e
+  /// incrementa la versione, gli altri dispositivi lo applicano alla sync
+  /// successiva. Localmente si azzerano subito cartelle, criteri e ordini.
+  Future<bool> resetOrdering() async {
+    if (!state.isAuthenticated) return false;
+    final generation = _sessionGeneration;
+    final serverUrl = state.serverUrl;
+
+    try {
+      final version = await _authorizedRequest(
+        (token) => _withNetworkRetry(
+          () => _apiService.resetOrdering(baseUrl: serverUrl, token: token),
+        ),
+      );
+      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+        return false;
+      }
+
+      return await _withSessionWriteLock(() async {
+        if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+          return false;
+        }
+        final changed = await _applyOrdering(const {});
+        _orderingVersion = version;
+        _orderingSnapshot = _encodeOrdering(await _exportOrdering());
+        await _persistOrderingState();
+        if (changed) {
+          await _ref.read(folderProvider.notifier).refreshFromDb();
+        }
+        return true;
+      });
+    } catch (e) {
+      if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+        return false;
+      }
+      if (e is SyncApiException && e.statusCode == 401) {
+        final reason = e.message;
+        state = state.copyWith(
+          isAuthenticated: false,
+          lastError: () => reason,
+          lastSyncMessage: () =>
+              'Sessione scaduta: effettua nuovamente l\'accesso',
+        );
+        await _endSession(generation);
+      } else if (e is SyncApiException && _isAccountBlocked(e)) {
+        state = state.copyWith(
+          isAuthenticated: false,
+          lastError: () => e.message,
+          lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
+        );
+        await _endSession(generation);
+      } else {
+        final nextOnline = _serverRespondedTo(e);
+        state = state.copyWith(isOnline: nextOnline);
+        _rememberOnline(nextOnline);
+      }
+      return false;
+    }
   }
 
   FolderChangeDto _toFolderDto(FolderRow r) => FolderChangeDto(
@@ -1399,6 +1604,19 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         final cursor = await _syncMetaDao.getSyncCursor();
         final dirtyFolders = await _foldersDao.listDirty();
         final dirtyNotes = await _notesDao.listDirty();
+        // Blob locale di posizionamento: si invia solo se diverso dall'ultimo
+        // stato confermato dal server. Il confronto è fatto su JSON canonico,
+        // così l'ordine delle chiavi non produce falsi "sporchi".
+        final orderingLocal = state.syncOrdering
+            ? await _exportOrdering()
+            : const <String, dynamic>{};
+        final orderingJson = state.syncOrdering
+            ? _encodeOrdering(orderingLocal)
+            : '';
+        final orderingPush =
+            state.syncOrdering && orderingJson != _orderingSnapshot
+            ? OrderingPush(baseVersion: _orderingVersion, data: orderingLocal)
+            : null;
         if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
           return false;
         }
@@ -1420,6 +1638,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
                 lastSyncedAt: cursor,
                 folders: dirtyFolders.map(_toFolderDto).toList(),
                 notes: dirtyNotes.map(_toNoteDto).toList(),
+                ordering: orderingPush,
               ),
             ),
           );
@@ -1485,6 +1704,37 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             return false;
           }
 
+          // Posizionamento: il server restituisce lo stato autoritativo a ogni
+          // sync. Se nel frattempo l'utente ha riordinato ancora, non si
+          // sovrascrive la modifica in volo: resta sporca e parte al giro di
+          // recupero.
+          var orderingChanged = false;
+          final remoteOrdering = response.ordering;
+          if (remoteOrdering != null) {
+            if (state.syncOrdering) {
+              final currentOrdering = _encodeOrdering(
+                await _exportOrdering(),
+              );
+              final remoteJson = _encodeOrdering(remoteOrdering.data);
+              if (currentOrdering == orderingJson) {
+                if (remoteJson != currentOrdering) {
+                  orderingChanged = await _applyOrdering(remoteOrdering.data);
+                }
+                _orderingSnapshot = _encodeOrdering(await _exportOrdering());
+              } else {
+                _orderingSnapshot = remoteJson;
+              }
+            }
+            // La versione si aggiorna sempre: riattivando la sync, il push
+            // locale parte sulla versione corrente del server.
+            _orderingVersion = remoteOrdering.version;
+            await _persistOrderingState();
+          }
+
+          if (!_isCurrentSession(generation) || serverUrl != state.serverUrl) {
+            return false;
+          }
+
           if (response.fullResync) {
             // Un full_resync VUOTO su un dispositivo che ha dati locali è
             // quasi sempre una risposta anomala (server appena inizializzato,
@@ -1538,7 +1788,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           // ricostruire l'intero archivio a ogni giro, anche con risposta
           // vuota, era puro lavoro sprecato. markSynced e la purge dei
           // tombstone non toccano nulla che la UI mostri.
-          if (repaired || response.fullResync) {
+          if (repaired || response.fullResync || orderingChanged) {
             await _ref.read(folderProvider.notifier).refreshFromDb();
             await _ref.read(notesProvider.notifier).refreshFromDb();
           } else {
@@ -1564,6 +1814,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
               !mounted) {
             return false;
           }
+          final wasQuotaExceeded = state.quotaExceeded;
+          final storage = response.storage;
+          final quotaExceeded =
+              storage?.quotaExceeded ?? state.quotaExceeded;
           state = state.copyWith(
             isOnline: true,
             isSyncing: false,
@@ -1571,7 +1825,18 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             lastSyncMessage: () =>
                 'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
             lastError: () => null,
+            storageUsageBytes:
+                storage?.usageBytes ?? state.storageUsageBytes,
+            storageQuotaBytes:
+                storage?.quotaBytes ?? state.storageQuotaBytes,
+            quotaExceeded: quotaExceeded,
+            quotaWarningTick: quotaExceeded && !wasQuotaExceeded
+                ? state.quotaWarningTick + 1
+                : state.quotaWarningTick,
           );
+          if (quotaExceeded != wasQuotaExceeded) {
+            await _persistQuotaExceeded(quotaExceeded);
+          }
           return true;
         });
         if (!applied) return false;
@@ -1587,6 +1852,10 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       final isBlocked = _isAccountBlocked(e);
       final isRejected = e is SyncApiException && e.statusCode == 422;
       final isRateLimited = e is SyncApiException && e.statusCode == 429;
+      final isQuotaExceeded =
+          e is SyncApiException &&
+          e.statusCode == 409 &&
+          e.code == 'quota_exceeded';
       // 502 = risposta 200 non decodificabile: il server ha risposto, quindi
       // non è offline; il messaggio deve dire che il problema è la risposta.
       final isBadResponse = e is SyncApiException && e.statusCode == 502;
@@ -1605,6 +1874,24 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           : isLocalDbError
           ? state.isOnline
           : false;
+      if (isQuotaExceeded) {
+        final wasQuotaExceeded = state.quotaExceeded;
+        state = state.copyWith(
+          isOnline: true,
+          isSyncing: false,
+          quotaExceeded: true,
+          quotaWarningTick: wasQuotaExceeded
+              ? state.quotaWarningTick
+              : state.quotaWarningTick + 1,
+          lastError: () => null,
+          lastSyncMessage: () =>
+              'Sincronizzazione sospesa: spazio di archiviazione esaurito. '
+              'Libera spazio o chiedi all\'amministratore di aumentare la quota.',
+        );
+        if (!wasQuotaExceeded) await _persistQuotaExceeded(true);
+        _rememberOnline(true);
+        return false;
+      }
       state = state.copyWith(
         isAuthenticated: isAuthError || isBlocked
             ? false
