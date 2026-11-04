@@ -105,6 +105,11 @@ class BackupFolder {
 /// Manifest versionato del backup. È volutamente composto solo da tipi
 /// primitivi: viene costruito e letto anche negli isolate di export/import.
 class BackupManifest {
+  /// Tetto sul numero di cartelle/note nel manifest. Va applicato PRIMA di
+  /// costruire gli oggetti: un JSON da 200 MiB può contenere milioni di
+  /// elementi minuscoli, e il limite sui byte non li conta.
+  static const int maxItems = 5000;
+
   final int version;
   final List<BackupFolder> folders;
   final List<BackupNote> notes;
@@ -146,6 +151,18 @@ class BackupManifest {
     final rawNotes = json['notes'];
     if (rawFolders is! List || rawNotes is! List) {
       throw const FormatException('Manifest: folders/notes mancanti');
+    }
+    // Il conteggio va fatto sui array grezzi, PRIMA di costruire gli oggetti.
+    // Il vecchio controllo in ImportService arrivava dopo jsonDecode e dopo
+    // BackupManifest.fromJson: la memoria era già stata allocata.
+    if (rawFolders.length > maxItems || rawNotes.length > maxItems) {
+      throw const FormatException('Manifest: troppi elementi');
+    }
+    // Elementi non-oggetto venivano scartati silenziosamente, aggirando il
+    // limite sugli elementi costruiti. Il formato non li prevede: rifiutarli.
+    if (rawFolders.any((item) => item is! Map) ||
+        rawNotes.any((item) => item is! Map)) {
+      throw const FormatException('Manifest: elemento non valido');
     }
 
     final rawSettings = json['settings'];

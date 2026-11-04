@@ -433,16 +433,23 @@ class ImportService {
         'ZIP con troppe voci (massimo $maxZipEntries).',
       );
     }
-    if (cdOffset + cdSize > bytes.length) {
+    final cdEnd = cdOffset + cdSize;
+    if (cdEnd > bytes.length) {
       throw const FormatException(
         'ZIP non valido: central directory corrotta.',
       );
     }
 
+    // archive 4.5.2 ignora il conteggio EOCD e scorre TUTTI i record dentro
+    // cdSize. La preflight deve fare lo stesso: fermarsi a `entries` lascerebbe
+    // record "nascosti" (anche symlink decompressi eagerly dal decoder) fuori
+    // da ogni limite. In più si rifiuta un EOCD incoerente, così preflight e
+    // decoder non possono vedere due directory diverse.
     var position = cdOffset;
+    var actualEntries = 0;
     var totalBytes = 0;
-    for (var i = 0; i < entries; i++) {
-      if (position + 46 > bytes.length || _u32(bytes, position) != 0x02014b50) {
+    while (position < cdEnd) {
+      if (position + 46 > cdEnd || _u32(bytes, position) != 0x02014b50) {
         throw const FormatException(
           'ZIP non valido: voce del central directory corrotta.',
         );
@@ -459,7 +466,7 @@ class ImportService {
       final externalAttributes = _u32(bytes, position + 38);
       final nameStart = position + 46;
       final nextPosition = nameStart + nameLength + extraLength + commentLength;
-      if (nextPosition > bytes.length) {
+      if (nextPosition > cdEnd) {
         throw const FormatException(
           'ZIP non valido: nome della voce fuori dai limiti.',
         );
@@ -499,7 +506,21 @@ class ImportService {
           'Contenuto complessivo troppo grande (massimo ${_mb(maxTotalUncompressedBytes)} decompressi).',
         );
       }
+      actualEntries++;
+      if (actualEntries > maxZipEntries) {
+        throw const FormatException(
+          'ZIP con troppe voci (massimo $maxZipEntries).',
+        );
+      }
       position = nextPosition;
+    }
+    if (position != cdEnd) {
+      throw const FormatException(
+        'ZIP non valido: central directory non allineata.',
+      );
+    }
+    if (actualEntries != entries) {
+      throw const FormatException('ZIP non valido: numero di voci incoerente.');
     }
   }
 
@@ -562,8 +583,10 @@ class ImportService {
       } catch (e) {
         throw FormatException('Manifest del backup non valido: $e');
       }
-      if (manifest.folders.length > maxImportedFiles ||
-          manifest.notes.length > maxImportedFiles) {
+      // Seconda guardia (la prima è dentro BackupManifest.fromJson, prima
+      // della costruzione degli oggetti).
+      if (manifest.folders.length > BackupManifest.maxItems ||
+          manifest.notes.length > BackupManifest.maxItems) {
         throw const FormatException('Manifest del backup con troppi elementi.');
       }
       break;
