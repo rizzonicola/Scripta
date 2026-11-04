@@ -512,9 +512,7 @@ class _NotesListViewState extends ConsumerState<NotesListView> {
                                 legacyNewIndex,
                                 visibleIds: noteIds.toList(),
                               );
-                          ref
-                              .read(syncProvider.notifier)
-                              .onOrderingChanged();
+                          ref.read(syncProvider.notifier).onOrderingChanged();
                         },
                         itemBuilder: (context, index) {
                           final noteId = noteIds[index];

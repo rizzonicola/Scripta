@@ -5,5 +5,4 @@
 // db_factory_web.dart, che usa sqflite_common_ffi_web (Wasm + IndexedDB).
 // Il conditional export evita che il compilatore web debba risolvere le
 // librerie FFI native.
-export 'db_factory_io.dart'
-    if (dart.library.js_interop) 'db_factory_web.dart';
+export 'db_factory_io.dart' if (dart.library.js_interop) 'db_factory_web.dart';

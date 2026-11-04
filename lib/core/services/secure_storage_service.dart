@@ -34,13 +34,14 @@ class StoredSession {
       serverUrl.trim().isNotEmpty &&
       userId.trim().isNotEmpty;
 
-  StoredSession copyWith({String? token, String? refreshToken}) => StoredSession(
-    token: token ?? this.token,
-    refreshToken: refreshToken ?? this.refreshToken,
-    serverUrl: serverUrl,
-    username: username,
-    userId: userId,
-  );
+  StoredSession copyWith({String? token, String? refreshToken}) =>
+      StoredSession(
+        token: token ?? this.token,
+        refreshToken: refreshToken ?? this.refreshToken,
+        serverUrl: serverUrl,
+        username: username,
+        userId: userId,
+      );
 
   Map<String, Object?> toJson() => {
     'v': 1,

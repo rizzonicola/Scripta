@@ -148,10 +148,7 @@ class OrderingPush {
 
   const OrderingPush({required this.baseVersion, required this.data});
 
-  Map<String, dynamic> toJson() => {
-    'base_version': baseVersion,
-    'data': data,
-  };
+  Map<String, dynamic> toJson() => {'base_version': baseVersion, 'data': data};
 }
 
 /// Converte un valore JSON in un intero non negativo e finito. Un server

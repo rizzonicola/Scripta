@@ -400,11 +400,9 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/auth/refresh');
 
-    final response = await _postAuth(
-      uri,
-      {'refresh_token': refreshToken},
-      timeoutMessage: 'Tempo scaduto durante il rinnovo della sessione',
-    );
+    final response = await _postAuth(uri, {
+      'refresh_token': refreshToken,
+    }, timeoutMessage: 'Tempo scaduto durante il rinnovo della sessione');
 
     if (response.statusCode == 200) {
       return _parseAuthResponse(response, requireRefreshToken: true);
@@ -626,8 +624,7 @@ class SyncApiService {
         .timeout(_settingsTimeout);
 
     if (response.statusCode == 200) {
-      final decoded =
-          json.decode(bodyText(response)) as Map<String, dynamic>;
+      final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return (decoded['version'] as num?)?.toInt() ?? 0;
     }
     _apiError(response, 'Impossibile eliminare i dati di posizionamento');
