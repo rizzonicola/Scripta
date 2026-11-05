@@ -1,0 +1,5 @@
+Version 1.1.3.
+
+- "Open with Scripta" now asks which folder should receive the file.
+- Dropping a file on the window adds the note to the selected folder.
+- The Flatpak build can read dropped files from the home directory.
