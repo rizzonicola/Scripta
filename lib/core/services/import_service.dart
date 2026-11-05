@@ -401,18 +401,32 @@ class ImportService {
       throw const FormatException('ZIP non valido o troncato.');
     }
 
+    // archive 4.5.2 seleziona la firma EOCD più vicina alla fine del file,
+    // indipendentemente dalla lunghezza del commento, e legge il commento
+    // troncandolo a EOF. La preflight deve usare la stessa selezione: saltare
+    // un EOCD con commento troppo lungo permetterebbe a un EOCD-esca di
+    // nascondere quello valido e di far validare una directory diversa da
+    // quella che il decoder poi legge.
     var eocd = -1;
     final minOffset = bytes.length - 22 - 0xffff;
     for (var i = bytes.length - 22; i >= (minOffset < 0 ? 0 : minOffset); i--) {
       if (_u32(bytes, i) != 0x06054b50) continue;
-      final commentLength = _u16(bytes, i + 20);
-      if (i + 22 + commentLength <= bytes.length) {
-        eocd = i;
-        break;
-      }
+      eocd = i;
+      break;
     }
     if (eocd < 0) {
       throw const FormatException('ZIP non valido: central directory assente.');
+    }
+    final eocdCommentLength = _u16(bytes, eocd + 20);
+    if (eocd + 22 + eocdCommentLength != bytes.length) {
+      throw const FormatException('ZIP non valido: EOCD non allineato.');
+    }
+    // archive segue incondizionatamente il locator ZIP64 a eocd-20, anche
+    // quando i campi EOCD non hanno i valori sentinella. Il locator può
+    // sovrascrivere offset e dimensione della directory: va rifiutato prima
+    // del decode, non solo quando l'EOCD dichiara ZIP64.
+    if (eocd >= 20 && _u32(bytes, eocd - 20) == 0x07064b50) {
+      throw const FormatException('ZIP64 non supportato per l\'importazione.');
     }
 
     final disk = _u16(bytes, eocd + 4);

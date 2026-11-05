@@ -132,4 +132,67 @@ void main() {
 
     expect(() => ImportService.decodeZipEntries(padded), throwsFormatException);
   });
+
+  test('un locator ZIP64 prima dell\'EOCD viene rifiutato anche senza sentinelle', () {
+    final bytes = _zipOf(['a.md']);
+    final eocd = _eocdOffset(bytes);
+
+    // Inserisce 20 byte prima dell'EOCD e mette la firma del locator ZIP64
+    // esattamente a eocd-20. I campi EOCD restano validi e non sentinella:
+    // archive seguirebbe comunque il locator, quindi la preflight deve
+    // rifiutarlo prima del decode.
+    final withLocator = Uint8List(bytes.length + 20)
+      ..setRange(0, eocd, bytes)
+      ..setRange(eocd + 20, bytes.length + 20, bytes.sublist(eocd));
+    _setU32(withLocator, eocd, 0x07064b50);
+
+    expect(
+      () => ImportService.decodeZipEntries(withLocator),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('ZIP64'),
+        ),
+      ),
+    );
+  });
+
+  test('un EOCD-esca con commento oltre EOF non nasconde quello valido', () {
+    final bytes = _zipOf(['a.md']);
+
+    // Aggiunge un secondo EOCD alla fine, con commentLength 0xffff e campi
+    // plausibili. archive seleziona la firma più vicina alla fine; la
+    // preflight deve fare lo stesso e rifiutare l'allineamento, invece di
+    // saltare l'esca e convalidare l'EOCD precedente.
+    final decoy = Uint8List(bytes.length + 22);
+    decoy.setRange(0, bytes.length, bytes);
+    final decoyOffset = bytes.length;
+    _setU32(decoy, decoyOffset, 0x06054b50);
+    _setU16(decoy, decoyOffset + 20, 0xffff);
+
+    expect(
+      () => ImportService.decodeZipEntries(decoy),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('EOCD non allineato'),
+        ),
+      ),
+    );
+  });
+
+  test('un commento EOCD che termina esattamente a EOF è accettato', () {
+    final bytes = _zipOf(['a.md']);
+    final eocd = _eocdOffset(bytes);
+    final comment = utf8.encode('backup');
+
+    final withComment = Uint8List(bytes.length + comment.length)
+      ..setRange(0, bytes.length, bytes)
+      ..setRange(bytes.length, bytes.length + comment.length, comment);
+    _setU16(withComment, eocd + 20, comment.length);
+
+    expect(ImportService.decodeZipEntries(withComment), hasLength(1));
+  });
 }
