@@ -136,8 +136,11 @@ jobs:
           fi
           for apk in build/app/outputs/flutter-apk/Scripta-*.apk; do
             echo "== $apk =="
-            "$APKSIGNER" verify --print-certs "$apk" | sed -n '1,12p'
-            if "$APKSIGNER" verify --print-certs "$apk" | grep -qi 'CN=Android Debug'; then
+            CERTS="$("$APKSIGNER" verify --print-certs "$apk")"
+            printf '%s\n' "$CERTS" | sed -n '1,12p'
+            # Nessuna pipe verso grep -q: con pipefail la chiusura anticipata
+            # della pipe può far fallire il passo per SIGPIPE.
+            if grep -qi 'CN=Android Debug' <<<"$CERTS"; then
               echo "::error::$apk is signed with the Android debug key" >&2
               exit 1
             fi
@@ -191,17 +194,25 @@ jobs:
           ls -lh "$AAB"
 
           # Un AAB valido per Play deve contenere il manifest e BundleConfig.pb.
-          jar tf "$AAB" | grep -q '^BundleConfig.pb$'
-          jar tf "$AAB" | grep -q '^base/manifest/AndroidManifest.xml$'
+          JAR_LIST="$(jar tf "$AAB")"
+          grep -qx 'BundleConfig.pb' <<<"$JAR_LIST"
+          grep -qx 'base/manifest/AndroidManifest.xml' <<<"$JAR_LIST"
 
           # Verifica la firma JAR dell'AAB: Play rifiuta un bundle non firmato.
+          # Il confronto avviene sulla stringa già catturata: `... | grep -q`
+          # può terminare il produttore con SIGPIPE e, sotto pipefail, far
+          # fallire un controllo che invece è riuscito.
           JARSIGNER_OUTPUT="$(jarsigner -verify -certs "$AAB" 2>&1)"
           echo "$JARSIGNER_OUTPUT" | tail -n 5
-          echo "$JARSIGNER_OUTPUT" | grep -q 'jar verified'
+          if ! grep -F 'jar verified' <<<"$JARSIGNER_OUTPUT" >/dev/null; then
+            echo "::error::$AAB failed jarsigner verification" >&2
+            exit 1
+          fi
 
           # La chiave debug non deve mai finire in un AAB destinato a Play.
-          keytool -printcert -jarfile "$AAB" | sed -n '1,12p'
-          if keytool -printcert -jarfile "$AAB" | grep -qi 'CN=Android Debug'; then
+          CERT_OUTPUT="$(keytool -printcert -jarfile "$AAB" 2>&1)"
+          echo "$CERT_OUTPUT" | sed -n '1,12p'
+          if grep -qi 'CN=Android Debug' <<<"$CERT_OUTPUT"; then
             echo "::error::$AAB is signed with the Android debug key" >&2
             exit 1
           fi
