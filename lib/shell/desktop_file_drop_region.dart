@@ -41,6 +41,7 @@ class _DesktopFileDropRegionState extends State<DesktopFileDropRegion> {
         _setDragging(false);
         ExternalOpenService.instance.addPaths(
           details.files.map((file) => file.path),
+          source: ExternalOpenSource.dragDrop,
         );
       },
       child: Stack(

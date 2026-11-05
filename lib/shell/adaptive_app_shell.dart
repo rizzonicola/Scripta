@@ -12,6 +12,7 @@ import '../core/services/session_state_service.dart';
 import '../core/utils/responsive_breakpoints.dart';
 import '../features/editor/presentation/note_editor_pane.dart';
 import '../features/editor/providers/editor_provider.dart';
+import '../features/folders/models/external_open_destination.dart';
 import '../features/folders/presentation/folder_import_picker.dart';
 import '../features/folders/presentation/folder_tree_view.dart';
 import '../features/folders/providers/folder_provider.dart';
@@ -101,17 +102,20 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
   /// File/cartelle ricevuti da "Apri con Scripta" o dal drag & drop. La coda
   /// esiste perché più eventi possono arrivare mentre una cartella viene
   /// importata: vanno elaborati uno alla volta, senza aprire più finestre di
-  /// avanzamento o sovrapporre scritture.
-  final List<String> _pendingExternalOpenPaths = <String>[];
+  /// avanzamento o sovrapporre scritture. Ogni richiesta conserva la propria
+  /// provenienza: il drag & drop usa la cartella corrente, "Apri con" chiede
+  /// dove aprire il file.
+  final List<ExternalOpenRequest> _pendingExternalOpenRequests =
+      <ExternalOpenRequest>[];
   bool _processingExternalOpenPaths = false;
-  void Function(List<String>)? _externalOpenListener;
+  ExternalOpenListener? _externalOpenListener;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _externalOpenListener = _onExternalOpenPaths;
+    _externalOpenListener = _onExternalOpenRequest;
     ExternalOpenService.instance.attach(_externalOpenListener!);
 
     // Ripresa dell'ultima posizione (layout mobile a pannello singolo): se
@@ -184,9 +188,9 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     unawaited(ref.read(folderProvider.notifier).retryPendingWrites());
   }
 
-  void _onExternalOpenPaths(List<String> paths) {
-    if (paths.isEmpty) return;
-    _pendingExternalOpenPaths.addAll(paths);
+  void _onExternalOpenRequest(ExternalOpenRequest request) {
+    if (request.paths.isEmpty) return;
+    _pendingExternalOpenRequests.add(request);
     unawaited(_drainExternalOpenPaths());
   }
 
@@ -194,20 +198,29 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     if (_processingExternalOpenPaths) return;
     _processingExternalOpenPaths = true;
     try {
-      while (mounted && _pendingExternalOpenPaths.isNotEmpty) {
-        final batch = List<String>.of(_pendingExternalOpenPaths);
-        _pendingExternalOpenPaths.clear();
+      while (mounted && _pendingExternalOpenRequests.isNotEmpty) {
+        final request = _pendingExternalOpenRequests.removeAt(0);
+        final fromDragAndDrop = request.source == ExternalOpenSource.dragDrop;
 
         ExternalOpenOutcome outcome;
         try {
           outcome = await ExternalOpenProcessor.openPaths(
-            batch,
+            request.paths,
             notes: ref.read(notesProvider.notifier),
             folders: ref.read(folderProvider.notifier),
             chooseFolderDestination: _chooseFolderImportDestination,
+            // Un file trascinato non deve chiedere la destinazione: va nella
+            // cartella attualmente aperta nell'app. "Apri con Scripta" invece
+            // la chiede, come per l'importazione di una cartella.
+            chooseFileDestination: fromDragAndDrop
+                ? null
+                : _chooseFileImportDestination,
+            defaultFileFolderId: fromDragAndDrop
+                ? ref.read(folderProvider).selectedFolderId
+                : null,
           );
         } catch (_) {
-          outcome = ExternalOpenOutcome(failedPaths: batch);
+          outcome = ExternalOpenOutcome(failedPaths: request.paths);
         }
         if (!mounted) return;
         _showExternalOpenOutcome(outcome);
@@ -217,12 +230,27 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     }
   }
 
-  Future<List<String>?> _chooseFolderImportDestination(String folderName) {
+  Future<ExternalOpenDestination?> _chooseFolderImportDestination(
+    String folderName,
+  ) {
     if (!mounted) return Future.value(null);
-    return showFolderImportDestinationPicker(
+    return showExternalOpenDestinationPicker(
       context,
       ref,
-      folderName: folderName,
+      targetName: folderName,
+      isFolder: true,
+    );
+  }
+
+  Future<ExternalOpenDestination?> _chooseFileImportDestination(
+    String fileName,
+  ) {
+    if (!mounted) return Future.value(null);
+    return showExternalOpenDestinationPicker(
+      context,
+      ref,
+      targetName: fileName,
+      isFolder: false,
     );
   }
 

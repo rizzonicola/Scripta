@@ -4,6 +4,23 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
+/// Da dove arriva una richiesta di apertura esterna.
+///
+/// La distinzione serve al drag & drop: un file trascinato va inserito nella
+/// cartella già selezionata nell'app, mentre "Apri con Scripta" deve chiedere
+/// la destinazione all'utente.
+enum ExternalOpenSource { system, dragDrop }
+
+/// Richiesta di apertura esterna con la sua provenienza.
+class ExternalOpenRequest {
+  const ExternalOpenRequest({required this.paths, required this.source});
+
+  final List<String> paths;
+  final ExternalOpenSource source;
+}
+
+typedef ExternalOpenListener = void Function(ExternalOpenRequest request);
+
 /// File o cartelle che il sistema operativo chiede di aprire in Scripta:
 /// "Apri con Scripta", argomenti della riga di comando e drag & drop.
 ///
@@ -64,9 +81,8 @@ class ExternalOpenService {
     return value;
   }
 
-  final List<String> _pending = <String>[];
-  final Set<void Function(List<String>)> _listeners =
-      <void Function(List<String>)>{};
+  final List<ExternalOpenRequest> _pending = <ExternalOpenRequest>[];
+  final Set<ExternalOpenListener> _listeners = <ExternalOpenListener>{};
 
   bool _initialized = false;
 
@@ -85,7 +101,7 @@ class ExternalOpenService {
   /// Collega l'interfaccia. Gli eventi arrivati prima di questo momento
   /// vengono consegnati subito; su macOS si chiede anche al nativo se ha
   /// messo da parte file aperti durante il launch.
-  void attach(void Function(List<String>) listener) {
+  void attach(ExternalOpenListener listener) {
     if (!isSupported) return;
     if (_listeners.add(listener)) {
       _flushPending();
@@ -95,13 +111,17 @@ class ExternalOpenService {
     }
   }
 
-  void detach(void Function(List<String>) listener) {
+  void detach(ExternalOpenListener listener) {
     _listeners.remove(listener);
   }
 
   /// Ingerisce percorsi o URI da qualunque sorgente (drag & drop, test,
-  /// argomenti già normalizzati).
-  void addPaths(Iterable<String> rawPaths) {
+  /// argomenti già normalizzati). [source] distingue l'apertura richiesta dal
+  /// sistema dal trascinamento sulla finestra.
+  void addPaths(
+    Iterable<String> rawPaths, {
+    ExternalOpenSource source = ExternalOpenSource.system,
+  }) {
     if (!isSupported) return;
 
     final targets = <String>[];
@@ -111,21 +131,27 @@ class ExternalOpenService {
     }
     if (targets.isEmpty) return;
 
+    _deliver(ExternalOpenRequest(paths: targets, source: source));
+  }
+
+  void _deliver(ExternalOpenRequest request) {
     if (_listeners.isEmpty) {
-      _pending.addAll(targets);
+      _pending.add(request);
       return;
     }
     for (final listener in _listeners.toList(growable: false)) {
-      listener(targets);
+      listener(request);
     }
   }
 
   void _flushPending() {
     if (_pending.isEmpty) return;
-    final targets = List<String>.of(_pending);
+    final pending = List<ExternalOpenRequest>.of(_pending);
     _pending.clear();
     for (final listener in _listeners.toList(growable: false)) {
-      listener(targets);
+      for (final request in pending) {
+        listener(request);
+      }
     }
   }
 

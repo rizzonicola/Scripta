@@ -61,6 +61,10 @@ class DesktopStrings {
   String importFolderTitle(String folderName) =>
       _t('importFolderTitle').replaceAll('{name}', folderName);
 
+  /// Titolo del selettore di destinazione per un file aperto dall'esterno.
+  String openFileTitle(String fileName) =>
+      _t('openFileTitle').replaceAll('{name}', fileName);
+
   /// Riepilogo dell'importazione di una cartella aperta dall'esterno. Il
   /// conteggio delle note è sempre presente; le cartelle solo quando ne sono
   /// state create di nuove.
@@ -122,6 +126,7 @@ class DesktopStrings {
           'Note importate: {notes}, nuove cartelle: {folders}.',
       'openNotesDone': 'Note aperte: {count}.',
       'importFolderTitle': 'Importa "{name}" in...',
+      'openFileTitle': 'Apri "{name}" in...',
       'importFolderRoot': 'Tutte le note (radice)',
       'importFolderNoDestinations': 'Nessuna sottocartella disponibile',
       'moveToRoot': 'Sposta nella radice',
@@ -193,6 +198,7 @@ class DesktopStrings {
           'Notes imported: {notes}, new folders: {folders}.',
       'openNotesDone': 'Notes opened: {count}.',
       'importFolderTitle': 'Import "{name}" into...',
+      'openFileTitle': 'Open "{name}" in...',
       'importFolderRoot': 'All notes (root)',
       'importFolderNoDestinations': 'No subfolders available',
       'moveToRoot': 'Move to root',
@@ -265,6 +271,7 @@ class DesktopStrings {
           'Notes importées : {notes}, nouveaux dossiers : {folders}.',
       'openNotesDone': 'Notes ouvertes : {count}.',
       'importFolderTitle': 'Importer "{name}" dans...',
+      'openFileTitle': 'Ouvrir "{name}" dans...',
       'importFolderRoot': 'Toutes les notes (racine)',
       'importFolderNoDestinations': 'Aucun sous-dossier disponible',
       'moveToRoot': 'Déplacer à la racine',

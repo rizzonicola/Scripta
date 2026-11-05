@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../features/folders/models/external_open_destination.dart';
 import '../../features/folders/providers/folder_provider.dart';
 import '../../features/notes/providers/notes_provider.dart';
 import 'external_open_service.dart';
@@ -34,32 +35,43 @@ class ExternalOpenOutcome {
   });
 }
 
+/// Chiede all'utente dove aprire una voce esterna e restituisce la
+/// destinazione scelta, oppure `null` se annulla.
+typedef ExternalOpenDestinationPicker =
+    Future<ExternalOpenDestination?> Function(String targetName);
+
 /// Trasforma percorsi e cartelle ricevuti dall'esterno in note dell'app.
 ///
 /// - un FILE `.md`/`.markdown`/`.txt` diventa UNA nuova nota, con le stesse
-///   regole di titolo/contenuto dell'importazione (vedi `parseNoteFile`);
+///   regole di titolo/contenuto dell'importazione (vedi `parseNoteFile`), e
+///   viene inserito nella cartella scelta tramite [chooseFileDestination]
+///   oppure in [defaultFileFolderId];
 /// - una CARTELLA viene importata ricorsivamente con `ImportService`, quindi
 ///   conserva la struttura delle sottocartelle e non modifica note esistenti;
 ///   la cartella stessa viene ricreata (con il suo nome) sotto la
 ///   destinazione scelta tramite [chooseFolderDestination];
 /// - ogni voce è indipendente: un file illeggibile non impedisce di aprire gli
 ///   altri della stessa operazione.
-///
-/// [chooseFolderDestination] riceve il nome della cartella importata e
-/// restituisce il percorso delle cartelle di destinazione (vuoto = radice)
-/// oppure `null` se l'utente annulla. Senza callback l'importazione usa la
-/// radice, com'era prima dell'introduzione del selettore.
-typedef FolderImportDestinationPicker =
-    Future<List<String>?> Function(String folderName);
-
 class ExternalOpenProcessor {
   ExternalOpenProcessor._();
 
+  /// [chooseFolderDestination] e [chooseFileDestination] sono separati perché
+  /// le due sorgenti hanno esigenze diverse:
+  ///  * una cartella importata deve ricreare il proprio albero sotto una
+  ///    destinazione scelta (percorso di nomi);
+  ///  * un file aperto da "Apri con Scripta" chiede la cartella, mentre un
+  ///    file trascinato sulla finestra va nella cartella attualmente
+  ///    selezionata nell'app tramite [defaultFileFolderId], senza dialog.
+  ///
+  /// Senza callback la cartella usa la radice e il file usa
+  /// [defaultFileFolderId] (che può essere `null`, cioè la radice).
   static Future<ExternalOpenOutcome> openPaths(
     Iterable<String> rawPaths, {
     required NotesNotifier notes,
     required FolderNotifier folders,
-    FolderImportDestinationPicker? chooseFolderDestination,
+    ExternalOpenDestinationPicker? chooseFolderDestination,
+    ExternalOpenDestinationPicker? chooseFileDestination,
+    String? defaultFileFolderId,
   }) async {
     var openedFiles = 0;
     var importedNotes = 0;
@@ -92,7 +104,7 @@ class ExternalOpenProcessor {
           // l'app ha ricevuto la cartella e non si legge nulla se annulla.
           final chosen = await chooseFolderDestination(folderName);
           if (chosen == null) continue;
-          destination = chosen;
+          destination = chosen.pathSegments;
         }
 
         try {
@@ -140,12 +152,22 @@ class ExternalOpenProcessor {
       try {
         final file = File(path);
         final size = await file.length();
+        final nextTotalBytes = totalBytes + size;
         if (size > ImportService.maxEntryBytes ||
-            totalBytes + size > ImportService.maxTotalUncompressedBytes) {
+            nextTotalBytes > ImportService.maxTotalUncompressedBytes) {
           failed.add(path);
           continue;
         }
-        totalBytes += size;
+
+        // "Apri con Scripta" chiede dove mettere il file; il drag & drop usa
+        // invece la cartella già selezionata nell'app (nessun dialog).
+        var folderId = defaultFileFolderId;
+        if (chooseFileDestination != null) {
+          final chosen = await chooseFileDestination(p.basename(path));
+          if (chosen == null) continue;
+          folderId = chosen.folderId;
+        }
+        totalBytes = nextTotalBytes;
 
         final rawContent = utf8.decode(
           await file.readAsBytes(),
@@ -155,6 +177,7 @@ class ExternalOpenProcessor {
         await notes.createNoteFromContent(
           title: parsed.title,
           content: parsed.content,
+          folderId: folderId,
         );
         openedFiles++;
       } catch (_) {

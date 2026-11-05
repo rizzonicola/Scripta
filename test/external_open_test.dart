@@ -7,6 +7,7 @@ import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/services/external_open_processor.dart';
 import 'package:scripta/core/services/external_open_service.dart';
+import 'package:scripta/features/folders/models/external_open_destination.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -125,6 +126,24 @@ void main() {
     });
   });
 
+  group('ExternalOpenService', () {
+    test('conserva la provenienza drag & drop', () {
+      final requests = <ExternalOpenRequest>[];
+      void listener(ExternalOpenRequest request) => requests.add(request);
+
+      ExternalOpenService.instance.attach(listener);
+      addTearDown(() => ExternalOpenService.instance.detach(listener));
+
+      ExternalOpenService.instance.addPaths([
+        '/tmp/Nota.md',
+      ], source: ExternalOpenSource.dragDrop);
+
+      expect(requests, hasLength(1));
+      expect(requests.single.paths, ['/tmp/Nota.md']);
+      expect(requests.single.source, ExternalOpenSource.dragDrop);
+    });
+  });
+
   group('ExternalOpenProcessor', () {
     late Directory tempDir;
     late ProviderContainer container;
@@ -158,13 +177,17 @@ void main() {
 
     Future<ExternalOpenOutcome> open(
       Iterable<String> paths, {
-      FolderImportDestinationPicker? chooseFolderDestination,
+      ExternalOpenDestinationPicker? chooseFolderDestination,
+      ExternalOpenDestinationPicker? chooseFileDestination,
+      String? defaultFileFolderId,
     }) async {
       final outcome = await ExternalOpenProcessor.openPaths(
         paths,
         notes: notes,
         folders: folders,
         chooseFolderDestination: chooseFolderDestination,
+        chooseFileDestination: chooseFileDestination,
+        defaultFileFolderId: defaultFileFolderId,
       );
       await _settle();
       return outcome;
@@ -227,6 +250,59 @@ void main() {
       expect(active.title, 'Seconda');
     });
 
+    test('un file aperto dall\'esterno va nella cartella scelta', () async {
+      final file = File(p.join(tempDir.path, 'Riunione.md'));
+      await file.writeAsString('# Riunione\n\ncorpo della nota');
+      final lavoro = folders.addFolder('Lavoro');
+      await _settle();
+
+      String? requestedName;
+      final outcome = await open(
+        [file.path],
+        chooseFileDestination: (fileName) async {
+          requestedName = fileName;
+          return ExternalOpenDestination(folderId: lavoro.id);
+        },
+      );
+
+      expect(requestedName, 'Riunione.md');
+      expect(outcome.openedFiles, 1);
+      expect(outcome.failedPaths, isEmpty);
+      final row = notesDao.rows.values.single;
+      expect(row.title, 'Riunione');
+      expect(row.folderId, lavoro.id);
+      expect(notes.state.activeNoteId, row.id);
+    });
+
+    test(
+      'un file trascinato usa la cartella corrente senza chiedere',
+      () async {
+        final file = File(p.join(tempDir.path, 'Riunione.md'));
+        await file.writeAsString('# Riunione\n\ncorpo della nota');
+        final lavoro = folders.addFolder('Lavoro');
+        await _settle();
+
+        final outcome = await open([file.path], defaultFileFolderId: lavoro.id);
+
+        expect(outcome.openedFiles, 1);
+        final row = notesDao.rows.values.single;
+        expect(row.folderId, lavoro.id);
+      },
+    );
+
+    test('annullare la destinazione di un file non crea note', () async {
+      final file = File(p.join(tempDir.path, 'Riunione.md'));
+      await file.writeAsString('corpo della nota');
+
+      final outcome = await open([
+        file.path,
+      ], chooseFileDestination: (_) async => null);
+
+      expect(outcome.openedFiles, 0);
+      expect(outcome.failedPaths, isEmpty);
+      expect(notesDao.rows, isEmpty);
+    });
+
     test(
       'una cartella ricrea se stessa e le sottocartelle senza attivare note',
       () async {
@@ -279,7 +355,7 @@ void main() {
           [p.join(tempDir.path, 'Progetti')],
           chooseFolderDestination: (folderName) async {
             requestedName = folderName;
-            return ['Lavoro'];
+            return const ExternalOpenDestination(pathSegments: ['Lavoro']);
           },
         );
 
