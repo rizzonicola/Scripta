@@ -60,6 +60,7 @@ jobs:
         run: flutter test
 
       - name: Configure release signing
+        id: signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -67,12 +68,18 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           # The real keystore must NEVER be materialized for a ref that a
-          # writer can dispatch or push. Only a v*.*.* tag may use it: a
-          # workflow_dispatch run on a branch checks out branch-controlled
-          # Gradle code, which could read and exfiltrate the key during the
-          # build. Branch builds always get an ephemeral throwaway key.
-          if [[ "${GITHUB_REF:-}" != refs/tags/* ]]; then
-            echo "::notice::Non-tag build: signing with an ephemeral CI key."
+          # writer can dispatch or push. Only an exact vX.Y.Z release tag may
+          # use it: a workflow_dispatch run on a branch (or on any other tag)
+          # checks out ref-controlled Gradle code, which could read and
+          # exfiltrate the key during the build. Everything else gets an
+          # ephemeral throwaway key and skips the release/AAB steps below.
+          if [[ "${GITHUB_REF:-}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "RELEASE_TAG_OK=true" >> "$GITHUB_ENV"
+            echo "release_tag_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "RELEASE_TAG_OK=false" >> "$GITHUB_ENV"
+            echo "release_tag_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Non-release ref '${GITHUB_REF:-}': signing with an ephemeral CI key."
             EPHEMERAL_PASS="$(openssl rand -hex 16)"
             keytool -genkeypair -v \
               -keystore "$RUNNER_TEMP/upload-keystore.jks" \
@@ -137,7 +144,7 @@ jobs:
           done
 
       - name: Build AAB for Google Play
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.signing.outputs.release_tag_ok == 'true'
         run: |
           set -euo pipefail
 
@@ -202,7 +209,7 @@ jobs:
           sha256sum "$AAB"
 
       - name: Upload AAB artifact
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.signing.outputs.release_tag_ok == 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: Scripta-AAB-${{ github.ref_name }}
@@ -213,7 +220,7 @@ jobs:
       - name: Upload Artifacts to Release (tentativo 1)
         id: release_attempt_1
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.signing.outputs.release_tag_ok == 'true'
         continue-on-error: true
         with:
           files: |
@@ -226,11 +233,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attendi prima di ritentare la pubblicazione
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        if: steps.signing.outputs.release_tag_ok == 'true' && steps.release_attempt_1.outcome == 'failure'
         run: sleep 15
 
       - name: Upload Artifacts to Release (tentativo 2)
-        if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
+        if: steps.signing.outputs.release_tag_ok == 'true' && steps.release_attempt_1.outcome == 'failure'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |

@@ -79,6 +79,14 @@ jobs:
           name: linux-bundle
           path: bundle
 
+      - name: Create native Linux tarball
+        run: |
+          rm -rf Scripta-linux-x64
+          mkdir -p Scripta-linux-x64
+          cp -a bundle/. Scripta-linux-x64/
+          tar -C . -czf Scripta-linux-x64.tar.gz Scripta-linux-x64
+          ls -lh Scripta-linux-x64.tar.gz
+
       - name: Build Flatpak Package
         uses: flatpak/flatpak-github-actions/flatpak-builder@0fadf5d65cdfbdb9c94c7a2f3637c41206cc1a70 # v6
         with:
@@ -98,7 +106,9 @@ jobs:
         # nostro build).
         continue-on-error: true
         with:
-          files: Scripta.flatpak
+          files: |
+            Scripta.flatpak
+            Scripta-linux-x64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -110,6 +120,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') && steps.release_attempt_1.outcome == 'failure'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: Scripta.flatpak
+          files: |
+            Scripta.flatpak
+            Scripta-linux-x64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
