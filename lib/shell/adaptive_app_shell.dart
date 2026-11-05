@@ -198,6 +198,12 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     if (_processingExternalOpenPaths) return;
     _processingExternalOpenPaths = true;
     try {
+      // Il selettore di destinazione e la cartella corrente leggono lo stato
+      // in memoria: all'avvio (file passato sulla riga di comando) il primo
+      // caricamento dal DB può non essere ancora terminato.
+      await ref.read(folderProvider.notifier).ready;
+      if (!mounted) return;
+
       while (mounted && _pendingExternalOpenRequests.isNotEmpty) {
         final request = _pendingExternalOpenRequests.removeAt(0);
         final fromDragAndDrop = request.source == ExternalOpenSource.dragDrop;

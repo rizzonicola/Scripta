@@ -133,10 +133,18 @@ class FolderNotifier extends StateNotifier<FolderState> {
   static const Duration _writeRetryBase = Duration(milliseconds: 250);
 
   bool _initialLoadComplete = false;
+  final Completer<void> _readyCompleter = Completer<void>();
 
   /// Vero quando il primo caricamento (inclusa `repairCycles`) è terminato.
   @visibleForTesting
   bool get initialLoadComplete => _initialLoadComplete;
+
+  /// Completa quando il primo caricamento delle cartelle è terminato.
+  ///
+  /// Serve a chi deve mostrare un selettore di cartelle appena avviata l'app,
+  /// come l'apertura di un file esterno: senza attesa la lista potrebbe
+  /// essere ancora vuota.
+  Future<void> get ready => _readyCompleter.future;
 
   void _markWriteError(Object error) {
     if (!mounted) return;
@@ -231,6 +239,7 @@ class FolderNotifier extends StateNotifier<FolderState> {
       await _loadFromDb(validateSelection: true);
     } finally {
       _initialLoadComplete = true;
+      if (!_readyCompleter.isCompleted) _readyCompleter.complete();
     }
   }
 
