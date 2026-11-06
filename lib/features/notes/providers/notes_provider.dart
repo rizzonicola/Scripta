@@ -20,6 +20,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/database/notes_dao.dart';
+import '../../../core/events/note_mutation_events.dart';
 import '../../../core/services/session_state_service.dart';
 import '../../../core/utils/perf_marks.dart';
 import '../../workspace/providers/folder_scope_provider.dart';
@@ -338,6 +339,12 @@ class NotesNotifier extends StateNotifier<NotesState> {
   final int maxWriteRetries;
   final Duration writeRetryBase;
 
+  /// Chiamato dopo che una mutazione esplicita (pin, preferito, metadati,
+  /// cancellazione, duplicazione) è stata scritta con successo. Il dominio
+  /// note non conosce il consumatore: `notesProvider` lo collega al canale
+  /// neutro che la sync ascolta.
+  final void Function()? onMutationCommitted;
+
   /// Vero quando il primo caricamento dal DB è terminato.
   @visibleForTesting
   bool get initialLoadComplete => _initialLoadComplete;
@@ -412,6 +419,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
           () => _dao.upsert(entry.value.toRow()),
           rethrowOnError: true,
         );
+        // La scrittura è arrivata su disco solo ora: la mutazione va
+        // notificata anche quando il primo tentativo era fallito.
+        _notifyMutationCommitted();
       } catch (e, st) {
         debugPrint('NotesNotifier: retry scrittura fallito: $e\n$st');
         _failedNotes[entry.key] = entry.value;
@@ -481,11 +491,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
     String? initialActiveNoteId,
     this.writeRetryBase = const Duration(milliseconds: 250),
     this.maxWriteRetries = 4,
+    this.onMutationCommitted,
   }) : _dao = dao ?? NotesDao(),
        _restoreActiveNoteId = initialActiveNoteId,
        super(const NotesState()) {
     _runInitialLoad();
   }
+
+  void _notifyMutationCommitted() => onMutationCommitted?.call();
 
   Future<void> _runInitialLoad() async {
     try {
@@ -1411,6 +1424,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     try {
       await _persistStrict(() => _dao.upsert(tombstoneRow));
       _failedNotes.remove(id);
+      _notifyMutationCommitted();
     } catch (_) {
       if (mounted) {
         state = state.copyWith(
@@ -1435,6 +1449,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
         ? source.title
         : '${source.title}$copySuffix';
     updateNote(copy.id, title: newTitle, content: source.content);
+    _notifyMutationCommitted();
     return state.notes.firstWhere((n) => n.id == copy.id, orElse: () => copy);
   }
 
@@ -1471,7 +1486,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
     _replaceNoteAt(index, updatedNote);
     await _persist(
       () => _dao.upsert(updatedNote.toRow()),
-      onSuccess: () => _onNoteWriteSucceeded(updatedNote.id),
+      onSuccess: () {
+        _onNoteWriteSucceeded(updatedNote.id);
+        _notifyMutationCommitted();
+      },
       onError: (e, st) => _onNoteWriteFailed(updatedNote, e, st),
     );
   }
@@ -1520,7 +1538,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     await _persist(
       () => _dao.upsert(updatedNote.toRow()),
-      onSuccess: () => _onNoteWriteSucceeded(updatedNote.id),
+      onSuccess: () {
+        _onNoteWriteSucceeded(updatedNote.id);
+        _notifyMutationCommitted();
+      },
       onError: (e, st) => _onNoteWriteFailed(updatedNote, e, st),
     );
   }
@@ -1530,6 +1551,7 @@ final notesProvider = StateNotifierProvider<NotesNotifier, NotesState>((ref) {
   final notifier = NotesNotifier(
     // Nota aperta nell'ultima sessione (null se nessuna).
     initialActiveNoteId: ref.read(sessionSnapshotProvider).noteId,
+    onMutationCommitted: ref.read(noteMutationEventsProvider).notifyChanged,
   );
   // La cartella selezionata vive in un provider dedicato: notesProvider non
   // dipende da folderProvider (che a sua volta legge notesProvider nella

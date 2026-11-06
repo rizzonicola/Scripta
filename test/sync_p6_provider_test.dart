@@ -13,6 +13,7 @@ import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/database/notes_dao.dart';
+import 'package:scripta/core/events/note_mutation_events.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/features/sync/services/sync_api_service.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
@@ -411,6 +412,19 @@ void main() {
         expect(h.delays, isEmpty, reason: 'un 502 non è transitorio');
       },
     );
+  });
+
+  group('mutazioni fuori editor', () {
+    test('una mutazione pianifica una sync', () async {
+      final server = _Server();
+      final h = harness(server);
+      expect(await h.login(), isTrue);
+      final baseline = server.syncCalls;
+
+      h.container.read(noteMutationEventsProvider).notifyChanged();
+
+      await waitUntil(() async => server.syncCalls > baseline);
+    });
   });
 
   group('errori HTTP del server', () {

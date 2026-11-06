@@ -17,6 +17,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
+import '../../../core/events/note_mutation_events.dart';
 import '../../../core/services/secure_storage_service.dart';
 import '../../../core/services/session_state_service.dart';
 import '../../../features/sync/services/sync_api_service.dart';
@@ -122,10 +123,12 @@ class SyncNotifier extends StateNotifier<SyncConfig>
   final NotesDao _notesDao;
   final SyncMetaDao _syncMetaDao;
   SyncSettingsGatewayRegistry? _settingsGatewayRegistry;
+  NoteMutationEvents? _noteMutationEvents;
   Timer? _inactivityTimer;
   Timer? _noteSwitchDebounceTimer;
   Timer? _folderStructureDebounceTimer;
   Timer? _orderingDebounceTimer;
+  Timer? _noteMutationDebounceTimer;
   Timer? _connectivityTimer;
 
   /// Ultima versione del blob di posizionamento vista dal server e impronta
@@ -270,6 +273,9 @@ class SyncNotifier extends StateNotifier<SyncConfig>
     final registry = _ref.read(syncSettingsGatewayProvider);
     registry.register(this);
     _settingsGatewayRegistry = registry;
+    final mutationEvents = _ref.read(noteMutationEventsProvider);
+    mutationEvents.addListener(_onNoteMutationCommitted);
+    _noteMutationEvents = mutationEvents;
     initialized = _init();
   }
 
@@ -540,10 +546,12 @@ class SyncNotifier extends StateNotifier<SyncConfig>
   @override
   void dispose() {
     _settingsGatewayRegistry?.unregister(this);
+    _noteMutationEvents?.removeListener(_onNoteMutationCommitted);
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
     _orderingDebounceTimer?.cancel();
+    _noteMutationDebounceTimer?.cancel();
     _connectivityTimer?.cancel();
     super.dispose();
   }
@@ -913,6 +921,7 @@ class SyncNotifier extends StateNotifier<SyncConfig>
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
+    _noteMutationDebounceTimer?.cancel();
     _capsByUrl.clear();
 
     // Attende anche le scritture di cartelle già accodate: una cascade o un
@@ -1115,6 +1124,7 @@ class SyncNotifier extends StateNotifier<SyncConfig>
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
+    _noteMutationDebounceTimer?.cancel();
     _stopConnectivityWatchdog();
 
     // Revoca il token anche lato server (best effort, non lancia): senza
@@ -1145,6 +1155,7 @@ class SyncNotifier extends StateNotifier<SyncConfig>
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
+    _noteMutationDebounceTimer?.cancel();
     _stopConnectivityWatchdog();
 
     final url = state.serverUrl;
@@ -1288,6 +1299,19 @@ class SyncNotifier extends StateNotifier<SyncConfig>
   /// edit to trigger a sync. Chiamato internamente da [FolderNotifier] dopo
   /// OGNI mutazione strutturale (inclusa la cancellazione, che nella
   /// generazione precedente non lo invocava affatto).
+  void _onNoteMutationCommitted() {
+    if (!state.isAuthenticated) return;
+
+    // Pin, preferiti, metadati, cancellazione e duplicazione non passano né
+    // dall'editor né dal cambio nota: senza un trigger dedicato resterebbero
+    // locali fino al prossimo evento casuale (pausa app, sync manuale...).
+    // Il debounce accorpa più toggle ravvicinati in una sola sync.
+    _noteMutationDebounceTimer?.cancel();
+    _noteMutationDebounceTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted && state.isAuthenticated) unawaited(triggerSync());
+    });
+  }
+
   void onFolderStructureChanged() {
     if (!state.isAuthenticated) return;
 

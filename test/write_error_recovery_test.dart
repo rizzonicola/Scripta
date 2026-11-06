@@ -120,6 +120,45 @@ void main() {
     expect(dao.upsertAttempts, greaterThanOrEqualTo(3));
   });
 
+  test('le mutazioni fuori editor notificano solo dopo la scrittura', () async {
+    final dao = _FlakyNotesDao();
+    var mutations = 0;
+    final notifier = NotesNotifier(
+      dao: dao,
+      // Lungo abbastanza da non far scattare il retry automatico mentre il
+      // test forza il fallimento e poi richiede esplicitamente il retry.
+      writeRetryBase: const Duration(seconds: 5),
+      onMutationCommitted: () => mutations++,
+    );
+    addTearDown(notifier.dispose);
+    await _waitUntil(() async => notifier.initialLoadComplete);
+
+    final note = notifier.createNote();
+    await _waitUntil(() async => dao.rows.containsKey(note.id));
+    expect(mutations, 0, reason: 'la creazione non passa dal canale');
+
+    dao.failAlways = true;
+    await notifier.togglePin(note.id);
+    expect(mutations, 0, reason: 'una scrittura fallita non deve notificare');
+
+    dao.failAlways = false;
+    await notifier.retryFailedWrites(resetRetries: true);
+    expect(dao.rows[note.id]!.isPinned, isTrue);
+    expect(mutations, 1, reason: 'il retry riuscito notifica la mutazione');
+
+    await notifier.toggleFavorite(note.id);
+    expect(mutations, 2);
+
+    await notifier.updateMetadata(note.id, isFavorite: false);
+    expect(mutations, 3);
+
+    notifier.duplicateNote(note.id);
+    expect(mutations, 4);
+
+    await notifier.deleteNote(note.id);
+    expect(mutations, 5);
+  });
+
   test('creazione nota fallita viene ritentata su richiesta', () async {
     final dao = _FlakyNotesDao()..failAlways = true;
     final notifier = NotesNotifier(dao: dao);
