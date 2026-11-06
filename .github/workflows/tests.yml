@@ -54,7 +54,6 @@ jobs:
           flutter test
           test/import_parser_test.dart
           test/import_integration_test.dart
-          test/import_limits_test.dart
           test/export_archive_test.dart
 
       - name: Suite completa
