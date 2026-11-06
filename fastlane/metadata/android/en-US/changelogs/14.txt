@@ -1,1 +1,6 @@
 Version 1.1.4.
+
+- Security hardening and reliability improvements.
+- Sync now picks up note changes made outside the editor (pin, favorite,
+  metadata, delete, duplicate).
+- Internal optimizations and test improvements.
