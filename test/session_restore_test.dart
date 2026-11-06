@@ -15,6 +15,8 @@ import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/shell/session_persistence.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/wait_until.dart';
+
 // Ripresa dell'ultima posizione: dopo aver chiuso e riaperto l'app l'utente
 // deve ritrovare la stessa modalità (Modifica / Visualizza), la stessa cartella
 // e la stessa nota, non "Modifica" + "Tutte le note" + prima nota.
@@ -108,18 +110,6 @@ const Duration _loadWait = Duration(milliseconds: 50);
 /// Attende (con polling e timeout) che [condition] diventi vera: niente
 /// ritardi fissi con SQLite reale. Allo scadere non fallisce da sola: lo fa
 /// l'`expect` successivo, con un messaggio che dice cosa non combacia.
-Future<void> waitUntil(
-  Future<bool> Function() condition, {
-  Duration timeout = const Duration(seconds: 10),
-  Duration interval = const Duration(milliseconds: 25),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (await condition()) return;
-    await Future<void>.delayed(interval);
-  }
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

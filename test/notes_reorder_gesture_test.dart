@@ -17,6 +17,8 @@ import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/wait_until.dart';
+
 /// La lista note, riordinando, sveglia il motore di sync (per il blob di
 /// posizionamento): senza sessione salvata non deve toccare il keystore.
 class _NoAuthStorage extends SecureStorageService {
@@ -35,18 +37,6 @@ class _NoAuthStorage extends SecureStorageService {
 ProviderContainer _container() => ProviderContainer(
   overrides: [secureStorageProvider.overrideWithValue(const _NoAuthStorage())],
 );
-
-Future<void> _waitUntil(
-  Future<bool> Function() condition, {
-  Duration timeout = const Duration(seconds: 10),
-  Duration interval = const Duration(milliseconds: 25),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (await condition()) return;
-    await Future<void>.delayed(interval);
-  }
-}
 
 List<String> _ids(ProviderContainer container) =>
     container.read(notesProvider).notes.map((note) => note.id).toList();
@@ -91,13 +81,17 @@ void main() {
     (tester) async {
       final container = _container();
       addTearDown(container.dispose);
-      final notes = container.read(notesProvider.notifier);
-      final folders = container.read(folderProvider.notifier);
-      await tester.runAsync(
-        () => _waitUntil(
+      // I notifier vanno creati dentro runAsync: nel fake-async del widget
+      // test il caricamento dal DB non completerebbe mai.
+      late final NotesNotifier notes;
+      late final FolderNotifier folders;
+      await tester.runAsync(() async {
+        notes = container.read(notesProvider.notifier);
+        folders = container.read(folderProvider.notifier);
+        await waitUntil(
           () async => notes.initialLoadComplete && folders.initialLoadComplete,
-        ),
-      );
+        );
+      });
 
       notes.createNote();
       notes.createNote();
@@ -207,13 +201,17 @@ void main() {
     (tester) async {
       final container = _container();
       addTearDown(container.dispose);
-      final notes = container.read(notesProvider.notifier);
-      final folders = container.read(folderProvider.notifier);
-      await tester.runAsync(
-        () => _waitUntil(
+      // I notifier vanno creati dentro runAsync: nel fake-async del widget
+      // test il caricamento dal DB non completerebbe mai.
+      late final NotesNotifier notes;
+      late final FolderNotifier folders;
+      await tester.runAsync(() async {
+        notes = container.read(notesProvider.notifier);
+        folders = container.read(folderProvider.notifier);
+        await waitUntil(
           () async => notes.initialLoadComplete && folders.initialLoadComplete,
-        ),
-      );
+        );
+      });
 
       for (var i = 0; i < 20; i++) {
         notes.createNote();

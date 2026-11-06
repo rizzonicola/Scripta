@@ -14,10 +14,13 @@ import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
-import 'package:scripta/core/services/sync_api_service.dart';
+import 'package:scripta/features/sync/services/sync_api_service.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
+import 'package:scripta/features/sync/models/sync_config.dart';
 import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/wait_until.dart';
 
 /// Chiave delle preferenze con la scadenza del token (ms). Stessa stringa di
 /// `SyncNotifier._prefTokenExpiresAt`.
@@ -276,17 +279,6 @@ Map<String, Object?> _remoteNote(
   'deleted_at': deletedAt,
 };
 
-Future<void> _waitUntil(
-  Future<bool> Function() condition, {
-  Duration timeout = const Duration(seconds: 10),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (await condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 25));
-  }
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -412,6 +404,10 @@ void main() {
           h.notifier.state.lastSyncMessage,
           contains('risposta del server non valida'),
         );
+        expect(
+          h.notifier.state.lastSyncMessageKind,
+          SyncMessageKind.error,
+        );
         expect(h.delays, isEmpty, reason: 'un 502 non è transitorio');
       },
     );
@@ -494,7 +490,7 @@ void main() {
         final h = harness(server);
         expect(await h.login(), isTrue);
         final notes = h.container.read(notesProvider.notifier);
-        await _waitUntil(
+        await waitUntil(
           () async =>
               notes.initialLoadComplete && notes.state.notes.length == 3,
         );
@@ -515,6 +511,10 @@ void main() {
         );
 
         expect(await h.notifier.triggerSync(), isTrue);
+        expect(
+          h.notifier.state.lastSyncMessageKind,
+          SyncMessageKind.success,
+        );
 
         final byId = {for (final n in notes.state.notes) n.id: n};
         expect(byId.keys, unorderedEquals(['a', 'b']));
@@ -533,7 +533,7 @@ void main() {
       final h = harness(server);
       expect(await h.login(), isTrue);
       final notes = h.container.read(notesProvider.notifier);
-      await _waitUntil(
+      await waitUntil(
         () async => notes.initialLoadComplete && notes.state.notes.length == 2,
       );
 

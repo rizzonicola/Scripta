@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:scripta/core/services/sync_api_service.dart';
+import 'package:scripta/features/sync/services/sync_api_service.dart';
 import 'package:scripta/features/sync/models/sync_models.dart';
 
 void main() {

@@ -17,7 +17,7 @@ import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/core/database/sync_meta_dao.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
-import 'package:scripta/core/services/sync_api_service.dart';
+import 'package:scripta/features/sync/services/sync_api_service.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/features/settings/providers/settings_provider.dart';
 import 'package:scripta/features/sync/models/sync_models.dart';

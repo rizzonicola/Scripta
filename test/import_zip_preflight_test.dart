@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:scripta/core/services/import_service.dart';
+import 'package:scripta/features/import/services/import_service.dart';
 
 // Regressioni sulla preflight del central directory ZIP: `archive` 4.5.2
 // ignora il conteggio EOCD e scorre tutti i record presenti in `cdSize`,

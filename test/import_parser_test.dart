@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:scripta/core/services/export_archive.dart';
-import 'package:scripta/core/services/import_parser.dart';
+import 'package:scripta/features/export/services/export_archive.dart';
+import 'package:scripta/features/import/services/import_parser.dart';
 
 /// Verifica che [mapZipEntryPath] traduca [entry] in [folders] + [fileName].
 void _expectZip(String entry, List<String> folders, String fileName) {

@@ -156,6 +156,88 @@ void main() {
     expect(notifier.state.hasPendingWriteError, isFalse);
   });
 
+  test('pin fallito espone il banner e viene ritentato', () async {
+    final dao = _FlakyNotesDao();
+    final notifier = NotesNotifier(
+      dao: dao,
+      writeRetryBase: const Duration(milliseconds: 10),
+    );
+    addTearDown(notifier.dispose);
+    await _waitUntil(() async => notifier.initialLoadComplete);
+
+    final note = notifier.createNote();
+    await _waitUntil(() async => dao.rows.containsKey(note.id));
+
+    dao.failAlways = true;
+    await notifier.togglePin(note.id);
+    expect(notifier.state.hasPendingWriteError, isTrue);
+    expect(dao.rows[note.id]!.isPinned, isFalse);
+
+    dao.failAlways = false;
+    await notifier.retryFailedWrites(resetRetries: true);
+
+    expect(dao.rows[note.id]!.isPinned, isTrue);
+    expect(notifier.state.hasPendingWriteError, isFalse);
+  });
+
+  test('metadati falliti espongono il banner e vengono ritentati', () async {
+    final dao = _FlakyNotesDao();
+    final notifier = NotesNotifier(
+      dao: dao,
+      writeRetryBase: const Duration(milliseconds: 10),
+    );
+    addTearDown(notifier.dispose);
+    await _waitUntil(() async => notifier.initialLoadComplete);
+
+    final note = notifier.createNote();
+    await _waitUntil(() async => dao.rows.containsKey(note.id));
+
+    dao.failAlways = true;
+    await notifier.updateMetadata(note.id, isFavorite: true);
+    expect(notifier.state.hasPendingWriteError, isTrue);
+    expect(dao.rows[note.id]!.isFavorite, isFalse);
+
+    dao.failAlways = false;
+    await notifier.retryFailedWrites(resetRetries: true);
+
+    expect(dao.rows[note.id]!.isFavorite, isTrue);
+    expect(notifier.state.hasPendingWriteError, isFalse);
+  });
+
+  test('il retry automatico si ferma al limite e riparte su comando', () async {
+    final dao = _FlakyNotesDao()..failAlways = true;
+    final notifier = NotesNotifier(
+      dao: dao,
+      writeRetryBase: const Duration(milliseconds: 50),
+      maxWriteRetries: 2,
+    );
+    addTearDown(notifier.dispose);
+    await _waitUntil(() async => notifier.initialLoadComplete);
+
+    final note = notifier.createNote();
+    final attemptsAtCreation = dao.upsertAttempts;
+    await _waitUntil(() async => notifier.state.hasPendingWriteError);
+
+    // Primo tentativo + esattamente maxWriteRetries tentativi automatici.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final attemptsAfterRetries = dao.upsertAttempts;
+    expect(
+      attemptsAfterRetries - attemptsAtCreation,
+      2,
+      reason: 'dopo il primo tentativo partono maxWriteRetries retry',
+    );
+
+    // Oltre il limite non deve più riprogrammare da solo.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(dao.upsertAttempts, attemptsAfterRetries);
+    expect(notifier.state.hasPendingWriteError, isTrue);
+
+    dao.failAlways = false;
+    await notifier.retryFailedWrites(resetRetries: true);
+    expect(dao.rows.containsKey(note.id), isTrue);
+    expect(notifier.state.hasPendingWriteError, isFalse);
+  });
+
   test('scrittura cartella fallita viene ritentata con backoff', () async {
     final foldersDao = _FlakyFoldersDao()..failuresRemaining = 1;
     final container = ProviderContainer();
@@ -174,6 +256,42 @@ void main() {
     expect(folders.state.hasPendingWriteError, isFalse);
     expect(foldersDao.upsertAttempts, greaterThanOrEqualTo(2));
   });
+
+  test(
+    'un successo su un\'altra cartella non cancella il fallimento pendente',
+    () async {
+      final foldersDao = _FlakyFoldersDao();
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final folders = FolderNotifier(
+        container.read(_refProvider),
+        foldersDao: foldersDao,
+        notesDao: _EmptyNotesDao(),
+        writeRetryBase: const Duration(milliseconds: 5),
+        maxWriteRetries: 1,
+      );
+      addTearDown(folders.dispose);
+      await _waitUntil(() async => folders.initialLoadComplete);
+
+      foldersDao.failAlways = true;
+      final first = folders.addFolder('Prima');
+      await _waitUntil(() async => folders.state.hasPendingWriteError);
+      expect(foldersDao.rows, isEmpty);
+
+      // Una scrittura diversa riesce: il fallimento della prima cartella non
+      // è affatto recuperato e il banner deve restare.
+      foldersDao.failAlways = false;
+      final second = folders.addFolder('Seconda');
+      await _waitUntil(() async => foldersDao.rows.containsKey(second.id));
+      expect(folders.state.hasPendingWriteError, isTrue);
+      expect(foldersDao.rows.containsKey(first.id), isFalse);
+
+      await folders.retryPendingWrites();
+
+      expect(foldersDao.rows.containsKey(first.id), isTrue);
+      expect(folders.state.hasPendingWriteError, isFalse);
+    },
+  );
 
   test('errore cartella persistente espone il banner e si recupera', () async {
     final foldersDao = _FlakyFoldersDao()..failAlways = true;

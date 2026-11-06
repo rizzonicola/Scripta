@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:scripta/core/services/export_service.dart';
+import 'package:scripta/features/export/services/export_service.dart';
 
 void main() {
   group('ExportService fallback', () {

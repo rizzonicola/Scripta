@@ -206,10 +206,10 @@ void main() {
     final dao = _FakeDao();
     final n = NotesNotifier(dao: dao);
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    await n.importNotesBulk([
-      (title: 'uno', content: '1', folderId: null),
-      (title: 'due', content: '2', folderId: null),
-      (title: 'tre', content: '3', folderId: null),
+    await n.importNotesBulkDetailed([
+      const ImportedNote(title: 'uno', content: '1', folderId: null),
+      const ImportedNote(title: 'due', content: '2', folderId: null),
+      const ImportedNote(title: 'tre', content: '3', folderId: null),
     ]);
     expect(n.state.notes.map((e) => e.title).toList(), ['uno', 'due', 'tre']);
     expect(n.state.notes.map((e) => e.createdAt).toSet().length, 3);

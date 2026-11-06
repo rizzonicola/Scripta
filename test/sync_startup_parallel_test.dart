@@ -9,7 +9,7 @@ import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
-import 'package:scripta/core/services/sync_api_service.dart';
+import 'package:scripta/features/sync/services/sync_api_service.dart';
 import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

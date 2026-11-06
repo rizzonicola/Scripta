@@ -1,10 +1,30 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/constants/app_constants.dart';
 import 'package:scripta/core/theme/app_theme.dart';
 
 void main() {
-  test('i font supportati sono quelli inclusi negli asset', () {
-    expect(AppConstants.supportedFontFamilies, ['Inter', 'JetBrains Mono']);
+  test('i font supportati sono dichiarati in pubspec e gli asset esistono', () {
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    for (final family in AppConstants.supportedFontFamilies) {
+      expect(
+        pubspec,
+        contains('family: $family'),
+        reason: 'la famiglia $family deve essere dichiarata in pubspec.yaml',
+      );
+    }
+    final assets = RegExp(
+      r'asset:\s*(assets/fonts/[^\s]+)',
+    ).allMatches(pubspec).map((m) => m.group(1)!);
+    expect(assets, isNotEmpty);
+    for (final asset in assets) {
+      expect(
+        File(asset).existsSync(),
+        isTrue,
+        reason: 'asset font mancante: $asset',
+      );
+    }
     expect(
       AppTheme.getTextStyleForFont('Inter').fontFamily,
       AppTheme.defaultFontFamily,

@@ -11,19 +11,10 @@ import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:scripta/features/notes/presentation/note_card.dart';
 import 'package:scripta/features/notes/presentation/notes_list_view.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
+import 'package:scripta/features/workspace/providers/filtered_notes_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/wait_until.dart';
 
-Future<void> _waitUntil(
-  Future<bool> Function() condition, {
-  Duration timeout = const Duration(seconds: 10),
-  Duration interval = const Duration(milliseconds: 25),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (await condition()) return;
-    await Future<void>.delayed(interval);
-  }
-}
 
 NoteCard _card(WidgetTester tester, String id) => tester
     .widgetList<NoteCard>(find.byType(NoteCard))
@@ -52,7 +43,7 @@ void main() {
     addTearDown(container.dispose);
     final notes = container.read(notesProvider.notifier);
     final folders = container.read(folderProvider.notifier);
-    await _waitUntil(
+    await waitUntil(
       () async => notes.initialLoadComplete && folders.initialLoadComplete,
     );
 
@@ -82,13 +73,18 @@ void main() {
   ) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
-    final notes = container.read(notesProvider.notifier);
-    final folders = container.read(folderProvider.notifier);
-    await tester.runAsync(
-      () => _waitUntil(
+    // I notifier vanno creati dentro runAsync: se nascono nel fake-async del
+    // test, il caricamento dal DB resta in attesa del clock finto e non
+    // completa mai dentro runAsync.
+    late final NotesNotifier notes;
+    late final FolderNotifier folders;
+    await tester.runAsync(() async {
+      notes = container.read(notesProvider.notifier);
+      folders = container.read(folderProvider.notifier);
+      await waitUntil(
         () async => notes.initialLoadComplete && folders.initialLoadComplete,
-      ),
-    );
+      );
+    });
 
     final first = notes.createNote();
     final second = notes.createNote();

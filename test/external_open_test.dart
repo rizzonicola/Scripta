@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/folders_dao.dart';
 import 'package:scripta/core/database/notes_dao.dart';
-import 'package:scripta/core/services/external_open_processor.dart';
+import 'package:scripta/features/external_open/services/external_open_processor.dart';
 import 'package:scripta/core/services/external_open_service.dart';
 import 'package:scripta/features/folders/models/external_open_destination.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';

@@ -9,8 +9,9 @@ import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
-import 'package:scripta/core/services/sync_api_service.dart';
+import 'package:scripta/features/sync/services/sync_api_service.dart';
 import 'package:scripta/features/settings/providers/settings_provider.dart';
+import 'package:scripta/features/sync/models/sync_config.dart';
 import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -582,6 +583,7 @@ void main() {
           reason: 'il server ha risposto con un 403',
         );
         expect(state.lastSyncMessage, contains('Account bloccato'));
+        expect(state.lastSyncMessageKind, SyncMessageKind.error);
         expect(state.lastError, contains('Account bloccato'));
       },
     );
@@ -607,6 +609,7 @@ void main() {
           reason: 'il rate limit è temporaneo, non invalida il token',
         );
         expect(state.lastSyncMessage, contains('limite di richieste'));
+        expect(state.lastSyncMessageKind, SyncMessageKind.error);
         expect(state.lastError, isNot(contains('Account bloccato')));
       },
     );

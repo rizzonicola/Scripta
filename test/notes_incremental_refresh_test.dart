@@ -2,18 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/wait_until.dart';
 
-Future<void> _waitUntil(
-  Future<bool> Function() condition, {
-  Duration timeout = const Duration(seconds: 10),
-  Duration interval = const Duration(milliseconds: 25),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (await condition()) return;
-    await Future<void>.delayed(interval);
-  }
-}
 
 class _FakeDao implements NotesDao {
   final Map<String, NoteRow> rows = {};
@@ -71,8 +61,8 @@ void main() {
         ..rows['b'] = _row('b', updatedAt: 20)
         ..rows['c'] = _row('c', updatedAt: 30);
       final notes = NotesNotifier(dao: dao);
-      await _waitUntil(() async => notes.initialLoadComplete);
-      await _waitUntil(() async => notes.state.notes.length == 3);
+      await waitUntil(() async => notes.initialLoadComplete);
+      await waitUntil(() async => notes.state.notes.length == 3);
 
       dao.activeReads = 0;
       dao.rows['b'] = _row('b', content: 'aggiornata', updatedAt: 40);
@@ -93,8 +83,8 @@ void main() {
   test('preserva una modifica ancora in attesa di autosave', () async {
     final dao = _FakeDao()..rows['a'] = _row('a', updatedAt: 10);
     final notes = NotesNotifier(dao: dao);
-    await _waitUntil(() async => notes.initialLoadComplete);
-    await _waitUntil(() async => notes.state.notes.isNotEmpty);
+    await waitUntil(() async => notes.initialLoadComplete);
+    await waitUntil(() async => notes.state.notes.isNotEmpty);
 
     notes.updateNote('a', content: 'testo appena digitato');
     dao.rows['a'] = _row('a', content: 'versione vecchia', updatedAt: 20);

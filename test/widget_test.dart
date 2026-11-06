@@ -12,21 +12,8 @@ import 'package:scripta/core/utils/markdown_toolbar_actions.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:flutter/material.dart';
+import 'support/wait_until.dart';
 
-/// Attende (con polling e timeout) che [condition] diventi vera. Sostituisce i
-/// ritardi fissi (150/200 ms): su runner CI lenti la scrittura asincrona su
-/// SQLite può impiegare più del previsto e il test diventava intermittente.
-Future<void> waitUntil(
-  Future<bool> Function() condition, {
-  Duration timeout = const Duration(seconds: 10),
-  Duration interval = const Duration(milliseconds: 25),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (await condition()) return;
-    await Future<void>.delayed(interval);
-  }
-}
 
 void main() {
   setUp(() async {

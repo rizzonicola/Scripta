@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/services/backup_manifest.dart';
-import 'package:scripta/core/services/export_archive.dart';
+import 'package:scripta/features/export/services/export_archive.dart';
 import 'package:scripta/features/folders/models/folder_node.dart';
 
 ExportNote _note(

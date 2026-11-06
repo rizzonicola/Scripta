@@ -5,6 +5,7 @@ import 'package:scripta/core/database/notes_dao.dart';
 import 'package:scripta/features/folders/models/folder_node.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/wait_until.dart';
 
 /// Fake in-memory di [FoldersDao]: esercita [FolderNotifier] senza aprire un
 /// database SQLite, e registra le scritture per verificare che il riordino
@@ -51,13 +52,6 @@ class _MemoryNotesDao implements NotesDao {
 
 final Provider<Ref> _refProvider = Provider<Ref>((ref) => ref);
 
-Future<void> _waitUntil(Future<bool> Function() condition) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 5));
-  while (DateTime.now().isBefore(deadline)) {
-    if (await condition()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  }
-}
 
 FolderRow _row(
   String id,
@@ -126,7 +120,7 @@ void main() {
         foldersDao: dao,
         notesDao: _MemoryNotesDao(),
       );
-      await _waitUntil(() async => folders.initialLoadComplete);
+      await waitUntil(() async => folders.initialLoadComplete);
     });
 
     tearDown(() async {
