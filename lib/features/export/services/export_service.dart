@@ -10,12 +10,11 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
-import '../../features/folders/models/folder_node.dart';
-import '../../features/folders/providers/folder_provider.dart';
-import '../../features/notes/models/note_model.dart';
-import '../../features/notes/providers/notes_provider.dart';
-import '../../features/settings/providers/settings_provider.dart';
-import '../../features/sync/models/sync_models.dart';
+import '../../folders/models/folder_node.dart';
+import '../../folders/providers/folder_provider.dart';
+import '../../notes/models/note_model.dart';
+import '../../notes/providers/notes_provider.dart';
+import '../../settings/providers/settings_provider.dart';
 import 'export_archive.dart';
 
 typedef _SaveResult = ({bool saved, String? fallbackPath});
@@ -39,20 +38,7 @@ class ExportService {
   /// Le preferenze di aspetto viaggiano solo nel backup completo. Il formato
   /// è lo stesso DTO usato dalla sync, così import/export non divergono.
   static Map<String, Object?> _settingsSnapshot(WidgetRef ref) {
-    final s = ref.read(settingsProvider);
-    return UserSettingsDto(
-      theme: s.themeMode == ThemeMode.dark
-          ? 'dark'
-          : s.themeMode == ThemeMode.light
-          ? 'light'
-          : 'system',
-      colorScheme: s.selectedThemeId,
-      language: s.locale?.languageCode ?? 'it',
-      fontFamily: s.fontFamily,
-      fontSize: s.fontSize.toInt(),
-      lineSpacing: s.lineHeight,
-      layout: 'split',
-    ).toJson();
+    return encodeUserSettings(ref.read(settingsProvider)).toJson();
   }
 
   /// Helper to save file across platforms with native picker and Android SAF support

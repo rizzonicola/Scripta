@@ -19,13 +19,14 @@ import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
 import '../../../core/services/secure_storage_service.dart';
 import '../../../core/services/session_state_service.dart';
-import '../../../core/services/sync_api_service.dart';
+import '../../../features/sync/services/sync_api_service.dart';
 import '../../../core/utils/perf_marks.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../../notes/providers/notes_provider.dart';
 import '../../settings/providers/settings_provider.dart';
 import '../models/sync_config.dart';
 import '../models/sync_models.dart';
+import 'sync_settings_gateway.dart';
 
 final secureStorageProvider = Provider<SecureStorageService>((ref) {
   return const SecureStorageService();
@@ -55,7 +56,8 @@ enum _RefreshOutcome { success, invalid, blocked, unavailable }
 /// attorno a un cursore intero (`last_synced_at`, stamp del SERVER salvato in
 /// [SyncMetaDao], usato solo per la pull) e al flag locale `dirty` (cosa
 /// inviare). `updated_at` (orologio del client) serve solo alla risoluzione LWW.
-class SyncNotifier extends StateNotifier<SyncConfig> {
+class SyncNotifier extends StateNotifier<SyncConfig>
+    implements SyncSettingsGateway {
   static const _prefLaunchSync = AppConstants.prefSyncOnLaunch;
   static const _prefLifecycleSync = AppConstants.prefSyncOnLifecycle;
   static const _prefNoteSwitchSync = AppConstants.prefSyncOnNoteSwitch;
@@ -119,6 +121,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
   final FoldersDao _foldersDao;
   final NotesDao _notesDao;
   final SyncMetaDao _syncMetaDao;
+  SyncSettingsGatewayRegistry? _settingsGatewayRegistry;
   Timer? _inactivityTimer;
   Timer? _noteSwitchDebounceTimer;
   Timer? _folderStructureDebounceTimer;
@@ -264,6 +267,9 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
        _retryWait = retryWait ?? Future<void>.delayed,
        _random = random ?? Random(),
        super(const SyncConfig()) {
+    final registry = _ref.read(syncSettingsGatewayProvider);
+    registry.register(this);
+    _settingsGatewayRegistry = registry;
     initialized = _init();
   }
 
@@ -533,6 +539,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
 
   @override
   void dispose() {
+    _settingsGatewayRegistry?.unregister(this);
     _inactivityTimer?.cancel();
     _noteSwitchDebounceTimer?.cancel();
     _folderStructureDebounceTimer?.cancel();
@@ -694,6 +701,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         lastError: () => reason,
         lastSyncMessage: () =>
             'Sessione scaduta: effettua nuovamente l\'accesso',
+        lastSyncMessageKind: () => SyncMessageKind.error,
       );
       await _endSession(generation);
       return true;
@@ -703,6 +711,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
         isAuthenticated: false,
         lastError: () => error.message,
         lastSyncMessage: () => 'Account bloccato: contatta l\'amministratore',
+        lastSyncMessageKind: () => SyncMessageKind.error,
       );
       await _endSession(generation);
       return true;
@@ -937,6 +946,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       state = state.copyWith(
         lastSyncTime: () => null,
         lastSyncMessage: () => null,
+        lastSyncMessageKind: () => null,
         lastError: () => null,
         quotaExceeded: false,
         storageUsageBytes: 0,
@@ -1174,6 +1184,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       isAuthenticated: false,
       username: () => null,
       lastSyncMessage: () => null,
+      lastSyncMessageKind: () => null,
       lastError: () => null,
     );
   }
@@ -1563,6 +1574,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
       isSyncing: true,
       lastError: () => null,
       lastSyncMessage: () => 'Sincronizzazione in corso...',
+      lastSyncMessageKind: () => SyncMessageKind.info,
     );
   }
 
@@ -1584,6 +1596,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           lastError: () => e.toString(),
           lastSyncMessage: () =>
               'Sincronizzazione non riuscita: errore interno',
+          lastSyncMessageKind: () => SyncMessageKind.error,
         );
       }
       return false;
@@ -1842,6 +1855,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             lastSyncTime: () => syncedAt,
             lastSyncMessage: () =>
                 'Sincronizzato (${dirtyFolders.length + dirtyNotes.length} inviate, ${response.folders.length + response.notes.length} ricevute)',
+            lastSyncMessageKind: () => SyncMessageKind.success,
             lastError: () => null,
             storageUsageBytes: storage?.usageBytes ?? state.storageUsageBytes,
             storageQuotaBytes: storage?.quotaBytes ?? state.storageQuotaBytes,
@@ -1903,6 +1917,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
           lastSyncMessage: () =>
               'Sincronizzazione sospesa: spazio di archiviazione esaurito. '
               'Libera spazio o chiedi all\'amministratore di aumentare la quota.',
+          lastSyncMessageKind: () => SyncMessageKind.warning,
         );
         if (!wasQuotaExceeded) await _persistQuotaExceeded(true);
         _rememberOnline(true);
@@ -1932,6 +1947,7 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
             : e is SyncApiException && e.statusCode != null
             ? 'Sincronizzazione non riuscita: errore del server'
             : 'Sincronizzazione non riuscita: server non raggiungibile',
+        lastSyncMessageKind: () => SyncMessageKind.error,
       );
       _rememberOnline(nextOnline);
       if (isAuthError || isBlocked) {
@@ -2025,11 +2041,15 @@ class SyncNotifier extends StateNotifier<SyncConfig> {
     }
   }
 
+  @override
+  bool get isAuthenticated => state.isAuthenticated;
+
   /// Sends updated preferences to PUT /api/v1/user/settings.
   ///
   /// Ritorna `true` solo se il server ha accettato il payload. Il chiamante
   /// (SettingsNotifier) usa l'esito per NON perdere una modifica quando il
   /// push fallisce o la sessione cambia nel frattempo.
+  @override
   Future<bool> pushUserSettings(UserSettingsDto settings) async {
     if (!state.isAuthenticated) return false;
     final generation = _sessionGeneration;

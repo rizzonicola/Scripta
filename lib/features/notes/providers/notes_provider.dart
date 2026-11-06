@@ -22,8 +22,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/services/session_state_service.dart';
 import '../../../core/utils/perf_marks.dart';
-import '../../folders/models/folder_node.dart';
-import '../../folders/providers/folder_provider.dart';
+import '../../workspace/providers/folder_scope_provider.dart';
 import '../models/note_model.dart';
 
 /// Nota da inserire in blocco durante un'importazione. I campi opzionali
@@ -336,8 +335,8 @@ class NotesNotifier extends StateNotifier<NotesState> {
   Timer? _writeRetryTimer;
   int _writeRetryAttempt = 0;
 
-  static const int _maxWriteRetries = 4;
-  static const Duration _writeRetryBase = Duration(milliseconds: 250);
+  final int maxWriteRetries;
+  final Duration writeRetryBase;
 
   /// Vero quando il primo caricamento dal DB è terminato.
   @visibleForTesting
@@ -358,6 +357,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   void _onNoteWriteSucceeded(String noteId) {
     _failedNotes.remove(noteId);
     if (_failedNotes.isEmpty && _pendingNote == null) {
+      _writeRetryAttempt = 0;
       _clearWriteError();
     }
   }
@@ -375,8 +375,10 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
   void _scheduleWriteRetry() {
     if (!mounted || _writeRetryTimer?.isActive == true) return;
-    final exponent = _writeRetryAttempt.clamp(0, _maxWriteRetries);
-    final delay = _writeRetryBase * (1 << exponent);
+    // Oltre il limite non si riprogramma: il banner resta visibile e il
+    // retry manuale (banner o flush) ha comunque un tentativo immediato.
+    if (_writeRetryAttempt >= maxWriteRetries) return;
+    final delay = writeRetryBase * (1 << _writeRetryAttempt);
     _writeRetryAttempt++;
     _writeRetryTimer = Timer(delay, () {
       _writeRetryTimer = null;
@@ -385,7 +387,9 @@ class NotesNotifier extends StateNotifier<NotesState> {
   }
 
   /// Ritenta subito le scritture fallite (usato dal banner e dai test).
-  Future<void> retryFailedWrites() async {
+  /// [resetRetries] riapre il budget automatico dopo un tentativo manuale.
+  Future<void> retryFailedWrites({bool resetRetries = false}) async {
+    if (resetRetries) _writeRetryAttempt = 0;
     _writeRetryTimer?.cancel();
     _writeRetryTimer = null;
     if (!mounted || _failedNotes.isEmpty) {
@@ -469,10 +473,17 @@ class NotesNotifier extends StateNotifier<NotesState> {
     return f;
   }
 
-  NotesNotifier({NotesDao? dao, String? initialActiveNoteId})
-    : _dao = dao ?? NotesDao(),
-      _restoreActiveNoteId = initialActiveNoteId,
-      super(const NotesState()) {
+  /// [writeRetryBase]/[maxWriteRetries]: politica di retry automatico delle
+  /// scritture fallite. Parametrizzati per i test, che non devono attendere
+  /// secondi reali per verificare il limite.
+  NotesNotifier({
+    NotesDao? dao,
+    String? initialActiveNoteId,
+    this.writeRetryBase = const Duration(milliseconds: 250),
+    this.maxWriteRetries = 4,
+  }) : _dao = dao ?? NotesDao(),
+       _restoreActiveNoteId = initialActiveNoteId,
+       super(const NotesState()) {
     _runInitialLoad();
   }
 
@@ -594,6 +605,20 @@ class NotesNotifier extends StateNotifier<NotesState> {
     );
   }
 
+  /// Attende le scritture in corso senza propagarne gli errori: una scrittura
+  /// fallita ha già il proprio percorso di retry/banner e non deve impedire
+  /// una lettura o un refresh indipendente.
+  Future<void> _drainInflightWrites() async {
+    for (final write in List<Future<void>>.of(_inflightWrites)) {
+      try {
+        await write;
+      } catch (_) {
+        // Già registrato da _trackPersist/onError: qui interessa solo
+        // l'ordinamento, non l'esito.
+      }
+    }
+  }
+
   /// Rilegge dal database solo le note toccate da una sync, sostituendole o
   /// rimuovendole dallo stato in memoria senza ricaricare l'intero archivio.
   Future<void> applyRemoteChanges(Iterable<String> changedIds) async {
@@ -601,9 +626,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     if (ids.isEmpty) return;
 
     for (var attempt = 0; attempt < 3; attempt++) {
-      if (_inflightWrites.isNotEmpty) {
-        await Future.wait(List<Future<void>>.of(_inflightWrites));
-      }
+      await _drainInflightWrites();
       if (!mounted) return;
 
       final before = state.notes;
@@ -657,9 +680,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
     // lista (riordino, spostamento, pin...), il risultato letto è già
     // obsoleto e applicarlo annullerebbe la modifica appena fatta.
     for (var attempt = 0; attempt < 3; attempt++) {
-      if (_inflightWrites.isNotEmpty) {
-        await Future.wait(List<Future<void>>.of(_inflightWrites));
-      }
+      await _drainInflightWrites();
       if (!mounted) return;
       final before = state.notes;
       final rows = await _dao.getActive();
@@ -976,14 +997,6 @@ class NotesNotifier extends StateNotifier<NotesState> {
     return sorted;
   }
 
-  NoteModel? get activeNote {
-    if (state.activeNoteId == null) return null;
-    for (final note in state.notes) {
-      if (note.id == state.activeNoteId) return note;
-    }
-    return state.notes.isNotEmpty ? state.notes.first : null;
-  }
-
   void selectNote(String? id) {
     if (state.activeNoteId != id) {
       // Fire-and-forget qui è accettabile: si sta solo cambiando la nota
@@ -1161,20 +1174,7 @@ class NotesNotifier extends StateNotifier<NotesState> {
   /// Non sovrascrive MAI note esistenti: ogni voce importata riceve sempre
   /// un nuovo id (`_uuid.v4()`), quindi il risultato è per costruzione solo
   /// additivo rispetto ai dati già presenti.
-  Future<int> importNotesBulk(
-    List<({String title, String content, String? folderId})> items,
-  ) {
-    return importNotesBulkDetailed([
-      for (final item in items)
-        ImportedNote(
-          title: item.title,
-          content: item.content,
-          folderId: item.folderId,
-        ),
-    ]);
-  }
-
-  /// Come [importNotesBulk], ma conserva i metadati del manifest di backup
+  /// Conserva i metadati del manifest di backup
   /// (date, preferito, pin e ordine manuale). Le note senza metadati ricevono
   /// gli stessi default dell'importazione legacy.
   Future<int> importNotesBulkDetailed(List<ImportedNote> items) async {
@@ -1469,7 +1469,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     final updatedNote = update(state.notes[index]);
     _replaceNoteAt(index, updatedNote);
-    await _persist(() => _dao.upsert(updatedNote.toRow()));
+    await _persist(
+      () => _dao.upsert(updatedNote.toRow()),
+      onSuccess: () => _onNoteWriteSucceeded(updatedNote.id),
+      onError: (e, st) => _onNoteWriteFailed(updatedNote, e, st),
+    );
   }
 
   /// Aggiorna i metadati modificabili dal dialog della nota. Anche
@@ -1514,7 +1518,11 @@ class NotesNotifier extends StateNotifier<NotesState> {
 
     _replaceNoteAt(index, updatedNote);
 
-    await _persist(() => _dao.upsert(updatedNote.toRow()));
+    await _persist(
+      () => _dao.upsert(updatedNote.toRow()),
+      onSuccess: () => _onNoteWriteSucceeded(updatedNote.id),
+      onError: (e, st) => _onNoteWriteFailed(updatedNote, e, st),
+    );
   }
 }
 
@@ -1543,114 +1551,4 @@ final activeNoteProvider = Provider<NoteModel?>((ref) {
     if (note.id == activeNoteId) return note;
   }
   return notes.isNotEmpty ? notes.first : null;
-});
-
-/// Esito della ricerca testuale per nota, memorizzato PER ISTANZA di
-/// [NoteModel] e valido per UNA query alla volta.
-///
-/// Perché: `filteredNotesProvider` si ricalcola a ogni battitura nell'editor
-/// (ogni modifica produce una nuova lista di note). Con una ricerca attiva,
-/// il filtro rifaceva `toLowerCase()` sul contenuto COMPLETO di tutte le
-/// note a ogni carattere digitato (O(numero note × lunghezza testo)). Le note
-/// sono immutabili e ogni modifica crea una nuova istanza: tenere l'esito
-/// per istanza significa rivalutare solo la nota appena modificata. Quando la
-/// query cambia la cache si svuota; essendo `Expando`, non trattiene in
-/// memoria le note scartate. Le copie minuscole vivono su `NoteModel`
-/// (`titleLower`/`contentLower`) e sono calcolate pigramente una volta sola.
-class _SearchMatchCache {
-  String _query = '';
-  Expando<bool> _matches = Expando<bool>('note-search-match');
-
-  bool matches(NoteModel note, String lowerQuery) {
-    if (lowerQuery != _query) {
-      _query = lowerQuery;
-      _matches = Expando<bool>('note-search-match');
-    }
-    final cached = _matches[note];
-    if (cached != null) return cached;
-    final result =
-        note.titleLower.contains(lowerQuery) ||
-        note.contentLower.contains(lowerQuery);
-    _matches[note] = result;
-    return result;
-  }
-}
-
-final _searchMatchCacheProvider = Provider<_SearchMatchCache>(
-  (ref) => _SearchMatchCache(),
-);
-
-/// Provider for filtered notes based on folder and search query.
-///
-/// Vista puramente derivata: legge la STESSA lista di [notesProvider] e la
-/// filtra in memoria. Non esegue mai una query separata sul database, il che
-/// garantisce per costruzione che "Tutte le note" e "note della cartella X"
-/// non possano mai disallinearsi tra loro.
-final filteredNotesProvider = Provider<List<NoteModel>>((ref) {
-  final notes = ref.watch(notesProvider.select((s) => s.notes));
-  final selectedFolderId = ref.watch(
-    folderProvider.select((s) => s.selectedFolderId),
-  );
-  final searchQuery = ref.watch(notesProvider.select((s) => s.searchQuery));
-
-  var filtered = notes;
-
-  if (selectedFolderId != null) {
-    // La ricerca "per cartella" include l'intero sottoalbero (la cartella
-    // selezionata più TUTTE le sue sottocartelle, ricorsivamente), non solo
-    // le note con `folderId` esattamente uguale a quello selezionato: vedi
-    // FolderNode.collectSubtreeIds. Coerente con FolderTreeView, che mostra
-    // già le sottocartelle annidate visivamente sotto il genitore, non come
-    // sezioni indipendenti.
-    final rootFolders = ref.watch(folderProvider.select((s) => s.rootFolders));
-    final scopeIds = FolderNode.collectSubtreeIds(
-      rootFolders,
-      selectedFolderId,
-    );
-    filtered = filtered
-        .where((n) => n.folderId != null && scopeIds.contains(n.folderId))
-        .toList();
-  }
-
-  if (searchQuery.trim().isNotEmpty) {
-    final q = searchQuery.toLowerCase().trim();
-    final cache = ref.read(_searchMatchCacheProvider);
-    filtered = filtered.where((n) => cache.matches(n, q)).toList();
-  }
-
-  return filtered;
-});
-
-/// Id della lista filtrata, con uguaglianza per valore.
-///
-/// `NotesListView` osserva questo provider invece dell'intera lista: modificare
-/// il contenuto di una nota produce una nuova `List<NoteModel>` a ogni
-/// battitura, ma gli id (e quindi l'ordine della lista) restano gli stessi.
-/// Il confronto per valore evita di ricostruire il contenitore e tutte le card
-/// visibili; ogni card legge poi la propria nota da [notesByIdProvider].
-final class FilteredNoteIds {
-  const FilteredNoteIds(this.ids);
-
-  final List<String> ids;
-
-  @override
-  bool operator ==(Object other) =>
-      other is FilteredNoteIds && listEquals(ids, other.ids);
-
-  @override
-  int get hashCode => Object.hashAll(ids);
-}
-
-/// Mappa id → nota, ricostruita solo quando cambia la lista delle note.
-///
-/// Le card usano `select` su questa mappa: la modifica di una nota sostituisce
-/// solo la sua istanza, quindi Riverpod notifica solo la card interessata.
-final notesByIdProvider = Provider<Map<String, NoteModel>>((ref) {
-  final notes = ref.watch(notesProvider.select((s) => s.notes));
-  return {for (final note in notes) note.id: note};
-});
-
-final filteredNoteIdsProvider = Provider<FilteredNoteIds>((ref) {
-  final notes = ref.watch(filteredNotesProvider);
-  return FilteredNoteIds([for (final note in notes) note.id]);
 });

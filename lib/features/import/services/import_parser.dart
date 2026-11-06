@@ -1,7 +1,7 @@
 import 'package:path/path.dart' as p;
 
-import 'backup_manifest.dart';
-import 'export_archive.dart' show sanitizeFileName, uncatalogedFolderName;
+import '../../../core/services/backup_manifest.dart';
+import '../../export/services/export_archive.dart' show sanitizeFileName, uncatalogedFolderName;
 
 // Traduzione PURA (nessuna UI, nessun I/O, nessun provider) di ciò che
 // l'importazione trova — percorsi di voci ZIP o di file su disco, testo dei

@@ -1,4 +1,6 @@
-enum EditorMode { edit, readOnly }
+import '../../../core/models/editor_mode.dart';
+
+export '../../../core/models/editor_mode.dart';
 
 class EditorStateModel {
   final EditorMode mode;

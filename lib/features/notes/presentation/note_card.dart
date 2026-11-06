@@ -8,7 +8,7 @@ import '../../../core/l10n/desktop_strings.dart';
 import '../../../core/utils/app_commands.dart';
 import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/context_menu.dart';
-import '../../../core/services/export_service.dart';
+import '../../../features/export/services/export_service.dart';
 import '../../../core/theme/color_schemes.dart';
 import '../../folders/presentation/folder_picker_dialog.dart';
 import '../../folders/providers/folder_provider.dart';

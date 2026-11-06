@@ -14,6 +14,7 @@ import '../../../core/theme/color_schemes.dart';
 import '../../editor/providers/note_search_provider.dart';
 import '../../folders/providers/folder_provider.dart';
 import '../../sync/providers/sync_provider.dart';
+import '../../workspace/providers/filtered_notes_provider.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
 import 'note_card.dart';

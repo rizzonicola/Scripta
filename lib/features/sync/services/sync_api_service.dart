@@ -5,8 +5,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
-import '../../features/sync/models/sync_models.dart';
-import '../constants/app_constants.dart';
+import '../models/sync_models.dart';
+import '../../../core/constants/app_constants.dart';
 
 class SyncApiException implements Exception {
   final int? statusCode;

@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/l10n/app_localizations.dart';
 import '../core/l10n/desktop_strings.dart';
-import '../core/services/export_service.dart';
+import '../features/export/services/export_service.dart';
 import '../core/utils/app_commands.dart';
 import '../core/utils/focus_requests.dart';
 import '../core/widgets/shortcuts_help_dialog.dart';
@@ -18,6 +18,7 @@ import '../features/folders/presentation/folder_dialogs.dart'
 import '../features/folders/providers/folder_provider.dart';
 import '../features/notes/presentation/note_card.dart';
 import '../features/notes/providers/notes_provider.dart';
+import '../features/workspace/providers/filtered_notes_provider.dart';
 import '../features/settings/presentation/settings_view.dart';
 import '../features/sync/providers/sync_provider.dart';
 

@@ -15,7 +15,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/color_schemes.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../sync/models/sync_models.dart';
-import '../../sync/providers/sync_provider.dart';
+import '../../sync/providers/sync_settings_gateway.dart';
 import '../models/app_settings.dart';
 
 ThemeMode _parseThemeMode(String? value) => value == 'dark'
@@ -51,6 +51,19 @@ Locale? _decodeRemoteLanguage(String value) {
   if (value.isEmpty || value == AppConstants.remoteLanguageSystem) return null;
   return Locale(value);
 }
+
+/// Serializza le impostazioni di aspetto nel DTO condiviso da sync e backup
+/// completo. Un'unica mappatura evita che i due percorsi divergano (es. il
+/// backup che salva una lingua diversa da quella inviata al server).
+UserSettingsDto encodeUserSettings(AppSettings settings) => UserSettingsDto(
+  theme: _themeModeToStorage(settings.themeMode),
+  colorScheme: settings.selectedThemeId,
+  language: encodeRemoteLanguage(settings.locale),
+  fontFamily: settings.fontFamily,
+  fontSize: settings.fontSize.toInt(),
+  lineSpacing: settings.lineHeight,
+  layout: 'split',
+);
 
 double _clampFontSize(double value, double fallback) {
   return value.isFinite
@@ -238,21 +251,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     _remotePushTimer?.cancel();
     _remotePushTimer = null;
 
-    final themeStr = state.themeMode == ThemeMode.dark
-        ? 'dark'
-        : state.themeMode == ThemeMode.light
-        ? 'light'
-        : 'system';
-
-    _queuedPayload = UserSettingsDto(
-      theme: themeStr,
-      colorScheme: state.selectedThemeId,
-      language: encodeRemoteLanguage(state.locale),
-      fontFamily: state.fontFamily,
-      fontSize: state.fontSize.toInt(),
-      lineSpacing: state.lineHeight,
-      layout: 'split',
-    );
+    _queuedPayload = encodeUserSettings(state);
     _remotePushPending = true;
     unawaited(_drainRemotePush());
   }
@@ -276,14 +275,16 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final epoch = _pushEpoch;
     final ref = _ref;
     if (ref == null || !mounted || _remotePushInFlight) return;
+    final gateway = ref.read(syncSettingsGatewayProvider).gateway;
+    // Nessun motore di sync creato (es. app avviata senza sessione): il
+    // payload resta in coda e verrà inviato al prossimo flush.
+    if (gateway == null) return;
     _remotePushInFlight = true;
     try {
       while (mounted && epoch == _pushEpoch && _queuedPayload != null) {
         final payload = _queuedPayload!;
         _queuedPayload = null;
-        final sent = await ref
-            .read(syncProvider.notifier)
-            .pushUserSettings(payload);
+        final sent = await gateway.pushUserSettings(payload);
         if (!mounted || epoch != _pushEpoch) return;
         if (!sent) {
           // Conserva il payload più recente (potrebbe essere arrivato mentre
@@ -291,7 +292,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           // sessione: da disconnessi non ha senso martellare il server.
           _queuedPayload ??= payload;
           _remotePushPending = true;
-          if (ref.read(syncProvider).isAuthenticated) {
+          if (gateway.isAuthenticated) {
             _scheduleRemotePushRetry();
           }
           return;

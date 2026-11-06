@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/app_localizations.dart';
-import '../../../core/services/export_service.dart';
+import '../../../features/export/services/export_service.dart';
 import '../../sync/providers/sync_provider.dart';
 import '../models/folder_node.dart';
 import '../providers/folder_provider.dart';

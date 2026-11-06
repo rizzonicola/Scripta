@@ -3,12 +3,12 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import '../../features/folders/models/external_open_destination.dart';
-import '../../features/folders/providers/folder_provider.dart';
-import '../../features/notes/providers/notes_provider.dart';
-import 'external_open_service.dart';
-import 'import_parser.dart';
-import 'import_service.dart';
+import '../../folders/models/external_open_destination.dart';
+import '../../folders/providers/folder_provider.dart';
+import '../../notes/providers/notes_provider.dart';
+import '../../../core/services/external_open_service.dart';
+import '../../import/services/import_parser.dart';
+import '../../import/services/import_service.dart';
 
 /// Esito di un'apertura esterna (una o più voci, anche eterogenee).
 ///

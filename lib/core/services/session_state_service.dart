@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../features/editor/models/editor_state_model.dart';
+import '../models/editor_mode.dart';
 import '../constants/app_constants.dart';
 
 /// Ultima posizione dell'utente, letta UNA volta all'avvio (vedi

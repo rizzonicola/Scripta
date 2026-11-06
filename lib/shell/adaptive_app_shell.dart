@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants/app_constants.dart';
 import '../core/l10n/app_localizations.dart';
 import '../core/l10n/desktop_strings.dart';
-import '../core/services/external_open_processor.dart';
+import '../features/external_open/services/external_open_processor.dart';
 import '../core/services/external_open_service.dart';
 import '../core/services/session_state_service.dart';
 import '../core/utils/responsive_breakpoints.dart';
@@ -229,6 +229,11 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
           outcome = ExternalOpenOutcome(failedPaths: request.paths);
         }
         if (!mounted) return;
+        if (outcome.importedNotes > 0 || outcome.importedFolders > 0) {
+          // Apertura esterna = mutazione locale in blocco, senza i call site
+          // UI che normalmente notificano la sync.
+          ref.read(syncProvider.notifier).onFolderStructureChanged();
+        }
         _showExternalOpenOutcome(outcome);
       }
     } finally {

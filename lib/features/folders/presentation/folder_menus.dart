@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/l10n/desktop_strings.dart';
-import '../../../core/services/export_service.dart';
-import '../../../core/services/import_service.dart';
+import '../../../features/export/services/export_service.dart';
+import '../../../features/import/services/import_service.dart';
 import '../../../core/utils/app_commands.dart';
 import '../../../core/utils/platform_utils.dart';
 import '../../../core/widgets/context_menu.dart';

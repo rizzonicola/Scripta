@@ -1,3 +1,8 @@
+/// Severità del messaggio mostrato sotto l'ultima sync. Evita che la UI
+/// interpreti il testo (o che un errore venga dipinto con l'icona verde del
+/// successo).
+enum SyncMessageKind { info, success, warning, error }
+
 class SyncConfig {
   final bool syncOnAppLaunch;
   final bool syncOnAppLifecycle;
@@ -16,6 +21,7 @@ class SyncConfig {
   final int quotaWarningTick;
   final DateTime? lastSyncTime;
   final String? lastSyncMessage;
+  final SyncMessageKind? lastSyncMessageKind;
   final String? lastError;
 
   const SyncConfig({
@@ -36,6 +42,7 @@ class SyncConfig {
     this.quotaWarningTick = 0,
     this.lastSyncTime,
     this.lastSyncMessage,
+    this.lastSyncMessageKind,
     this.lastError,
   });
 
@@ -57,6 +64,7 @@ class SyncConfig {
     int? quotaWarningTick,
     DateTime? Function()? lastSyncTime,
     String? Function()? lastSyncMessage,
+    SyncMessageKind? Function()? lastSyncMessageKind,
     String? Function()? lastError,
   }) {
     return SyncConfig(
@@ -79,6 +87,9 @@ class SyncConfig {
       lastSyncMessage: lastSyncMessage != null
           ? lastSyncMessage()
           : this.lastSyncMessage,
+      lastSyncMessageKind: lastSyncMessageKind != null
+          ? lastSyncMessageKind()
+          : this.lastSyncMessageKind,
       lastError: lastError != null ? lastError() : this.lastError,
     );
   }
@@ -111,6 +122,7 @@ class SyncConfig {
         other.quotaWarningTick == quotaWarningTick &&
         other.lastSyncTime == lastSyncTime &&
         other.lastSyncMessage == lastSyncMessage &&
+        other.lastSyncMessageKind == lastSyncMessageKind &&
         other.lastError == lastError;
   }
 
@@ -133,6 +145,7 @@ class SyncConfig {
     quotaWarningTick,
     lastSyncTime,
     lastSyncMessage,
+    lastSyncMessageKind,
     lastError,
   );
 }

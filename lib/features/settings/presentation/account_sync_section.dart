@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/color_schemes.dart';
+import '../../sync/models/sync_config.dart';
 import '../../sync/providers/sync_provider.dart';
 
 class AccountSyncSection extends ConsumerStatefulWidget {
@@ -197,9 +198,24 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
   Widget _buildAccountCard(
     BuildContext context,
     ThemeData theme,
-    dynamic syncConfig,
+    SyncConfig syncConfig,
     AppLocalizations l10n,
   ) {
+    // La severità arriva dallo stato, non dal testo: un errore non deve
+    // essere mostrato con l'icona verde del successo.
+    final messageKind = syncConfig.lastSyncMessageKind ?? SyncMessageKind.info;
+    final messageColor = switch (messageKind) {
+      SyncMessageKind.error => theme.dangerColor,
+      SyncMessageKind.warning => theme.warningColor,
+      SyncMessageKind.success || SyncMessageKind.info =>
+        theme.colorScheme.primary,
+    };
+    final messageIcon = switch (messageKind) {
+      SyncMessageKind.error => Icons.error_outline_rounded,
+      SyncMessageKind.warning => Icons.warning_amber_rounded,
+      SyncMessageKind.success => Icons.check_circle_outline_rounded,
+      SyncMessageKind.info => Icons.sync_rounded,
+    };
     return Card(
       elevation: 0,
       shape: _sectionCardShape(theme),
@@ -237,22 +253,18 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.08),
+                  color: messageColor.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.check_circle_outline_rounded,
-                      size: 14,
-                      color: theme.colorScheme.primary,
-                    ),
+                    Icon(messageIcon, size: 14, color: messageColor),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         syncConfig.lastSyncMessage!,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.primary,
+                          color: messageColor,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
@@ -593,7 +605,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
 
   Widget _buildStatusBadge(
     ThemeData theme,
-    dynamic syncConfig,
+    SyncConfig syncConfig,
     AppLocalizations l10n,
   ) {
     final bool isOnline = syncConfig.isOnline;
@@ -642,7 +654,7 @@ class _AccountSyncSectionState extends ConsumerState<AccountSyncSection> {
   Widget _buildSyncTogglesCard(
     BuildContext context,
     ThemeData theme,
-    dynamic syncConfig,
+    SyncConfig syncConfig,
     AppLocalizations l10n,
   ) {
     final notifier = ref.read(syncProvider.notifier);

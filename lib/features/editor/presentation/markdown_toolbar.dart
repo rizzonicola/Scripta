@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
-import '../../../core/services/export_service.dart';
+import '../../../features/export/services/export_service.dart';
 import '../../../core/theme/color_schemes.dart';
 import '../../../core/utils/markdown_toolbar_actions.dart';
 import '../../notes/providers/notes_provider.dart';

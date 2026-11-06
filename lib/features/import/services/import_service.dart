@@ -19,13 +19,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:saf/saf.dart';
 
-import '../../features/folders/models/folder_node.dart';
-import '../../features/folders/presentation/folder_import_picker.dart';
-import '../../features/folders/providers/folder_provider.dart';
-import '../../features/notes/providers/notes_provider.dart';
-import '../../features/settings/providers/settings_provider.dart';
-import '../../features/sync/models/sync_models.dart';
-import 'backup_manifest.dart';
+import '../../folders/models/folder_node.dart';
+import '../../folders/presentation/folder_import_picker.dart';
+import '../../folders/providers/folder_provider.dart';
+import '../../notes/providers/notes_provider.dart';
+import '../../settings/providers/settings_provider.dart';
+import '../../sync/models/sync_models.dart';
+import '../../sync/providers/sync_provider.dart';
+import '../../../core/services/backup_manifest.dart';
 import 'import_parser.dart';
 
 /// Importazione di note/cartelle da un backup ZIP (creato da
@@ -876,6 +877,13 @@ class ImportService {
       bundle.entries,
       emptyFolderPaths: bundle.emptyFolderPaths,
     );
+
+    // L'import scrive direttamente su SQLite senza passare dai call site UI
+    // che di solito notificano la sync: senza questo, note e cartelle
+    // importate resterebbero locali fino al prossimo trigger casuale.
+    if (result.importedNotes > 0 || result.importedFolders > 0) {
+      ref.read(syncProvider.notifier).onFolderStructureChanged();
+    }
 
     // Le impostazioni sono parte del backup completo. `applyRemoteSettings`
     // scrive le preferenze e NON le rimanda al server: un import locale non

@@ -14,6 +14,7 @@ import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/services/session_state_service.dart';
 import '../../notes/providers/notes_provider.dart';
+import '../../workspace/providers/folder_scope_provider.dart';
 import '../models/folder_node.dart';
 
 class FolderState {
@@ -125,12 +126,22 @@ class FolderNotifier extends StateNotifier<FolderState> {
   /// fallito lo stato espone l'errore e la coda prosegue.
   Future<void> _writeQueue = Future<void>.value();
 
-  Future<void> Function()? _lastFailedWrite;
-  int _writeSerial = 0;
-  int _lastFailedWriteSerial = -1;
+  /// Una scrittura "normale" fallita viene riparata ri-persistendo lo stato
+  /// corrente (righe in memoria), mai rieseguendo la closure originale: una
+  /// closure catturata può essere ormai vecchia (es. rename successivo,
+  /// cartella cancellata) e riporterebbe indietro i dati.
+  bool _needsPersistAllRows = false;
 
-  static const int _maxWriteRetries = 3;
-  static const Duration _writeRetryBase = Duration(milliseconds: 250);
+  /// Le cascade di cancellazione non sono ricostruibili dallo stato corrente
+  /// (le righe sono già sparite dalla memoria): la loro closure va conservata
+  /// e rieseguita, è idempotente.
+  final List<Future<void> Function()> _failedDeletes = [];
+
+  bool get _hasFailedWrites =>
+      _needsPersistAllRows || _failedDeletes.isNotEmpty;
+
+  final int maxWriteRetries;
+  final Duration writeRetryBase;
 
   bool _initialLoadComplete = false;
   final Completer<void> _readyCompleter = Completer<void>();
@@ -158,9 +169,11 @@ class FolderNotifier extends StateNotifier<FolderState> {
     state = state.copyWith(lastWriteError: () => null);
   }
 
-  Future<void> _enqueueWrite(Future<void> Function() op) {
-    final serial = ++_writeSerial;
-    final next = _writeQueue.then((_) => _runWriteWithRetry(op, serial));
+  Future<void> _enqueueWrite(
+    Future<void> Function() op, {
+    Future<void> Function()? retry,
+  }) {
+    final next = _writeQueue.then((_) => _runWriteWithRetry(op, retry));
     _writeQueue = next.catchError((Object e, StackTrace st) {
       debugPrint('FolderNotifier: coda scritture fallita: $e\n$st');
     });
@@ -169,23 +182,24 @@ class FolderNotifier extends StateNotifier<FolderState> {
 
   Future<void> _runWriteWithRetry(
     Future<void> Function() op,
-    int serial,
+    Future<void> Function()? retry,
   ) async {
     Object? lastError;
     StackTrace? lastStackTrace;
-    for (var attempt = 0; attempt <= _maxWriteRetries; attempt++) {
+    for (var attempt = 0; attempt <= maxWriteRetries; attempt++) {
       try {
         await op();
-        _lastFailedWrite = null;
-        _lastFailedWriteSerial = -1;
-        _clearWriteError();
+        // Un successo su una scrittura diversa non prova che quella fallita
+        // sia arrivata su disco: si pulisce il banner solo quando non resta
+        // nulla da recuperare.
+        if (!_hasFailedWrites) _clearWriteError();
         return;
       } catch (e, st) {
         lastError = e;
         lastStackTrace = st;
       }
-      if (attempt < _maxWriteRetries) {
-        await Future<void>.delayed(_writeRetryBase * (1 << attempt));
+      if (attempt < maxWriteRetries) {
+        await Future<void>.delayed(writeRetryBase * (1 << attempt));
         if (!mounted) return;
       }
     }
@@ -194,20 +208,38 @@ class FolderNotifier extends StateNotifier<FolderState> {
       'FolderNotifier: scrittura su SQLite fallita: $lastError\n$lastStackTrace',
     );
     if (!mounted) return;
-    _lastFailedWrite = op;
-    _lastFailedWriteSerial = serial;
+    if (retry == null) {
+      _needsPersistAllRows = true;
+    } else if (!_failedDeletes.any((f) => identical(f, retry))) {
+      _failedDeletes.add(retry);
+    }
     _markWriteError(lastError!);
   }
 
-  /// Ritenta subito l'ultima scrittura fallita, se nel frattempo non sono
-  /// state accodate altre mutazioni (che potrebbero renderla obsoleta).
+  /// Ripersiste tutte le righe attualmente in memoria. È il retry sicuro per
+  /// add/rename/expand/move: lo stato corrente è già la verità più recente,
+  /// quindi il replay non può resuscitare una cartella cancellata né
+  /// sovrascrivere una rinomina successiva.
+  Future<void> _persistCurrentRows() async {
+    for (final row in List<FolderRow>.of(_activeRows)) {
+      await _foldersDao.upsert(row);
+    }
+  }
+
+  /// Ritenta le scritture fallite. Le righe correnti vengono salvate prima
+  /// delle cascade di cancellazione, così un upsert non può far riapparire
+  /// una cartella che una delete pendente deve ancora rimuovere.
   Future<void> retryPendingWrites() async {
-    final op = _lastFailedWrite;
-    if (!mounted || op == null) return;
-    if (_lastFailedWriteSerial != _writeSerial) return;
-    _lastFailedWrite = null;
-    _lastFailedWriteSerial = -1;
-    await _enqueueWrite(op);
+    if (!mounted || !_hasFailedWrites) return;
+    final persistRows = _needsPersistAllRows;
+    final deletes = List<Future<void> Function()>.of(_failedDeletes);
+    _needsPersistAllRows = false;
+    _failedDeletes.clear();
+
+    if (persistRows) await _enqueueWrite(_persistCurrentRows);
+    for (final op in deletes) {
+      await _enqueueWrite(op, retry: op);
+    }
   }
 
   /// Attende che tutte le mutazioni già richieste siano state scritte.
@@ -223,6 +255,8 @@ class FolderNotifier extends StateNotifier<FolderState> {
     FoldersDao? foldersDao,
     NotesDao? notesDao,
     String? initialSelectedFolderId,
+    this.writeRetryBase = const Duration(milliseconds: 250),
+    this.maxWriteRetries = 3,
   }) : _foldersDao = foldersDao ?? FoldersDao(),
        _notesDao = notesDao ?? NotesDao(),
        super(FolderState(selectedFolderId: initialSelectedFolderId)) {
@@ -391,24 +425,24 @@ class FolderNotifier extends StateNotifier<FolderState> {
         .toList();
     _publishState();
 
-    unawaited(
-      _enqueueWrite(() async {
-        // Prima di far sparire le note dal DB, scrive l'eventuale testo ancora
-        // nel debounce dell'editor: altrimenti il timer successivo riscriverebbe
-        // la nota con la vecchia cartella, annullando il tombstone appena
-        // creato dalla cascade.
-        await _ref.read(notesProvider.notifier).flushPendingSaves();
-        await _foldersDao.cascadeSoftDelete(
-          id,
-          now,
-          deleteNotesInFolder: (folderIdInSubtree, cascadeNow) =>
-              _notesDao.softDeleteByFolder(folderIdInSubtree, cascadeNow),
-        );
-        // Le note della cartella cancellata sono sparite anche dal DB locale:
-        // la vista "Tutte le note"/per-cartella deve rifletterlo subito.
-        await _ref.read(notesProvider.notifier).refreshFromDb();
-      }),
-    );
+    Future<void> deleteOp() async {
+      // Prima di far sparire le note dal DB, scrive l'eventuale testo ancora
+      // nel debounce dell'editor: altrimenti il timer successivo riscriverebbe
+      // la nota con la vecchia cartella, annullando il tombstone appena
+      // creato dalla cascade.
+      await _ref.read(notesProvider.notifier).flushPendingSaves();
+      await _foldersDao.cascadeSoftDelete(
+        id,
+        now,
+        deleteNotesInFolder: (folderIdInSubtree, cascadeNow) =>
+            _notesDao.softDeleteByFolder(folderIdInSubtree, cascadeNow),
+      );
+      // Le note della cartella cancellata sono sparite anche dal DB locale:
+      // la vista "Tutte le note"/per-cartella deve rifletterlo subito.
+      await _ref.read(notesProvider.notifier).refreshFromDb();
+    }
+
+    unawaited(_enqueueWrite(deleteOp, retry: deleteOp));
   }
 
   /// Raccoglie, a partire dallo specchio in memoria [_activeRows], l'ID
@@ -653,8 +687,6 @@ class FolderNotifier extends StateNotifier<FolderState> {
     return true;
   }
 }
-
-final selectedFolderScopeProvider = StateProvider<String?>((ref) => null);
 
 final folderProvider = StateNotifierProvider<FolderNotifier, FolderState>((
   ref,

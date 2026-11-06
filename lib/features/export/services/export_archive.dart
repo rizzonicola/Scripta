@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 
-import '../../features/folders/models/folder_node.dart';
-import 'backup_manifest.dart';
+import '../../folders/models/folder_node.dart';
+import '../../../core/services/backup_manifest.dart';
 
 // Costruzione pura (nessuna UI, nessun I/O) degli archivi ZIP di esportazione.
 //
