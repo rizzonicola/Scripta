@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 /// Da dove arriva una richiesta di apertura esterna.
@@ -48,7 +47,7 @@ class ExternalOpenService {
 
   /// `true` solo sulle piattaforme desktop in cui esiste un ingresso nativo.
   static bool get isSupported =>
-      !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows);
+      Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 
   static final RegExp _windowsDrivePath = RegExp(r'^[A-Za-z]:[\\/]');
 

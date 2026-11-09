@@ -419,6 +419,85 @@ class AppLocalizationsEn extends AppLocalizations {
   String get syncFailed => 'Synchronization failed (check connection)';
 
   @override
+  String get syncErrorConnection => 'Unable to connect to the server';
+
+  @override
+  String get syncErrorConnectionHint =>
+      'Unable to connect to the server. Check your connection and try again.';
+
+  @override
+  String get syncErrorInvalidResponse =>
+      'Invalid server response (malformed JSON)';
+
+  @override
+  String get syncErrorInvalidResponseShort => 'Invalid server response';
+
+  @override
+  String get syncErrorUrlScheme => 'Invalid server URL: use https://';
+
+  @override
+  String get syncErrorUrlComponents =>
+      'Invalid server URL: do not include credentials, query or fragments';
+
+  @override
+  String get syncErrorUrlInsecure =>
+      'Insecure URL: use https:// (http is allowed only for localhost)';
+
+  @override
+  String get syncErrorAuthTimeout => 'Timed out while connecting to the server';
+
+  @override
+  String get syncErrorAuth => 'Authentication error';
+
+  @override
+  String get syncErrorInvalidCredentials => 'Invalid credentials';
+
+  @override
+  String get syncErrorAccountBlocked =>
+      'Account blocked by the administrator. Contact support.';
+
+  @override
+  String get syncErrorTooManyAttempts =>
+      'Too many login attempts. Wait a few minutes and try again.';
+
+  @override
+  String get syncErrorRefreshTimeout => 'Timed out while renewing the session';
+
+  @override
+  String get syncErrorRefreshFailed => 'Unable to renew the session';
+
+  @override
+  String get syncErrorSettingsDownload => 'Unable to download remote settings';
+
+  @override
+  String get syncErrorSettingsUpdate => 'Unable to update user settings';
+
+  @override
+  String get syncErrorSessionExpired => 'Session expired or unauthorized';
+
+  @override
+  String get syncErrorForbidden => 'Access denied by the server';
+
+  @override
+  String get syncErrorRateLimited =>
+      'Synchronization temporarily rate-limited. Try again shortly.';
+
+  @override
+  String get syncErrorServerBusy =>
+      'Server temporarily busy, please try again shortly';
+
+  @override
+  String syncErrorRejected(int count) {
+    return 'Synchronization rejected by the server ($count invalid items)';
+  }
+
+  @override
+  String get syncErrorSyncFailed => 'Error during synchronization';
+
+  @override
+  String get syncErrorOrderingReset => 'Unable to delete positioning data';
+
+  @override
   String get fillRequiredFields => 'Please fill in all required fields';
 
   @override

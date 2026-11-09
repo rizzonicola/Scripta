@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 import 'platform_utils.dart';
@@ -19,36 +18,15 @@ enum HapticIntensity {
   strong,
 }
 
-/// Punto centrale e ISOLATO da cui l'app governa il feedback aptico.
+/// Punto centrale e isolato da cui l'app governa il feedback aptico.
 ///
-/// PERCHÉ QUESTA CLASSE NON CHIAMA PIÙ `HapticFeedback.*` DIRETTAMENTE PER
-/// LA SELEZIONE DI TESTO (causa radice dei bug precedenti):
-/// A partire da Flutter 3.x (flutter/flutter#115373), il FRAMEWORK STESSO
-/// invoca `HapticFeedback.vibrate()` in modo completamente autonomo quando
-/// l'utente interagisce con la selezione di un `TextField`:
-///  - una vibrazione singola alla creazione di una selezione (long-press),
-///    sia su Android che iOS;
-///  - su Android, una vibrazione RIPETUTA ad ogni variazione del range
-///    mentre si trascina una maniglia (creazione O ridimensionamento).
-/// Questo avviene DENTRO al motore di rendering di Flutter
-/// (`RenderEditable`/`EditableText`), non nel nostro codice applicativo:
-/// nessuna nostra chiamata (o assenza di chiamata) a `HapticsHelper` può
-/// influenzarla, perché quella vibrazione nativa non passa MAI dai metodi
-/// di questa classe. È per questo che i tentativi precedenti — che
-/// provavano a "decidere se vibrare" nel nostro `_SelectionHapticBinder` —
-/// non potevano funzionare per "Leggero" e "Disattivata": qualunque cosa
-/// facesse il nostro codice, il framework vibrava comunque per conto suo.
-///
-/// LA SOLUZIONE:
-/// Non possiamo impedire al framework di CHIAMARE `HapticFeedback.vibrate`,
-/// ma possiamo intercettare quella chiamata PRIMA che raggiunga il sistema
-/// operativo, filtrando il platform channel `flutter/platform` (vedi
-/// `main.dart`, `_HapticGatingBinaryMessenger`): ogni volta che qualunque
-/// parte del framework (nativa o nostra) tenta di vibrare, viene chiesto a
-/// [gateNativeHapticCall] il permesso, e la richiesta viene lasciata
-/// passare o soppressa in base all'intensità corrente e allo stato
-/// "armato" tracciato da [reportSelectionState] (aggiornato dal listener
-/// del `TextEditingController` in `markdown_editor_field.dart`).
+/// Da Flutter 3.x (flutter/flutter#115373) il framework invoca
+/// `HapticFeedback.vibrate()` da solo quando cambia la selezione di un
+/// `TextField`, senza passare da questa classe. L'unico punto di controllo
+/// è quindi il platform channel: `_HapticGatingBinaryMessenger` in
+/// `main.dart` chiede a [gateNativeHapticCall] se lasciar passare ogni
+/// vibrazione, in base all'intensità corrente e allo stato "armato"
+/// tracciato da [reportSelectionState].
 class HapticsHelper {
   HapticsHelper._();
 
@@ -85,7 +63,6 @@ class HapticsHelper {
   /// [selectionDragTick]); il gate del platform channel filtra comunque
   /// anche le eventuali chiamate native, quindi è una doppia sicurezza.
   static bool get _isDesktop {
-    if (kIsWeb) return true;
     try {
       return isDesktopPlatform;
     } catch (_) {

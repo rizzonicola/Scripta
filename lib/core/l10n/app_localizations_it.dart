@@ -421,6 +421,90 @@ class AppLocalizationsIt extends AppLocalizations {
   String get syncFailed => 'Sincronizzazione fallita (controlla connessione)';
 
   @override
+  String get syncErrorConnection => 'Impossibile connettersi al server';
+
+  @override
+  String get syncErrorConnectionHint =>
+      'Impossibile connettersi al server. Controlla la connessione e riprova.';
+
+  @override
+  String get syncErrorInvalidResponse =>
+      'Risposta del server non valida (JSON malformato)';
+
+  @override
+  String get syncErrorInvalidResponseShort => 'Risposta del server non valida';
+
+  @override
+  String get syncErrorUrlScheme => 'URL del server non valido: usa https://';
+
+  @override
+  String get syncErrorUrlComponents =>
+      'URL del server non valido: non includere credenziali, query o frammenti';
+
+  @override
+  String get syncErrorUrlInsecure =>
+      'URL non sicuro: usa https:// (http è ammesso solo per localhost)';
+
+  @override
+  String get syncErrorAuthTimeout =>
+      'Tempo scaduto durante la connessione al server';
+
+  @override
+  String get syncErrorAuth => 'Errore durante l\'autenticazione';
+
+  @override
+  String get syncErrorInvalidCredentials => 'Credenziali non valide';
+
+  @override
+  String get syncErrorAccountBlocked =>
+      'Account bloccato dall\'amministratore. Contatta l\'assistenza.';
+
+  @override
+  String get syncErrorTooManyAttempts =>
+      'Troppi tentativi di accesso. Attendi qualche minuto e riprova.';
+
+  @override
+  String get syncErrorRefreshTimeout =>
+      'Tempo scaduto durante il rinnovo della sessione';
+
+  @override
+  String get syncErrorRefreshFailed => 'Impossibile rinnovare la sessione';
+
+  @override
+  String get syncErrorSettingsDownload =>
+      'Impossibile scaricare le impostazioni remote';
+
+  @override
+  String get syncErrorSettingsUpdate =>
+      'Impossibile aggiornare le impostazioni utente';
+
+  @override
+  String get syncErrorSessionExpired => 'Sessione scaduta o non autorizzata';
+
+  @override
+  String get syncErrorForbidden => 'Accesso negato dal server';
+
+  @override
+  String get syncErrorRateLimited =>
+      'Sincronizzazione temporaneamente limitata. Riprova tra poco.';
+
+  @override
+  String get syncErrorServerBusy =>
+      'Server temporaneamente occupato, riprovare a breve';
+
+  @override
+  String syncErrorRejected(int count) {
+    return 'Sincronizzazione rifiutata dal server ($count elementi non validi)';
+  }
+
+  @override
+  String get syncErrorSyncFailed => 'Errore durante la sincronizzazione';
+
+  @override
+  String get syncErrorOrderingReset =>
+      'Impossibile eliminare i dati di posizionamento';
+
+  @override
   String get fillRequiredFields => 'Compila tutti i campi richiesti';
 
   @override

@@ -880,6 +880,144 @@ abstract class AppLocalizations {
   /// **'Synchronization failed (check connection)'**
   String get syncFailed;
 
+  /// No description provided for @syncErrorConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to connect to the server'**
+  String get syncErrorConnection;
+
+  /// No description provided for @syncErrorConnectionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to connect to the server. Check your connection and try again.'**
+  String get syncErrorConnectionHint;
+
+  /// No description provided for @syncErrorInvalidResponse.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid server response (malformed JSON)'**
+  String get syncErrorInvalidResponse;
+
+  /// No description provided for @syncErrorInvalidResponseShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid server response'**
+  String get syncErrorInvalidResponseShort;
+
+  /// No description provided for @syncErrorUrlScheme.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid server URL: use https://'**
+  String get syncErrorUrlScheme;
+
+  /// No description provided for @syncErrorUrlComponents.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid server URL: do not include credentials, query or fragments'**
+  String get syncErrorUrlComponents;
+
+  /// No description provided for @syncErrorUrlInsecure.
+  ///
+  /// In en, this message translates to:
+  /// **'Insecure URL: use https:// (http is allowed only for localhost)'**
+  String get syncErrorUrlInsecure;
+
+  /// No description provided for @syncErrorAuthTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out while connecting to the server'**
+  String get syncErrorAuthTimeout;
+
+  /// No description provided for @syncErrorAuth.
+  ///
+  /// In en, this message translates to:
+  /// **'Authentication error'**
+  String get syncErrorAuth;
+
+  /// No description provided for @syncErrorInvalidCredentials.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid credentials'**
+  String get syncErrorInvalidCredentials;
+
+  /// No description provided for @syncErrorAccountBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Account blocked by the administrator. Contact support.'**
+  String get syncErrorAccountBlocked;
+
+  /// No description provided for @syncErrorTooManyAttempts.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many login attempts. Wait a few minutes and try again.'**
+  String get syncErrorTooManyAttempts;
+
+  /// No description provided for @syncErrorRefreshTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out while renewing the session'**
+  String get syncErrorRefreshTimeout;
+
+  /// No description provided for @syncErrorRefreshFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to renew the session'**
+  String get syncErrorRefreshFailed;
+
+  /// No description provided for @syncErrorSettingsDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to download remote settings'**
+  String get syncErrorSettingsDownload;
+
+  /// No description provided for @syncErrorSettingsUpdate.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to update user settings'**
+  String get syncErrorSettingsUpdate;
+
+  /// No description provided for @syncErrorSessionExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'Session expired or unauthorized'**
+  String get syncErrorSessionExpired;
+
+  /// No description provided for @syncErrorForbidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Access denied by the server'**
+  String get syncErrorForbidden;
+
+  /// No description provided for @syncErrorRateLimited.
+  ///
+  /// In en, this message translates to:
+  /// **'Synchronization temporarily rate-limited. Try again shortly.'**
+  String get syncErrorRateLimited;
+
+  /// No description provided for @syncErrorServerBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Server temporarily busy, please try again shortly'**
+  String get syncErrorServerBusy;
+
+  /// No description provided for @syncErrorRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'Synchronization rejected by the server ({count} invalid items)'**
+  String syncErrorRejected(int count);
+
+  /// No description provided for @syncErrorSyncFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Error during synchronization'**
+  String get syncErrorSyncFailed;
+
+  /// No description provided for @syncErrorOrderingReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to delete positioning data'**
+  String get syncErrorOrderingReset;
+
   /// No description provided for @fillRequiredFields.
   ///
   /// In en, this message translates to:

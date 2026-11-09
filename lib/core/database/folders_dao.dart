@@ -296,8 +296,8 @@ class FoldersDao {
   /// genitori PRIMA dei figli (vedi [sortFoldersParentsFirst]): la query non ha
   /// un ORDER BY e l'ordine delle righe dipende da come sono state scritte
   /// (un `upsert` con REPLACE cambia il rowid). Un figlio davanti a un
-  /// genitore nuovo faceva rifiutare il batch dai server precedenti a P6 con
-  /// 422 `invalid_parent_id`, e la riparazione appiattiva la gerarchia.
+  /// genitore nuovo faceva rifiutare il batch con 422 `invalid_parent_id`,
+  /// e la riparazione appiattiva la gerarchia.
   Future<List<FolderRow>> listDirty() async {
     final db = await _db;
     final rows = await db.query('folders', where: 'dirty = 1');

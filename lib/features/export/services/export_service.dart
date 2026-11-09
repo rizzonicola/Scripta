@@ -2,11 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
-// WEB-BEGIN — serve kIsWeb per il download del browser e per evitare Platform.
-// WEB-ORIG: import 'package:flutter/foundation.dart' show compute, visibleForTesting;
-import 'package:flutter/foundation.dart'
-    show compute, kIsWeb, visibleForTesting;
-// WEB-END
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -55,23 +51,13 @@ class ExportService {
         bytes: bytes,
         mimeType: mimeType,
       );
-      // WEB-BEGIN — su Web file_picker avvia il download e restituisce null:
-      // il salvataggio è comunque riuscito (o gestito dal browser).
-      // WEB-ORIG: return (saved: uri != null, fallbackPath: null);
-      if (kIsWeb) return (saved: true, fallbackPath: null);
-      // WEB-END
       return (saved: uri != null, fallbackPath: null);
     } catch (_) {
       // Se il picker di sistema non è disponibile, il fallback resta nella
       // directory privata dell'app: mai storage esterno condiviso o
       // app-specific, dove un backup non cifrato sarebbe leggibile da altre
       // app (SEC-03). Il percorso viene mostrato all'utente.
-      // WEB-BEGIN — il fallback su directory privata non esiste sul Web.
-      // WEB-ORIG: if (Platform.isAndroid || Platform.isIOS) {
-      final canUsePrivateDirectory =
-          !kIsWeb && (Platform.isAndroid || Platform.isIOS);
-      // WEB-END
-      if (canUsePrivateDirectory) {
+      if (Platform.isAndroid || Platform.isIOS) {
         final dir = await getApplicationDocumentsDirectory();
         final file = await uniqueFallbackFile(dir, fileName);
         await file.writeAsBytes(bytes);

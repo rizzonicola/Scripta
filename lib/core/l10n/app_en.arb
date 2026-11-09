@@ -130,6 +130,36 @@
   "syncing": "Syncing...",
   "syncSuccess": "Synchronization completed successfully!",
   "syncFailed": "Synchronization failed (check connection)",
+  "syncErrorConnection": "Unable to connect to the server",
+  "syncErrorConnectionHint": "Unable to connect to the server. Check your connection and try again.",
+  "syncErrorInvalidResponse": "Invalid server response (malformed JSON)",
+  "syncErrorInvalidResponseShort": "Invalid server response",
+  "syncErrorUrlScheme": "Invalid server URL: use https://",
+  "syncErrorUrlComponents": "Invalid server URL: do not include credentials, query or fragments",
+  "syncErrorUrlInsecure": "Insecure URL: use https:// (http is allowed only for localhost)",
+  "syncErrorAuthTimeout": "Timed out while connecting to the server",
+  "syncErrorAuth": "Authentication error",
+  "syncErrorInvalidCredentials": "Invalid credentials",
+  "syncErrorAccountBlocked": "Account blocked by the administrator. Contact support.",
+  "syncErrorTooManyAttempts": "Too many login attempts. Wait a few minutes and try again.",
+  "syncErrorRefreshTimeout": "Timed out while renewing the session",
+  "syncErrorRefreshFailed": "Unable to renew the session",
+  "syncErrorSettingsDownload": "Unable to download remote settings",
+  "syncErrorSettingsUpdate": "Unable to update user settings",
+  "syncErrorSessionExpired": "Session expired or unauthorized",
+  "syncErrorForbidden": "Access denied by the server",
+  "syncErrorRateLimited": "Synchronization temporarily rate-limited. Try again shortly.",
+  "syncErrorServerBusy": "Server temporarily busy, please try again shortly",
+  "syncErrorRejected": "Synchronization rejected by the server ({count} invalid items)",
+  "@syncErrorRejected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "syncErrorSyncFailed": "Error during synchronization",
+  "syncErrorOrderingReset": "Unable to delete positioning data",
   "fillRequiredFields": "Please fill in all required fields",
   "licenseGpl": "GPL 3.0 License",
   "openSourceTech": "Open Source Libraries & Technologies:",

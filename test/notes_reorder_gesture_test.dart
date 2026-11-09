@@ -22,7 +22,7 @@ import 'support/wait_until.dart';
 /// La lista note, riordinando, sveglia il motore di sync (per il blob di
 /// posizionamento): senza sessione salvata non deve toccare il keystore.
 class _NoAuthStorage extends SecureStorageService {
-  const _NoAuthStorage();
+  _NoAuthStorage();
 
   @override
   Future<StoredSession?> getSession() async => null;
@@ -35,7 +35,7 @@ class _NoAuthStorage extends SecureStorageService {
 }
 
 ProviderContainer _container() => ProviderContainer(
-  overrides: [secureStorageProvider.overrideWithValue(const _NoAuthStorage())],
+  overrides: [secureStorageProvider.overrideWithValue(_NoAuthStorage())],
 );
 
 List<String> _ids(ProviderContainer container) =>

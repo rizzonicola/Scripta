@@ -47,14 +47,14 @@ Whether you're drafting quick thoughts on your phone or organizing complex proje
 ## ✨ Key Features
 
 - **📝 Markdown-First Editor**: Write in clean, standard Markdown with intelligent toolbar helpers and an instant, fluid rendered reading view.
-- **⚡ Local-First & Zero Latency**: Instantaneous startup and sub-millisecond search powered by SQLite WAL. Your notes reside on your device, fully accessible offline.
+- **⚡ Local-First & Zero Latency**: Fast startup and instant local search powered by SQLite WAL. Your notes reside on your device, fully accessible offline.
 - **🔄 Effortless Synchronization**: Privacy-respecting, asynchronous sync with self-hosted backends using Last-Write-Wins (LWW) conflict resolution and background debouncing.
 - **🎨 Modern, Adaptive Design**: Gorgeous light and dark color schemes, custom typography, subtle haptics, and a responsive layout that feels native on desktop, tablet, and mobile.
 - **📂 Hierarchical Organization**: Organize notes into nested folders, mark favorites, pin priority documents, and rearrange with drag-and-drop ease.
 - **🔍 Instant Search**: Real-time filtering and content search find what you need across your entire vault in milliseconds.
 - **📦 True Data Ownership**: Never get locked in. Import and export complete backups anytime with standard ZIP archives or plain Markdown files.
 - **⌨️ Desktop-Class Workflow**: Right-click context menus on notes, folders, "All notes" and empty areas (pin, move, duplicate, export, rename, delete, new note/folder, sorting) plus keyboard shortcuts for everything (`F1` shows the full list; `Ctrl` becomes `Cmd` on macOS).
-- **📥 Open Files & Folders Natively**: Open Markdown and plain-text files with Scripta from your file manager, or drag files and folders onto the window, to bring them in as new notes.
+- **📥 Open Files & Folders Natively (Desktop)**: On Linux, Windows and macOS, open Markdown and plain-text files with Scripta from your file manager, or drag files and folders onto the window, to bring them in as new notes.
 
 ---
 
@@ -94,6 +94,15 @@ flutter test
 # Launch the app
 flutter run
 ```
+
+---
+
+## 🔄 Self-Hosted Sync Server
+
+Synchronization is optional and works with the **notes-server** backend, a Go REST service with SQLite/libSQL storage. The server is free software too, released under the [GNU General Public License v3.0 (GPLv3)](https://github.com/rizzonicola/Scripta-backend/blob/main/LICENSE).
+
+- Source code: [github.com/rizzonicola/Scripta-backend](https://github.com/rizzonicola/Scripta-backend)
+- Docker image and local setup instructions are in the server repository.
 
 ---
 

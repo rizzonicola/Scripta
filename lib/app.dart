@@ -109,7 +109,7 @@ class ScriptaApp extends ConsumerWidget {
 
       // Il drag & drop deve coprire TUTTA la finestra, comprese le route
       // sovrapposte (dialog, menu): per questo sta nel builder di MaterialApp
-      // e non dentro lo shell. Su mobile/Web è un semplice passthrough.
+      // e non dentro lo shell. Su mobile è un semplice passthrough.
       builder: (context, child) =>
           DesktopFileDropRegion(child: child ?? const SizedBox.shrink()),
     );

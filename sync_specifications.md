@@ -1,7 +1,7 @@
 # Specifiche Tecniche di Sincronizzazione: Architettura Local-First, Protocollo REST & LWW
 
 **Progetto**: Scripta  
-**Versione Specifiche**: 2.0.0 (riscritta dal codice: P6, fase 1)  
+**Versione Specifiche**: 2.0.0  
 **Backend di Riferimento**: `notes-server` (Go, SQLite WAL / libSQL, **una transazione per batch**, protocollo di sync «delta» basato su ID)
 
 > [!IMPORTANT]

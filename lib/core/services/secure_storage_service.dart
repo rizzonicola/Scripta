@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart'
-    show debugPrint, kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -101,20 +100,31 @@ class StoredSession {
 /// Su tutte le altre piattaforme il comportamento è invariato: nessun
 /// degrado silenzioso della sicurezza.
 class SecureStorageService {
-  static const _tokenKey = 'inkflow_jwt_token';
-  static const _refreshTokenKey = 'inkflow_refresh_token';
-  static const _serverUrlKey = 'inkflow_server_url';
-  static const _usernameKey = 'inkflow_username';
-  static const _userIdKey = 'inkflow_user_id';
+  static const _tokenKey = 'scripta_jwt_token';
+  static const _refreshTokenKey = 'scripta_refresh_token';
+  static const _serverUrlKey = 'scripta_server_url';
+  static const _usernameKey = 'scripta_username';
+  static const _userIdKey = 'scripta_user_id';
 
   /// Chiave unica della sessione atomica. Le chiavi separate sopra restano
   /// solo per leggere/migrare installazioni precedenti e per i test.
-  static const _sessionKey = 'inkflow_session_v1';
+  static const _sessionKey = 'scripta_session_v1';
+
+  // Chiavi usate dalle versioni precedenti (nome "inkflow"): vengono lette
+  // una sola volta e rimosse dopo la copia.
+  static const _legacyTokenKey = 'inkflow_jwt_token';
+  static const _legacyRefreshTokenKey = 'inkflow_refresh_token';
+  static const _legacyServerUrlKey = 'inkflow_server_url';
+  static const _legacyUsernameKey = 'inkflow_username';
+  static const _legacyUserIdKey = 'inkflow_user_id';
+  static const _legacySessionKey = 'inkflow_session_v1';
 
   final FlutterSecureStorage _storage;
   final bool? _fallbackEnabledOverride;
 
-  const SecureStorageService([FlutterSecureStorage? storage])
+  Future<void>? _legacyMigration;
+
+  SecureStorageService([FlutterSecureStorage? storage])
     : _storage =
           storage ??
           const FlutterSecureStorage(
@@ -126,7 +136,7 @@ class SecureStorageService {
       _fallbackEnabledOverride = null;
 
   @visibleForTesting
-  const SecureStorageService.withFallback(
+  SecureStorageService.withFallback(
     FlutterSecureStorage storage, {
     required bool fallbackEnabled,
   }) : _storage = storage,
@@ -136,12 +146,75 @@ class SecureStorageService {
   static const _fallbackPrefix = AppConstants.prefSecureFallbackPrefix;
 
   /// Il fallback è attivo solo su iOS/macOS (vedi commento di classe).
-  bool get _fallbackEnabled {
-    if (kIsWeb) return false;
-    return _fallbackEnabledOverride ?? (Platform.isIOS || Platform.isMacOS);
+  bool get _fallbackEnabled =>
+      _fallbackEnabledOverride ?? (Platform.isIOS || Platform.isMacOS);
+
+  /// Migra una tantum le chiavi del vecchio nome "inkflow" a "scripta".
+  /// Copia solo se la nuova chiave non esiste già; la chiave vecchia viene
+  /// sempre rimossa dopo il tentativo.
+  Future<void> _ensureLegacyMigration() =>
+      _legacyMigration ??= _migrateLegacyKeys();
+
+  Future<void> _migrateLegacyKeys() async {
+    await _migrateKey(_legacySessionKey, _sessionKey, migrateFallback: false);
+    await _migrateKey(_legacyTokenKey, _tokenKey, migrateFallback: false);
+    await _migrateKey(
+      _legacyRefreshTokenKey,
+      _refreshTokenKey,
+      migrateFallback: false,
+    );
+    await _migrateKey(_legacyServerUrlKey, _serverUrlKey, migrateFallback: true);
+    await _migrateKey(_legacyUsernameKey, _usernameKey, migrateFallback: true);
+    await _migrateKey(_legacyUserIdKey, _userIdKey, migrateFallback: true);
+
+    // I vecchi segreti non devono restare nel fallback in chiaro.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      for (final key in [
+        _legacySessionKey,
+        _legacyTokenKey,
+        _legacyRefreshTokenKey,
+      ]) {
+        await prefs.remove('$_fallbackPrefix$key');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _migrateKey(
+    String oldKey,
+    String newKey, {
+    required bool migrateFallback,
+  }) async {
+    try {
+      final legacy = await _storage.read(key: oldKey);
+      if (legacy != null) {
+        final current = await _storage.read(key: newKey);
+        if (current == null) {
+          await _storage.write(key: newKey, value: legacy);
+        }
+        await _storage.delete(key: oldKey);
+      }
+    } catch (e) {
+      debugPrint('SecureStorage: migrazione chiave legacy fallita ($e).');
+    }
+
+    if (!migrateFallback) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final oldFallbackKey = '$_fallbackPrefix$oldKey';
+      final legacy = prefs.getString(oldFallbackKey);
+      if (legacy != null) {
+        final newFallbackKey = '$_fallbackPrefix$newKey';
+        if (prefs.getString(newFallbackKey) == null) {
+          await prefs.setString(newFallbackKey, legacy);
+        }
+        await prefs.remove(oldFallbackKey);
+      }
+    } catch (_) {}
   }
 
   Future<void> _write(String key, String value) async {
+    await _ensureLegacyMigration();
     try {
       await _storage.write(key: key, value: value);
     } catch (e) {
@@ -155,6 +228,7 @@ class SecureStorageService {
   }
 
   Future<String?> _read(String key) async {
+    await _ensureLegacyMigration();
     try {
       final value = await _storage.read(key: key);
       if (value != null || !_fallbackEnabled) return value;
@@ -201,6 +275,7 @@ class SecureStorageService {
     if (!session.isUsable) {
       throw ArgumentError('sessione non valida: token, URL o userId mancanti');
     }
+    await _ensureLegacyMigration();
     try {
       await _storage.write(
         key: _sessionKey,
@@ -228,7 +303,14 @@ class SecureStorageService {
   }
 
   Future<void> _removeLegacySecretKeys() async {
-    for (final key in [_tokenKey, _refreshTokenKey, _usernameKey]) {
+    for (final key in [
+      _tokenKey,
+      _refreshTokenKey,
+      _usernameKey,
+      _legacyTokenKey,
+      _legacyRefreshTokenKey,
+      _legacyUsernameKey,
+    ]) {
       try {
         await _delete(key);
       } catch (_) {}
@@ -238,6 +320,7 @@ class SecureStorageService {
   /// Legge la sessione atomica. Se non esiste, migra una tantum le chiavi
   /// separate delle versioni precedenti e la riscrive come bundle.
   Future<StoredSession?> getSession() async {
+    await _ensureLegacyMigration();
     final memorySession = _memoryOnlySession;
     if (memorySession != null && memorySession.isUsable) return memorySession;
 
@@ -306,6 +389,7 @@ class SecureStorageService {
   }
 
   Future<String?> getAuthToken() async {
+    await _ensureLegacyMigration();
     // Un token scritto in memoria è la sessione più recente: NON deve essere
     // scavalcato da un vecchio token rimasto nel Keychain quando la scrittura
     // era fallita.
@@ -316,6 +400,7 @@ class SecureStorageService {
     if (_fallbackEnabled) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('$_fallbackPrefix$_tokenKey');
+      await prefs.remove('$_fallbackPrefix$_legacyTokenKey');
     }
     try {
       final value = await _storage.read(key: _tokenKey);
@@ -347,6 +432,7 @@ class SecureStorageService {
   }
 
   Future<String?> getRefreshToken() async {
+    await _ensureLegacyMigration();
     final memoryToken = _memoryOnlyRefreshToken;
     if (memoryToken != null && memoryToken.isNotEmpty) return memoryToken;
     try {
@@ -377,6 +463,7 @@ class SecureStorageService {
   Future<String?> getUserId() => _read(_userIdKey);
 
   Future<void> clearAuth() async {
+    await _ensureLegacyMigration();
     _memoryOnlyToken = null;
     _memoryOnlyRefreshToken = null;
     _memoryOnlySession = null;
@@ -387,6 +474,11 @@ class SecureStorageService {
       _refreshTokenKey,
       _usernameKey,
       _userIdKey,
+      _legacySessionKey,
+      _legacyTokenKey,
+      _legacyRefreshTokenKey,
+      _legacyUsernameKey,
+      _legacyUserIdKey,
     ]) {
       try {
         await _delete(key);

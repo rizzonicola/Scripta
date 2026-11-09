@@ -9,49 +9,24 @@ import 'package:flutter/rendering.dart'
         RenderOpacity;
 
 /// Nome del tipo privato con cui il `SelectionOverlay` di Flutter costruisce
-/// ciascuna maniglia (un `StatefulWidget` per maniglia, nell'overlay radice).
+/// ciascuna maniglia nell'overlay radice.
 ///
-/// `flutter_md` non espone nulla sulle maniglie, quindi l'unico modo di
-/// vederle dall'app è cercarle per questo nome. È FRAGILE per costruzione: se
-/// Flutter lo rinominasse non si troverebbe più nessuna maniglia e
-/// `_MarkdownRenderedViewState._selectionHandlesNeedRebuild` risponderebbe
-/// «ricostruisci» a ogni richiamo (al peggio un lampeggio, nient'altro si
-/// romperebbe). È lo stesso criterio di una versione precedente; cambia COSA si
-/// guarda una volta trovato il widget (vedi [SelectionHandleStatus]). I build
-/// di release non usano `--obfuscate`, quindi il nome è leggibile anche lì.
+/// `flutter_md` non espone le maniglie, quindi si cercano per nome. È fragile
+/// per costruzione: se Flutter lo rinomina, non si trova nessuna maniglia e
+/// `_MarkdownRenderedViewState._selectionHandlesNeedRebuild` risponde
+/// «ricostruisci» a ogni richiamo (al peggio un lampeggio). I build di release
+/// non usano `--obfuscate`, quindi il nome resta leggibile.
 const String _kSelectionHandleTypeName = '_SelectionHandleOverlay';
 
-/// Stato "reale" di UNA maniglia di selezione: la maniglia è DIPINTA oppure
-/// esiste soltanto come widget?
+/// Stato reale di UNA maniglia di selezione: è dipinta oppure esiste solo
+/// come widget?
 ///
-/// PERCHÉ NON BASTA SAPERE CHE LA MANIGLIA ESISTE (causa più probabile del
-/// sintomo «le maniglie non riappaiono» visto sul tablet)
-/// -----------------------------------------------------------------------
-/// Una versione precedente della vista rispondeva «sì» appena
-/// nell'overlay radice c'era un widget `_SelectionHandleOverlay`. Ma quel
-/// widget resta montato per tutta la vita del `SelectionOverlay` anche quando
-/// NON si vede, per almeno tre motivi indipendenti:
-///  * **non è collegato** ([isLinked]): la maniglia è un follower
-///    (`CompositedTransformFollower`) il cui `LayerLink` ha per leader il
-///    render object dell'ESTREMO della selezione (dal changelog di
-///    `flutter_md` 0.2.0: «Selection endpoints push `LeaderLayer`s from the
-///    render objects»; il codice del pacchetto non è stato letto). Se quel
-///    render object non è montato (blocco fuori da viewport + `cacheExtent`)
-///    o è stato rimontato e nessuno ha ricollegato il link, `LayerLink.leader`
-///    è `null` (doc API di Flutter) e, con `showWhenUnlinked: false` (come il
-///    framework costruisce le maniglie: ricordato a memoria,
-///    `_SelectionHandleOverlay` non è stato riletto), il follower non dipinge
-///    nulla (doc di `showWhenUnlinked`);
-///  * **opacità zero** ([opacity]): `startHandlesVisible` /
-///    `endHandlesVisible` di `SelectionOverlay` pilotano una `FadeTransition`
-///    che dissolve la maniglia senza smontarla (doc API di
-///    `SelectionOverlay.startHandlesVisible`);
-///  * **`Offstage`** ([isOffstage]) in un antenato.
-///
-/// Per questo qui si risale la catena dei `RenderObject` dalla foglia della
-/// maniglia fino alla radice moltiplicando le opacità e controllando follower
-/// scollegati e `RenderOffstage`: sono le stesse cose che decidono se un pixel
-/// arriva sullo schermo.
+/// Il widget `_SelectionHandleOverlay` resta montato anche quando non si
+/// vede: il follower può non essere collegato ([isLinked]), l'opacità può
+/// essere zero ([opacity]) o un antenato può essere `Offstage`
+/// ([isOffstage]). Per questo si risale la catena dei `RenderObject` dalla
+/// foglia alla radice moltiplicando le opacità e controllando follower
+/// scollegati e `RenderOffstage`.
 @immutable
 class SelectionHandleStatus {
   const SelectionHandleStatus({

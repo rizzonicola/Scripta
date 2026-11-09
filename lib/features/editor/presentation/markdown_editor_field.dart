@@ -47,38 +47,16 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
 /// Collega un singolo [TextEditingController] al gate globale di
 /// [HapticsHelper].
 ///
-/// STORIA DEL BUG (tre tentativi precedenti, tutti respinti):
-/// I tentativi #1 (transizione istantanea `isCollapsed`), #2 (pointer
-/// tracking via `Listener`, che non vede le maniglie perché disegnate in un
-/// `OverlayEntry` separato) e #3 (`TextField.onSelectionChanged`, parametro
-/// che il widget Material `TextField` non espone in questa versione
-/// dell'SDK) provavano tutti a decidere ESPLICITAMENTE, dal nostro codice
-/// Dart, quando emettere una vibrazione per l'intensità "light".
-///
-/// La causa radice per cui "Leggero" e "Disattivata" non funzionavano è
-/// però un'altra, e nessuno di quei tentativi poteva risolverla: dalla PR
-/// flutter/flutter#115373, il FRAMEWORK STESSO chiama
-/// `HapticFeedback.vibrate()` in autonomia quando la selezione di un
-/// `TextField` cambia (una volta alla creazione, e — su Android — ad ogni
-/// variazione del range durante il trascinamento di una maniglia). Questa
-/// chiamata nativa non passa MAI dal nostro `HapticsHelper`: qualunque cosa
-/// (o nessuna cosa) il nostro codice facesse, il telefono vibrava comunque.
-///
-/// La correzione vera è quindi a livello di platform channel (vedi
-/// `main.dart`, `_HapticGatingBinaryMessenger` + `HapticsHelper.
-/// gateNativeHapticCall`), non nel controller. Il compito di questa classe
-/// si riduce perciò a:
-///  1. ignorare le notifiche dovute a digitazione di testo (non riguardano
-///     la selezione "vera");
-///  2. inoltrare lo stato `isCollapsed` corrente a
-///     [HapticsHelper.reportSelectionState], che usa un debounce per
-///     ri-armare il colpetto "light" solo dopo una vera fine-selezione (e
-///     non su un attraversamento-zero momentaneo durante un trascinamento —
-///     vedi la doc di quel metodo per il dettaglio);
-///  3. per l'intensità "strong", richiamare esplicitamente
-///     [HapticsHelper.selectionDragTick] ad ogni variazione del range
-///     (garantisce il feedback continuo anche su iOS, dove il framework
-///     vibra nativamente solo alla creazione della selezione).
+/// Il framework vibra nativamente a ogni cambio di selezione
+/// (flutter/flutter#115373) senza passare da [HapticsHelper]: la
+/// soppressione vera avviene nel platform channel (vedi `main.dart`).
+/// Qui resta solo da:
+///  1. ignorare le notifiche dovute a digitazione di testo;
+///  2. inoltrare `isCollapsed` a [HapticsHelper.reportSelectionState],
+///     che ri-arma il colpetto "light" con un debounce;
+///  3. per "strong", chiamare [HapticsHelper.selectionDragTick] a ogni
+///     variazione del range (serve su iOS, dove il framework vibra solo
+///     alla creazione della selezione).
 class _SelectionHapticBinder {
   _SelectionHapticBinder(this._controller, this._getIntensity) {
     _lastText = _controller.text;
@@ -169,18 +147,11 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
   late _SelectionHapticBinder _titleHaptics;
   late _SelectionHapticBinder _contentHaptics;
 
-  // Auto-scroll continuo durante il trascinamento di una selezione (vedi la
-  // doc di `SelectionAutoScroller`) e relativi relay dei due campi.
-  //
-  // Il comportamento nativo di `TextField` dentro uno `SingleChildScrollView`
-  // scorre solo quando arrivano eventi del puntatore (a dito fermo non
-  // scorre) e porta a schermo il cursore da più percorsi concorrenti
-  // (`bringIntoView` + `_scheduleShowCaretOnScreen`) che, trascinando la
-  // maniglia SUPERIORE, lavorano su estremi diversi della selezione:
-  // il risultato sono scatti e "rimbalzi" verso il fondo della selezione
-  // (flutter/flutter#132047, fix in corso in #185206). Per questo, finché
-  // si trascina una selezione, `SelectionRevealShield` (vedi `build`)
-  // silenzia quel meccanismo e lo scroll è governato solo dall'auto-scroller.
+  // Auto-scroll continuo durante il trascinamento di una selezione (vedi
+  // `SelectionAutoScroller`) e relativi relay dei due campi. Lo
+  // `SelectionRevealShield` in `build` silenzia lo scroll nativo di
+  // `TextField`, che a dito fermo non scorre e va in conflitto con gli
+  // estremi della selezione (flutter/flutter#132047).
   late final SelectionAutoScroller _autoScroller;
   late _SelectionChangeRelay _titleSelectionRelay;
   late _SelectionChangeRelay _contentSelectionRelay;
@@ -294,21 +265,13 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     super.dispose();
   }
 
-  /// Calcola la posizione verticale REALE (non stimata) dell'inizio
-  /// dell'occorrenza attiva all'interno del campo di contenuto e scrolla
-  /// [_scrollController] fino a portarla in vista.
+  /// Calcola la posizione verticale reale dell'occorrenza attiva nel campo
+  /// di contenuto e scrolla [_scrollController] fino a portarla in vista.
   ///
-  /// Deliberatamente NON usa `widget.contentController.selection` +
-  /// focus per sfruttare l'auto-scroll nativo di `EditableText` verso il
-  /// cursore: farlo assegnerebbe una selezione "vera" al controller, che
-  /// verrebbe intercettata da `_SelectionHapticBinder` (vedi sopra) come se
-  /// l'utente avesse selezionato del testo, producendo un feedback aptico
-  /// spurio ad ogni avanzamento tra le occorrenze — oltre a poter aprire la
-  /// tastiera software su mobile solo per "guardare" un risultato di
-  /// ricerca. Il calcolo qui sotto è invece basato su geometria realmente
-  /// disposta da Flutter (dimensioni effettive del campo, `TextPainter` con
-  /// lo stesso identico stile del testo reso), non su un'euristica a pixel
-  /// fissi per riga.
+  /// Non usa `contentController.selection` + focus: assegnare una selezione
+  /// "vera" farebbe scattare l'aptica di `_SelectionHapticBinder` e potrebbe
+  /// aprire la tastiera. Il calcolo usa la geometria disposta da Flutter e
+  /// un `TextPainter` con lo stesso stile del testo reso.
   void _scrollToActiveMatch() {
     final match = widget.activeSearchMatch;
     if (match == null || !mounted) return;

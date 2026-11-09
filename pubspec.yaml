@@ -48,11 +48,6 @@ dependencies:
   # lib/core/database/app_database.dart puro SQL leggibile e diffabile.
   sqflite: ^2.3.3+1
   sqflite_common_ffi: ^2.3.3
-  # WEB-BEGIN — database SQLite su Flutter Web (Wasm + IndexedDB).
-  # WEB: usato solo da lib/web_support/db_factory/db_factory_web.dart;
-  # sulle altre piattaforme resta attivo sqflite_common_ffi.
-  sqflite_common_ffi_web: ^1.2.0
-  # WEB-END
   path: ^1.9.0
 
   # Utilities

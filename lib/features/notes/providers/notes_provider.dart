@@ -278,39 +278,14 @@ class NotesNotifier extends StateNotifier<NotesState> {
   Future<void> clearOrdering() => applyOrdering(const {});
 
   /// La nota con modifiche testuali non ancora scritte su SQLite, catturata
-  /// ESPLICITAMENTE al momento della battitura (vedi [_debouncedPersist]).
+  /// al momento della battitura (vedi [_debouncedPersist]).
   ///
-  /// QUESTA è la vera causa radice del bug di sincronizzazione, residua
-  /// anche dopo aver reso `flushPendingSaves()` un `Future<void>` atteso:
-  /// la versione precedente di `flushPendingSaves()` non riscriveva QUESTA
-  /// nota, ma rileggeva `activeNote`, cioè la deriva a runtime da
-  /// `state.activeNoteId`. Questo funziona SOLO quando chi chiama il flush
-  /// è la stessa UI dell'editor, che per costruzione flusha PRIMA di
-  /// cambiare `activeNoteId` (vedi `selectNote`, `note_editor_pane.dart`).
-  ///
-  /// `SyncNotifier.triggerSync()`, però, non è la UI dell'editor: vive in un
-  /// provider completamente separato e chiama `flushPendingSaves()` da
-  /// trigger esterni (pulsante manuale, avvio app, lifecycle, inattività)
-  /// che non hanno alcun controllo né alcuna garanzia su cosa sia
-  /// `activeNoteId` in quel preciso istante. Se, quando quel flush esterno
-  /// arriva, `activeNoteId` è già `null` (nessuna nota aperta in quel
-  /// momento) oppure punta a una nota diversa da quella che aveva davvero
-  /// una modifica in sospeso, `activeNote` restituisce la nota SBAGLIATA (o
-  /// nessuna): l'upsert scrive la nota sbagliata (o non scrive nulla), la
-  /// modifica testuale resta sporca solo nel debounce mai committato, e
-  /// `listDirtySince` — interrogata subito dopo — non la trova. Risultato
-  /// osservato: il pulsante manuale e i trigger automatici mostrano
-  /// "successo" (perché tecnicamente hanno contattato o verificato il
-  /// server) ma non inviano MAI la modifica realmente pendente; l'unico
-  /// caso che funzionava per davvero (chiusura/cambio nota) lo faceva solo
-  /// perché quel percorso flusha ESPLICITAMENTE la nota giusta PRIMA di
-  /// alterare `activeNoteId`, mascherando il difetto.
-  ///
-  /// La correzione: tracciare direttamente l'OGGETTO nota in sospeso (non
-  /// il suo id derivato da uno stato che può cambiare sotto i piedi), così
-  /// `flushPendingSaves()` scrive sempre e solo la modifica realmente in
-  /// sospeso, indipendentemente da chi la chiama e da cosa sia
-  /// `activeNoteId` in quel momento.
+  /// Va tracciato l'oggetto nota, non il suo id ricavato da
+  /// `state.activeNoteId`: `flushPendingSaves()` può essere chiamato da
+  /// trigger esterni (sync, lifecycle, inattività) quando `activeNoteId`
+  /// è `null` o punta a un'altra nota, e in quel caso l'upsert scriverebbe
+  /// la nota sbagliata (o niente), lasciando la modifica pendente invisibile
+  /// a `listDirtySince`.
   NoteModel? _pendingNote;
 
   /// Riferimento alla scrittura più recente avviata (dal debounce naturale
@@ -1164,32 +1139,16 @@ class NotesNotifier extends StateNotifier<NotesState> {
     }
   }
 
-  /// Inserisce in blocco un elenco di note nuove (usato dall'importazione,
-  /// vedi `import_service.dart`), es. da un backup ZIP o da una cartella
-  /// locale di file Markdown.
+  /// Inserisce in blocco note nuove (import da backup ZIP o file Markdown).
   ///
-  /// PERCHÉ un metodo dedicato invece di richiamare N volte [createNote] +
-  /// [updateNote] in un loop:
-  ///  - [updateNote] passa dal debounce di autosave condiviso
-  ///    ([_pendingNote]/[_debouncedPersist]), pensato per UNA sola nota
-  ///    attiva sotto digitazione dell'utente: chiamarlo in sequenza per N
-  ///    note diverse farebbe sì che solo l'ULTIMA di ogni "burst" venga
-  ///    davvero scritta su disco dal timer, perdendo silenziosamente il
-  ///    contenuto delle altre. Qui ogni nota viene invece scritta subito
-  ///    (`_dao.upsert`), esattamente come già fa [createNote] per la singola
-  ///    nota vuota creata da UI.
-  ///  - Un solo aggiornamento dello stato Riverpod per l'intero batch (non
-  ///    uno per nota), per evitare N rebuild della UI durante un import di
-  ///    centinaia di note.
-  ///  - Non tocca [activeNoteId]: l'utente resta sulla nota che stava
-  ///    guardando, l'importazione avviene "in background" rispetto alla UI.
+  /// Metodo dedicato perché [updateNote] passa dal debounce pensato per una
+  /// sola nota attiva: in un loop solo l'ultima verrebbe scritta, perdendo
+  /// le altre. Qui ogni nota viene scritta subito (`_dao.upsert`) con un solo
+  /// aggiornamento Riverpod per il batch, senza toccare [activeNoteId].
   ///
-  /// Non sovrascrive MAI note esistenti: ogni voce importata riceve sempre
-  /// un nuovo id (`_uuid.v4()`), quindi il risultato è per costruzione solo
-  /// additivo rispetto ai dati già presenti.
-  /// Conserva i metadati del manifest di backup
-  /// (date, preferito, pin e ordine manuale). Le note senza metadati ricevono
-  /// gli stessi default dell'importazione legacy.
+  /// Non sovrascrive note esistenti: ogni voce riceve un nuovo id
+  /// (`_uuid.v4()`). Conserva i metadati del manifest (date, preferito, pin,
+  /// ordine manuale); senza manifest valgono i default dell'import legacy.
   Future<int> importNotesBulkDetailed(List<ImportedNote> items) async {
     if (items.isEmpty) return 0;
 

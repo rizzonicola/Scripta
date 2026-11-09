@@ -1,0 +1,17 @@
+Scripta est une application de prise de notes Markdown local-first pour Android, iOS, Linux, Windows et macOS. Elle est conçue pour celles et ceux qui veulent écrire rapidement, sans distraction, tout en gardant le contrôle de leurs données.
+
+Fonctionnalités :
+- Éditeur Markdown avec barre d'outils intelligente et aperçu rendu instantané
+- Modes édition et lecture seule, mode concentration et écriture sans distraction
+- Stockage SQLite local avec recherche hors ligne rapide
+- Dossiers imbriqués, favoris, épinglage et organisation par glisser-déposer
+- Synchronisation auto-hébergée optionnelle avec résolution des conflits last-write-wins
+- Importation et exportation de sauvegardes complètes au format ZIP ou Markdown brut
+- Importation d'un dossier de fichiers Markdown sur Android via le Storage Access Framework
+- Thèmes clair et sombre, plusieurs palettes de couleurs et choix de polices
+- Raccourcis clavier de bureau sur les plateformes compatibles
+- Aucun compte, aucune publicité, aucune analyse, aucun Google Play Services
+
+Vos notes restent sur votre appareil par défaut. La synchronisation est facultative et nécessite un serveur que vous configurez vous-même. Scripta n'exploite pas de service de synchronisation hébergé.
+
+Scripta est un logiciel libre, distribué sous licence GNU General Public License v3.0. Le code source et le suivi des problèmes sont disponibles sur GitHub.

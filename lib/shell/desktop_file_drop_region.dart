@@ -7,8 +7,8 @@ import '../core/utils/platform_utils.dart';
 
 /// Accetta file e cartelle trascinati dall'esterno sulla finestra.
 ///
-/// Su mobile e Web restituisce semplicemente [child]: non esiste un drag &
-/// drop di file di sistema da intercettare. La consegna passa dallo stesso
+/// Su mobile restituisce semplicemente [child]: non esiste un drag & drop
+/// di file di sistema da intercettare. La consegna passa dallo stesso
 /// [ExternalOpenService] usato da "Apri con Scripta", così l'elaborazione (e
 /// la coda durante l'avvio) è unica per tutte le sorgenti.
 class DesktopFileDropRegion extends StatefulWidget {

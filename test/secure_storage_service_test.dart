@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/constants/app_constants.dart';
@@ -66,10 +68,10 @@ class _TestSecureStorage extends FlutterSecureStorage {
 }
 
 const _fallbackPrefix = AppConstants.prefSecureFallbackPrefix;
-const _tokenKey = '${_fallbackPrefix}inkflow_jwt_token';
-const _refreshTokenKey = '${_fallbackPrefix}inkflow_refresh_token';
-const _serverUrlKey = '${_fallbackPrefix}inkflow_server_url';
-const _usernameKey = '${_fallbackPrefix}inkflow_username';
+const _tokenKey = '${_fallbackPrefix}scripta_jwt_token';
+const _refreshTokenKey = '${_fallbackPrefix}scripta_refresh_token';
+const _serverUrlKey = '${_fallbackPrefix}scripta_server_url';
+const _usernameKey = '${_fallbackPrefix}scripta_username';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -148,7 +150,7 @@ void main() {
     'il token in memoria prevale su un vecchio token nel Keychain',
     () async {
       final staleStorage = _TestSecureStorage(
-        data: {'inkflow_jwt_token': 'stale-token'},
+        data: {'scripta_jwt_token': 'stale-token'},
         writeFails: true,
         deleteFails: true,
       );
@@ -160,7 +162,7 @@ void main() {
       await staleService.saveAuthToken('fresh-token');
 
       expect(await staleService.getAuthToken(), 'fresh-token');
-      expect(staleStorage.data['inkflow_jwt_token'], 'stale-token');
+      expect(staleStorage.data['scripta_jwt_token'], 'stale-token');
     },
   );
 
@@ -200,9 +202,9 @@ void main() {
     expect(session?.serverUrl, 'https://notes.example');
     expect(session?.username, 'mario');
     expect(session?.userId, 'u1');
-    expect(storage.data.containsKey('inkflow_session_v1'), isTrue);
-    expect(storage.data.containsKey('inkflow_jwt_token'), isFalse);
-    expect(storage.data.containsKey('inkflow_refresh_token'), isFalse);
+    expect(storage.data.containsKey('scripta_session_v1'), isTrue);
+    expect(storage.data.containsKey('scripta_jwt_token'), isFalse);
+    expect(storage.data.containsKey('scripta_refresh_token'), isFalse);
   });
 
   test('getSession migra le vecchie chiavi separate in un bundle', () async {
@@ -226,13 +228,39 @@ void main() {
     expect(session?.serverUrl, 'https://old.example');
     expect(session?.username, 'mario');
     expect(session?.userId, 'u1');
-    expect(storage.data.containsKey('inkflow_session_v1'), isTrue);
+    expect(storage.data.containsKey('scripta_session_v1'), isTrue);
     expect(
       storage.data.containsKey('inkflow_jwt_token'),
       isFalse,
       reason: 'le vecchie chiavi segrete non devono restare dopo la migrazione',
     );
     expect(storage.data.containsKey('inkflow_refresh_token'), isFalse);
+  });
+
+  test('getSession migra il vecchio bundle di sessione inkflow', () async {
+    const legacySession = StoredSession(
+      token: 'legacy-token',
+      refreshToken: 'legacy-refresh',
+      serverUrl: 'https://old.example',
+      username: 'mario',
+      userId: 'u1',
+    );
+    final storage = _TestSecureStorage(
+      data: {'inkflow_session_v1': jsonEncode(legacySession.toJson())},
+    );
+    final legacyService = SecureStorageService.withFallback(
+      storage,
+      fallbackEnabled: true,
+    );
+
+    final session = await legacyService.getSession();
+    expect(session?.token, 'legacy-token');
+    expect(session?.refreshToken, 'legacy-refresh');
+    expect(session?.serverUrl, 'https://old.example');
+    expect(session?.username, 'mario');
+    expect(session?.userId, 'u1');
+    expect(storage.data.containsKey('scripta_session_v1'), isTrue);
+    expect(storage.data.containsKey('inkflow_session_v1'), isFalse);
   });
 
   test('una scrittura fallita non lascia una sessione parziale', () async {
@@ -281,7 +309,7 @@ void main() {
     final session = await fallbackService.getSession();
     expect(session?.token, 'jwt-secret');
     expect(session?.refreshToken, 'refresh-secret');
-    expect(prefs.containsKey('${_fallbackPrefix}inkflow_session_v1'), isFalse);
+    expect(prefs.containsKey('${_fallbackPrefix}scripta_session_v1'), isFalse);
     for (final key in prefs.getKeys()) {
       expect(prefs.get(key), isNot('jwt-secret'));
       expect(prefs.get(key), isNot('refresh-secret'));
@@ -307,6 +335,6 @@ void main() {
     await atomicService.clearAuth();
 
     expect(await atomicService.getSession(), isNull);
-    expect(storage.data.containsKey('inkflow_session_v1'), isFalse);
+    expect(storage.data.containsKey('scripta_session_v1'), isFalse);
   });
 }

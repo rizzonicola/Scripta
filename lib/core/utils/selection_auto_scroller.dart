@@ -11,43 +11,23 @@ import 'package:flutter/widgets.dart';
 /// sostituire nei test.
 typedef SelectionPointerDispatcher = void Function(PointerEvent event);
 
-/// Auto-scroll CONTINUO mentre si trascina una selezione di testo verso il
+/// Auto-scroll continuo mentre si trascina una selezione di testo verso il
 /// bordo superiore/inferiore di una viewport scrollabile.
 ///
-/// PERCHÉ ESISTE
-/// -------------
-/// * Vista di lettura (`flutter_md` 0.2.0): `MarkdownSelectionScope` non ha
-///   alcun meccanismo di auto-scroll (nessun parametro, nessun hook): la
-///   `ListView` resta ferma qualunque cosa faccia il dito.
-/// * Editor (`TextField` dentro uno `SingleChildScrollView`): il framework
-///   porta il cursore a schermo solo quando ARRIVANO eventi del puntatore
-///   (quindi a dito fermo non scorre, e a dito "tremolante" scorre a scatti)
-///   e lo fa da più percorsi concorrenti (`bringIntoView` e
-///   `_scheduleShowCaretOnScreen`) che, trascinando la maniglia SUPERIORE,
-///   lavorano su estremi diversi della selezione e si contendono lo scroll
-///   (vedi flutter/flutter#132047 e #185206): da qui lo "scatto" verso il
-///   fondo della selezione. In quel caso va abbinato a
-///   [SelectionRevealShield].
-///
-/// COME FUNZIONA
-/// -------------
-/// 1. Osserva TUTTI i puntatori con una route globale del `PointerRouter`
-///    (le maniglie di selezione vivono in un `OverlayEntry` e non passano da
-///    nessun `Listener` dell'albero, quindi serve questa strada).
-/// 2. Un puntatore "pilota" una selezione quando, dopo il `PointerDown`, si è
-///    mosso oltre la soglia di tocco E il chiamante ha segnalato (con
-///    [notifySelectionChanged]) che la selezione è cambiata. Un normale
-///    swipe di scroll non cambia la selezione, quindi non viene mai
-///    scambiato per un trascinamento di selezione.
-/// 3. Finché il puntatore pilota è premuto e si trova nella fascia di bordo
-///    della viewport (o oltre il bordo), un [Ticker] fa scorrere lo
-///    [ScrollController] a velocità proporzionale alla profondità di
-///    penetrazione, indipendente dal frame rate e ANCHE a dito fermo.
-/// 4. Dopo ogni scroll, a layout aggiornato, reinietta un `PointerMoveEvent`
-///    a delta zero nella stessa posizione: la logica di selezione (che sia
-///    `flutter_md` o `TextField`) ricalcola l'estremo mobile sul contenuto
-///    ora sotto il dito, con la sua semantica di sempre (granularità a
-///    parola, offset della maniglia, ecc.) senza che serva conoscerla.
+/// Né `flutter_md` né `TextField` scansionano da soli a dito fermo: il
+/// framework porta il cursore in vista solo su eventi del puntatore, da più
+/// percorsi concorrenti che si contendono gli estremi della selezione
+/// (flutter/flutter#132047). Insieme a [SelectionRevealShield], questo
+/// componente governa lo scroll durante il trascinamento:
+/// 1. osserva i puntatori con una route globale del `PointerRouter`, perché
+///    le maniglie vivono in un `OverlayEntry` fuori dall'albero dei widget;
+/// 2. considera "pilota" un puntatore che si è mosso oltre la soglia di
+///    tocco e per cui [notifySelectionChanged] ha segnalato un cambio di
+///    selezione (un normale swipe di scroll non lo fa);
+/// 3. con un [Ticker] scorre lo [ScrollController] a velocità proporzionale
+///    alla profondità nella fascia di bordo, anche a dito fermo;
+/// 4. a layout aggiornato reinietta un `PointerMoveEvent` a delta zero, così
+///    la logica di selezione ricalcola l'estremo sotto il dito.
 class SelectionAutoScroller {
   SelectionAutoScroller({
     required TickerProvider vsync,

@@ -1,6 +1,6 @@
-// P6, fase 1 (app): backoff e Retry-After (Y-11), capability del server
-// (Y-14), scadenza del token (Y-13-A). Il server è finto e scriptabile; le
-// attese del backoff sono registrate invece di essere attese.
+// Backoff e Retry-After (Y-11), capability del server (Y-14), scadenza del
+// token (Y-13-A). Il server è finto e scriptabile; le attese del backoff sono
+// registrate invece di essere attese.
 
 import 'dart:convert';
 import 'dart:io';

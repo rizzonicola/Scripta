@@ -685,49 +685,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   static const double _toolbarReachAbove = 76.0;
   static const double _toolbarReachBelow = 72.0;
 
-  // Le ancore di default di `flutter_md` sono calcolate sulla geometria dei
-  // soli blocchi MONTATI (top/bottom del bounding box della selezione), che
-  // con "Seleziona tutto" o con una selezione scrollata via possono cadere
-  // ben fuori dalla viewport (blocchi nella `cacheExtent`, o fallback sui
-  // bordi dell'intero scope): la toolbar verrebbe posizionata fuori schermo
-  // e risulterebbe "scomparsa". Qui le ancore che escono dalla viewport
-  // vengono riportate sul bordo visibile più vicino (toolbar agganciata al
-  // bordo superiore/inferiore).
+  // Le ancore di flutter_md sono calcolate sui soli blocchi montati e possono
+  // cadere fuori dal viewport (selezione scrollata via, "Seleziona tutto"):
+  // qui le ancore vengono riportate sul bordo visibile più vicino.
   //
-  // DUE MODI, con la stessa
-  // convenzione di posizionamento (ancora primaria = toolbar SOPRA, secondaria
-  // = toolbar SOTTO, stesso margine `_toolbarEdgeMargin` dai bordi):
-  //  * `following: false` (predefinito) — il comportamento di sempre. Lo usano
-  //    il menù posizionale (tasto destro, `showToolbar(Offset)`: resta com'è) e
-  //    il ripiego quando non si conosce ancora la geometria della selezione.
-  //    Si toccano solo le ancore che escono dal viewport; quelle già dentro non
-  //    vengono toccate, così il flip sopra/sotto per selezioni vicine al bordo
-  //    resta quello nativo.
-  //  * `following: true` — [anchors] sono le ancore NATURALI della selezione
-  //    (primaria = bordo superiore, secondaria = bordo inferiore, in coordinate
-  //    globali, anche molto fuori dal viewport: arrivano dalle coordinate di
-  //    contenuto, vedi [_trackedToolbarAnchors]). Il risultato mette SEMPRE la
-  //    toolbar interamente dentro il viewport, con almeno `_toolbarEdgeMargin`
-  //    dal bordo: [below] false = sopra la selezione (ancora primaria
-  //    limitata a `top + _toolbarReachAbove` .. `bottom - margine`); [below]
-  //    true = sotto la selezione (ancora secondaria limitata a `top + margine`
-  //    .. `bottom - _toolbarReachBelow`). Le due sporgenze sono più larghe di
-  //    `_toolbarExtent` perché qui, vicino al bordo, un ribaltamento
-  //    sopra/sotto di Flutter sarebbe uno scatto (vedi i loro commenti).
-  //
-  // FLIP SOPRA/SOTTO: SCHERMO, NON VIEWPORT (fissato da un test di contratto in
-  // selection_contract_test.dart). Flutter sceglie
-  // se disegnare la toolbar sopra l'ancora primaria o sotto la secondaria in
-  // base allo spazio fino al bordo alto dello SCHERMO, non del viewport della
-  // lista. Il modo `following` non lo subisce, ed è questo il motivo della sua
-  // forma:
-  //  * sopra: la secondaria è `primaria - _toolbarReachBelow`, cioè il punto
-  //    in cui finirebbe la toolbar sotto di essa se Flutter ribaltasse da solo
-  //    (viewport che parte sopra la barra di stato...): nella variante «con
-  //    distanze» il rettangolo sopra e quello sotto coincidono esattamente;
-  //  * sotto: la primaria è 0 (bordo alto dello schermo), cioè «sopra non c'è
-  //    spazio»: è il modo pubblico di far scegliere il ramo inferiore, quale
-  //    che sia la posizione del viewport sullo schermo.
+  // `following: false` conserva il comportamento precedente e tocca solo le
+  // ancore esterne. Con `following: true` le ancore naturali (fornite in
+  // coordinate globali) tengono sempre la toolbar dentro il viewport, con
+  // `_toolbarEdgeMargin` dal bordo. Flutter decide il flip sopra/sotto in base
+  // allo schermo, non al viewport: la forma delle ancore evita quel salto.
   TextSelectionToolbarAnchors _clampAnchorsToViewport(
     TextSelectionToolbarAnchors anchors, {
     bool following = false,
@@ -819,66 +785,17 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   /// Costruisce il menù contestuale della selezione.
   ///
-  /// IL PROBLEMA. `flutter_md` mostra il menù con un `OverlayEntry` e richiama
-  /// questo builder solo a `showToolbar()` (e alle ricostruzioni dell'entry),
-  /// NON a ogni frame di scroll (dedotto dall'API pubblica, non dal sorgente
-  /// privato del pacchetto): le ancore calcolate lì restavano ferme mentre la
-  /// nota scorreva. Il `ContextMenuController` del
-  /// pacchetto è privato (l'app non può chiedere una ricostruzione) e
-  /// richiamare `showToolbar()` a ogni frame ricreerebbe l'`OverlayEntry`:
-  /// da qui il divieto di `showToolbar()` per frame.
+  /// flutter_md richiama questo builder solo quando il menù appare, non a ogni
+  /// frame di scroll: le ancore resterebbero ferme. Il widget restituito si
+  /// aggiorna quindi con un `ListenableBuilder` sullo scroll e ricalcola le
+  /// ancore nello stesso frame, senza ricreare l'`OverlayEntry`. La geometria
+  /// viene misurata una volta e convertita in coordinate di contenuto, così a
+  /// ogni scroll basta l'aritmetica. Per i menù non ancorati alla selezione
+  /// (tasto destro) resta la toolbar classica, ferma nel viewport.
   ///
-  /// LA SOLUZIONE. Per il menù ancorato alla selezione il widget restituito si
-  /// aggiorna da solo: un `ListenableBuilder` ascolta `_scrollController` (e
-  /// la «revisione» del tracking) e ricalcola le ancore nello STESSO frame
-  /// dello scroll, senza `setState` sull'intera vista.
-  ///
-  /// COORDINATE DI CONTENUTO (niente frame di ritardo). La geometria viva
-  /// (`globalSelectionRects()`, `contextMenuAnchors`) è quella dell'ULTIMO
-  /// layout: `ScrollPosition` notifica prima del layout, quindi leggerla a
-  /// ogni scroll darebbe un menù in ritardo di un frame. Si misura invece una
-  /// volta, la si converte in coordinate di CONTENUTO
-  /// (`y_contenuto = y_globale - viewport.top + offset`, che non dipendono
-  /// dallo scroll) e a ogni scroll basta l'aritmetica
-  /// `y_globale = y_contenuto - offset + viewport.top` con l'`offset` ATTUALE,
-  /// lo stesso che la `ListView` userà per il layout di questo frame. La
-  /// geometria viva si rilegge (a frame finito, [_scheduleToolbarRefresh])
-  /// solo quando può essere cambiata: selezione diversa, blocchi che si
-  /// montano, schermo ridimensionato. Le coordinate di contenuto restano
-  /// valide anche quando i blocchi della selezione vengono smontati (è
-  /// l'«ultimo lato noto»: con estremi smontati `contextMenuAnchors` perde la
-  /// direzione e `selectionHandleEndpoints()` non è affidabile: osservato in
-  /// CI).
-  ///
-  /// MENÙ NON ANCORATO ALLA SELEZIONE. Dopo `showToolbar(Offset)` (tasto
-  /// destro) `contextMenuAnchors` ha solo l'ancora primaria (dal dartdoc
-  /// pubblicato del pacchetto; il test 6 di selection_toolbar_tracking_test.dart
-  /// ne verifica l'effetto: menù fermo); senza selezione non c'è niente da
-  /// seguire. In entrambi i casi si
-  /// restituisce la toolbar di sempre: ferma, con le ancore riportate nel
-  /// viewport.
-  ///
-  /// LIMITI NOTI E NON VERIFICATI (nessuno è coperto da test):
-  ///  * Overflow: a ogni notifica di scroll i pulsanti vengono ricreati e
-  ///    `_TextSelectionToolbarOverflowable` chiude il menù «⋮» se i figli
-  ///    cambiano. Con due voci l'overflow non esiste; se se ne aggiungessero,
-  ///    andrebbero passati i figli già costruiti
-  ///    (`AdaptiveTextSelectionToolbar.getAdaptiveButtons`) invece di
-  ///    `buttonItems`.
-  ///  * Pulsanti stantii: l'elenco è calcolato quando il menù compare; se la
-  ///    selezione cambia a menù aperto (Seleziona tutto) non si aggiorna.
-  ///  * Testo che cambia a menù aperto: le coordinate memorizzate sarebbero
-  ///    stantie; `_updateBlocks` le azzera. Lo stesso vale se cambia solo la
-  ///    larghezza del pannello (tablet a due pannelli con divisore mobile) o
-  ///    la dimensione del carattere: la rimisura parte da blocchi che si
-  ///    costruiscono, da notifiche del controller e da cambi di dimensione
-  ///    dello SCHERMO, non da un cambio di larghezza del solo viewport.
-  ///  * Scroll fulmineo: se in un frame si supera la `cacheExtent` (250 px) la
-  ///    rimisura arriva uno-due frame dopo; nel frattempo vale la memoria.
-  ///  * Cupertino e desktop: le costanti `_toolbarReach*` sono tarate sulla
-  ///    toolbar Material; la toolbar desktop usa la sola ancora primaria.
-  ///  * Tabelle a scroll orizzontale: il centro orizzontale del menù è
-  ///    misurato una volta; scorrere la tabella non lo aggiorna.
+  /// Limiti noti: i pulsanti vengono ricreati a ogni scroll; una selezione o
+  /// un testo che cambiano a menù aperto lasciano le ancore memorizzate; uno
+  /// scroll oltre la `cacheExtent` rimisura con uno-due frame di ritardo.
   Widget _buildSelectionToolbar(MarkdownSelectionScopeState state) {
     final buttonItems = <ContextMenuButtonItem>[
       for (final item in state.contextMenuButtonItems)
@@ -1387,40 +1304,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
   }
 
-  // Serve ricostruire l'overlay per far riapparire le maniglie? Sì se se ne
-  // aspettano ([_selectionHandlesExpected]) E non ce n'è nessuna oppure NON
-  // TUTTE quelle esistenti sono DIPINTE.
+  // Serve ricostruire l'overlay? Sì se le maniglie sono attese
+  // ([_selectionHandlesExpected]) e nessuna è dipinta (o non lo sono tutte).
   //
-  // PERCHÉ VISIBILITÀ E NON ESISTENZA. Una versione precedente cercava il
-  // widget `_SelectionHandleOverlay` nell'overlay radice e, se c'era,
-  // rispondeva «le maniglie ci sono»: sul dispositivo non riapparivano. Quel
-  // widget resta montato
-  // anche quando non si vede (follower scollegato perché l'estremo è
-  // smontato, opacità zero: vedi [SelectionHandleStatus]): nello stato del
-  // sintomo la risposta era «ci sono» e non si ricostruiva nulla. Ora si
-  // misura se sono DIPINTE ([inspectSelectionHandles]).
-  //
-  // POLITICA DI RICOSTRUZIONE: tre candidate.
-  //  [A] ricostruire solo se NESSUNA maniglia è visibile. Sbaglia nello stato
-  //      «parziale»: un estremo non è mai uscito dal rendering (maniglia
-  //      dipinta), l'altro è uscito ed è rientrato e la sua maniglia non è
-  //      stata ricollegata (`flutter_md` 0.2.0 non ha «proxy» per le maniglie
-  //      di un estremo smontato: li introduce la PR #27 del repository
-  //      upstream, successiva alla 0.2.0 e letta solo come indizio).
-  //      L'utente vedrebbe UNA maniglia e il richiamo non farebbe nulla.
-  //  [B] ricostruire sempre quando gli estremi sono montati. Copre ogni caso
-  //      ma lampeggia anche quando va tutto bene (maniglie dipinte, menù
-  //      visibile) e rompe l'idempotenza voluta dal richiamo (test 1: stessi
-  //      `Element`, nessun lampeggio).
-  //  [B'] SCELTA: come [B] ma SOLO se almeno una maniglia esistente non è
-  //      dipinta. Stessa copertura di [B] nello stato parziale, nessun
-  //      lampeggio nello stato sano. Il prezzo è un lampeggio quando un
-  //      estremo è legittimamente smontato (la sua maniglia non può essere
-  //      dipinta): accettato perché avviene solo su richiamo esplicito.
-  //
-  // Evidenza: il sorgente privato di `flutter_md` NON è stato letto, quindi
-  // «nello stato parziale una sola maniglia manca» è un'inferenza, non un
-  // fatto osservato; [B'] è la scelta che non ne dipende.
+  // Si controlla che siano DIPINTE, non che esistano: il widget resta
+  // montato anche da invisibile (follower scollegato, opacità zero; vedi
+  // [SelectionHandleStatus]). Ricostruire sempre lampeggerebbe anche quando
+  // va tutto bene, quindi si ricostruisce solo se almeno una maniglia
+  // esistente non è dipinta. Il costo è un lampeggio quando un estremo è
+  // legittimamente smontato, ma avviene solo su richiamo esplicito.
   bool get _selectionHandlesNeedRebuild {
     if (!_selectionHandlesExpected) return false;
     final handles = inspectSelectionHandles(context);
@@ -1486,45 +1378,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     );
   }
 
-  // Problema 1: nessun hook di gesture nel `BlockPainter`. Il log di build
-  // ha rivelato l'interfaccia reale di `BlockPainter`/`SelectableBlockPainter`
-  // (flutter_md 0.2.0):
-  //   abstract final Size size;
-  //   Size layout(double width);
-  //   void paint(Canvas canvas, Size size, double offset);
-  //   void handleTapDown(PointerDownEvent event);
-  //   void handleTapUp(PointerUpEvent event);
-  //   String get renderedText;
-  //   int offsetForLocalPosition(Offset local);
-  //   List<Rect> boxesForRange(int start, int end);
-  //   TextRange wordBoundaryForLocal(Offset local);
-  //   bool isLinkAtLocal(Offset local);
-  // Nessun metodo di pan/drag: un `BlockPainter` riceve solo tap, non
-  // possiede un proprio gesture arena per un drag orizzontale. Il drag di
-  // selezione multi-blocco è quindi orchestrato da un livello sopra (la
-  // `MarkdownWidget`/`MarkdownSelectionScope`), non dal singolo painter —
-  // motivo per cui il mio precedente `_HorizontalScrollTablePainter`
-  // (custom drag consumato dentro il painter) non poteva funzionare: quel
-  // punto di estensione non esiste in questa API.
-  //
-  // Soluzione corretta con l'API reale: non toccare affatto il rendering
-  // interno di flutter_md per le tabelle (lasciamo che disegni/selezioni la
-  // tabella esattamente come per ogni altro blocco), e diamo invece più
-  // spazio orizzontale con un vero `Scrollable` a livello di widget
-  // (`SingleChildScrollView(scrollDirection: Axis.horizontal)`) attorno al
-  // `MarkdownWidget` di quel singolo blocco. Questo non richiede alcun
-  // codice custom per isolare i gesti: la disambiguazione nativa di Flutter
-  // fra `Scrollable` con assi ortogonali fa già esattamente quello che
-  // serve — un drag verticale che parte sopra la tabella risale comunque
-  // alla `ListView` esterna, un drag orizzontale resta isolato qui, e un
-  // long-press-poi-drag per la selezione touch (gestito da
-  // `MarkdownSelectionScope`, non da uno `Scrollable`) non è in
-  // competizione con un semplice `HorizontalDragGestureRecognizer`. Dando
-  // al figlio un vincolo di larghezza non limitato (`maxWidth: infinity`,
-  // che `SingleChildScrollView` fornisce di default sull'asse di scroll),
-  // la tabella può calcolare la sua larghezza naturale (somma colonne)
-  // esattamente come richiesto, invece di essere forzata/troncata nella
-  // larghezza del blocco padre.
+  // I BlockPainter di flutter_md non hanno hook di gesture: il drag di
+  // selezione è orchestrato da MarkdownSelectionScope. Per le tabelle non si
+  // tocca quindi il rendering interno; si avvolge il singolo blocco in uno
+  // `SingleChildScrollView` orizzontale, che lascia intatti scroll verticale,
+  // selezione touch e larghezza naturale della tabella.
   Widget _buildItem(int index, _ViewItem item) {
     final Widget content;
     switch (item) {
@@ -1618,52 +1476,16 @@ const Duration _recallLongPressDuration = Duration(milliseconds: 480);
 /// `_MarkdownRenderedViewState._recallSelectionUi` riporta maniglie e menù
 /// SENZA toccare la selezione.
 ///
-/// PERCHÉ UN RECOGNIZER (approccio a) E NON UN RIPRISTINO A POSTERIORI (b)
-/// ----------------------------------------------------------------------
-/// `flutter_md` 0.2.0 non permette di vietare l'avvio di un gesto di
-/// selezione (nessun hook, tipo `canStartSelectionAt`, che esiste solo su
-/// master) e `enabled: false` rimonterebbe l'albero sopra la `ListView`.
-/// Quindi o si lascia agire il pacchetto e si annulla il suo effetto (b), o
-/// gli si impedisce di agire (a). Si è scelto (a) perché, se il nostro
-/// recognizer vince l'arena, il gestore del long-press del pacchetto NON
-/// parte affatto:
-///  * la parola sotto il dito non viene mai selezionata, nemmeno per un
-///    frame (con (b) esisterebbe per l'intervallo fra la notifica del
-///    controller e il ripristino, e vedrebbero il cambio tutti i listener);
-///  * non partono i suoi effetti collaterali — focus, vibrazione, nascondere
-///    il menù, magnifier — che (b) non potrebbe annullare né evitare;
-///  * non serve "congelare" la selezione per la durata del gesto né
-///    sincronizzarsi con l'ordine dei listener del controller o con lo stato
-///    interno (ancora di trascinamento, granularità) del pacchetto.
-/// Usa solo API pubbliche: `LongPressGestureRecognizer` di Flutter e
-/// `MarkdownSelectionController.globalSelectionRects()`. L'unico
-/// accoppiamento col pacchetto è un'assunzione verificabile dal test
-/// `selection_recall_test.dart`: che il suo long-press sia un recognizer
-/// dell'arena (lo dice il README: "long-press-then-drag", "uno swipe fa
-/// ancora scorrere la lista") con scadenza ≥ 480 ms. Se così non fosse
-/// vincerebbe il pacchetto e il comportamento resterebbe quello di prima:
-/// nessuna regressione, solo il richiamo che non scatta.
+/// Si usa un recognizer invece di annullare a posteriori il gesto del
+/// pacchetto: così la parola sotto il dito non viene mai selezionata e non
+/// partono focus, vibrazione, chiusura del menù o magnifier. Usa solo API
+/// pubbliche e assume (verificato da `selection_recall_test.dart`) che il
+/// long-press di flutter_md sia un recognizer dell'arena con scadenza ≥ 480 ms.
 ///
-/// NIENTE RITARDI SU TAP E DOUBLE-TAP
-/// ----------------------------------
-/// (Il commento su `_pendingTapPointers` racconta come un
-/// `TapGestureRecognizer` aveva già causato ~300 ms di ritardo percepito.)
-///  * Fuori da una selezione, e con mouse/trackpad/penna, [isPointerAllowed]
-///    è `false`: il recognizer non entra proprio nell'arena.
-///  * Dentro una selezione resta in arena solo fino al rilascio: il
-///    `LongPressGestureRecognizer` si rifiuta da solo al `PointerUp` se la
-///    scadenza non è passata, e le route dei recognizer girano PRIMA dello
-///    sweep dell'arena, quindi non trattiene mai la vittoria di un tap né di
-///    un double-tap. Non fa mai `hold` dell'arena e si rifiuta anche se il
-///    dito supera `kTouchSlop`, quindi lo scroll resta quello di prima.
-///  * Il tap a vuoto dell'app non passa dall'arena (usa un `Listener`):
-///    invariato.
-///
-/// MULTI-TOUCH
-/// -----------
-/// Con più di un puntatore giù il tocco non viene reclamato (vedi
-/// `_isRecallCandidate`); se il secondo dito arriva durante l'attesa, il
-/// ricontrollo alla scadenza ([didExceedDeadline]) rifiuta il gesto.
+/// Fuori da una selezione, o con mouse/trackpad/penna, il recognizer non entra
+/// nell'arena. Dentro una selezione si rifiuta al rilascio, quindi non ritarda
+/// tap o double-tap; con più puntatori il ricontrollo alla scadenza rifiuta il
+/// gesto.
 class _SelectionRecallRecognizer extends LongPressGestureRecognizer {
   _SelectionRecallRecognizer({
     required this.shouldClaim,

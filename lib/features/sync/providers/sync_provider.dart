@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show Random;
+import 'dart:ui' show Locale, PlatformDispatcher;
 
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +19,7 @@ import '../../../core/database/folders_dao.dart';
 import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
 import '../../../core/events/note_mutation_events.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/services/secure_storage_service.dart';
 import '../../../core/services/session_state_service.dart';
 import '../../../features/sync/services/sync_api_service.dart';
@@ -30,11 +32,22 @@ import '../models/sync_models.dart';
 import 'sync_settings_gateway.dart';
 
 final secureStorageProvider = Provider<SecureStorageService>((ref) {
-  return const SecureStorageService();
+  return SecureStorageService();
 });
 
 final syncApiServiceProvider = Provider<SyncApiService>((ref) {
-  return SyncApiService();
+  return SyncApiService.withLocalizations(
+    localizations: () {
+      final locale =
+          ref.read(settingsProvider).locale ??
+          PlatformDispatcher.instance.locale;
+      return switch (locale.languageCode) {
+        'it' => lookupAppLocalizations(const Locale('it')),
+        'fr' => lookupAppLocalizations(const Locale('fr')),
+        _ => lookupAppLocalizations(const Locale('en')),
+      };
+    },
+  );
 });
 
 /// Istantanea di "quanto è già riuscito" per la regola sull'indicatore
@@ -970,9 +983,9 @@ class SyncNotifier extends StateNotifier<SyncConfig>
       return 'Tempo scaduto durante la connessione al server';
     }
     if (error is FormatException) {
-      return SyncApiService.invalidServerResponseShortMessage;
+      return _apiService.invalidServerResponseShortMessage;
     }
-    return SyncApiService.connectionErrorHintMessage;
+    return _apiService.connectionErrorHintMessage;
   }
 
   Future<bool> login({

@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show min;
 import 'dart:typed_data';
+import 'dart:ui' show Locale;
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:http/http.dart' as http;
 import '../models/sync_models.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/l10n/app_localizations.dart';
 
 class SyncApiException implements Exception {
   final int? statusCode;
@@ -114,12 +116,30 @@ class _ProgressRequest extends http.BaseRequest {
 class SyncApiService {
   final http.Client _client;
   final SyncTimeouts _timeouts;
+  final AppLocalizations Function() _localizations;
 
   SyncApiService([
     http.Client? client,
     SyncTimeouts timeouts = const SyncTimeouts(),
-  ]) : _client = client ?? http.Client(),
-       _timeouts = timeouts;
+  ]) : this._(client, timeouts, null);
+
+  SyncApiService.withLocalizations({
+    http.Client? client,
+    SyncTimeouts timeouts = const SyncTimeouts(),
+    required AppLocalizations Function() localizations,
+  }) : this._(client, timeouts, localizations);
+
+  SyncApiService._(
+    http.Client? client,
+    SyncTimeouts timeouts,
+    AppLocalizations Function()? localizations,
+  ) : _client = client ?? http.Client(),
+      _timeouts = timeouts,
+      _localizations =
+          localizations ??
+          (() => lookupAppLocalizations(const Locale('it')));
+
+  AppLocalizations get _l10n => _localizations();
 
   /// Identificativo dell'app inviato nell'header `X-Scripta-Client`. Il server
   /// lo usa SOLO nei log (non cambia nessun comportamento). Tenere allineato
@@ -140,14 +160,11 @@ class SyncApiService {
     return headers;
   }
 
-  static const String connectionErrorMessage =
-      'Impossibile connettersi al server';
-  static const String connectionErrorHintMessage =
-      'Impossibile connettersi al server. Controlla la connessione e riprova.';
-  static const String invalidServerResponseMessage =
-      'Risposta del server non valida (JSON malformato)';
-  static const String invalidServerResponseShortMessage =
-      'Risposta del server non valida';
+  String get connectionErrorMessage => _l10n.syncErrorConnection;
+  String get connectionErrorHintMessage => _l10n.syncErrorConnectionHint;
+  String get invalidServerResponseMessage => _l10n.syncErrorInvalidResponse;
+  String get invalidServerResponseShortMessage =>
+      _l10n.syncErrorInvalidResponseShort;
 
   /// Legge `Retry-After` espresso in secondi. Altri formati (data HTTP) o
   /// valori non validi/negativi: nessuna indicazione (null).
@@ -199,7 +216,7 @@ class SyncApiService {
       // Un 200 con JSON malformato non è un problema di rete: ritentare la
       // stessa richiesta non può migliorare nulla. 502 = risposta del server
       // non valida (e NON transitoria, vedi SyncNotifier).
-      throw const SyncApiException(invalidServerResponseMessage, 502);
+      throw SyncApiException(invalidServerResponseMessage, 502);
     }
   }
 
@@ -226,25 +243,16 @@ class SyncApiService {
     if (uri == null ||
         !(uri.scheme == 'http' || uri.scheme == 'https') ||
         uri.host.isEmpty) {
-      throw const SyncApiException(
-        'URL del server non valido: usa https://',
-        400,
-      );
+      throw SyncApiException(_l10n.syncErrorUrlScheme, 400);
     }
     if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
-      throw const SyncApiException(
-        'URL del server non valido: non includere credenziali, query o frammenti',
-        400,
-      );
+      throw SyncApiException(_l10n.syncErrorUrlComponents, 400);
     }
     // Il token viaggia nell'header Authorization: su http in chiaro può essere
     // letto da chiunque sulla rete. Consentiamo http solo verso il loopback
     // (server di sviluppo in locale/emulatore).
     if (uri.scheme == 'http' && !_isLoopbackHost(uri.host)) {
-      throw const SyncApiException(
-        'URL non sicuro: usa https:// (http è ammesso solo per localhost)',
-        400,
-      );
+      throw SyncApiException(_l10n.syncErrorUrlInsecure, 400);
     }
     return url;
   }
@@ -279,10 +287,10 @@ class SyncApiService {
         dto.userId.trim().isEmpty ||
         dto.username.trim().isEmpty ||
         dto.expiresAt <= 0) {
-      throw const SyncApiException(invalidServerResponseMessage, 502);
+      throw SyncApiException(invalidServerResponseMessage, 502);
     }
     if (requireRefreshToken && dto.refreshToken.trim().isEmpty) {
-      throw const SyncApiException(invalidServerResponseMessage, 502);
+      throw SyncApiException(invalidServerResponseMessage, 502);
     }
   }
 
@@ -307,7 +315,7 @@ class SyncApiService {
     } on Exception {
       // SocketException, ClientException, TLS...: la richiesta non ha prodotto
       // una risposta HTTP. Non esporre dettagli potenzialmente sensibili.
-      throw const SyncApiException(connectionErrorMessage);
+      throw SyncApiException(connectionErrorMessage);
     }
   }
 
@@ -323,7 +331,7 @@ class SyncApiService {
       _validateAuthResponse(dto, requireRefreshToken: requireRefreshToken);
       return dto;
     } catch (_) {
-      throw const SyncApiException(invalidServerResponseMessage, 502);
+      throw SyncApiException(invalidServerResponseMessage, 502);
     }
   }
 
@@ -341,7 +349,7 @@ class SyncApiService {
       {'username': username, 'password': password},
       // Il chiamante distingue un timeout da una risposta HTTP: senza status
       // code il login può ritentare dentro il proprio budget.
-      timeoutMessage: 'Tempo scaduto durante la connessione al server',
+      timeoutMessage: _l10n.syncErrorAuthTimeout,
     );
 
     if (response.statusCode == 200) {
@@ -349,27 +357,27 @@ class SyncApiService {
     }
 
     final body = bodyText(response);
-    final message = _extractError(body, 'Errore durante l\'autenticazione');
+    final message = _extractError(body, _l10n.syncErrorAuth);
     final code = _extractErrorCode(body);
     if (response.statusCode == 401) {
       throw SyncApiException(
-        'Credenziali non valide',
+        _l10n.syncErrorInvalidCredentials,
         401,
         const [],
         code ?? 'invalid_credentials',
       );
     }
     if (response.statusCode == 403 && code == 'account_blocked') {
-      throw const SyncApiException(
-        'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+      throw SyncApiException(
+        _l10n.syncErrorAccountBlocked,
         403,
-        [],
+        const [],
         'account_blocked',
       );
     }
     if (response.statusCode == 429) {
       throw SyncApiException.withRetryAfter(
-        'Troppi tentativi di accesso. Attendi qualche minuto e riprova.',
+        _l10n.syncErrorTooManyAttempts,
         response.statusCode,
         parseRetryAfter(response.headers['retry-after']) ??
             const Duration(seconds: 5),
@@ -400,14 +408,16 @@ class SyncApiService {
     final clean = _cleanUrl(baseUrl);
     final uri = Uri.parse('$clean/api/v1/auth/refresh');
 
-    final response = await _postAuth(uri, {
-      'refresh_token': refreshToken,
-    }, timeoutMessage: 'Tempo scaduto durante il rinnovo della sessione');
+    final response = await _postAuth(
+      uri,
+      {'refresh_token': refreshToken},
+      timeoutMessage: _l10n.syncErrorRefreshTimeout,
+    );
 
     if (response.statusCode == 200) {
       return _parseAuthResponse(response, requireRefreshToken: true);
     }
-    throw _apiError(response, 'Impossibile rinnovare la sessione');
+    throw _apiError(response, _l10n.syncErrorRefreshFailed);
   }
 
   /// Revoca lato server il token corrente (POST /api/v1/auth/logout). Se
@@ -479,7 +489,7 @@ class SyncApiService {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return UserSettingsDto.fromJson(decoded);
     }
-    throw _apiError(response, 'Impossibile scaricare le impostazioni remote');
+    throw _apiError(response, _l10n.syncErrorSettingsDownload);
   }
 
   /// Updates remote user preferences
@@ -503,7 +513,7 @@ class SyncApiService {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return UserSettingsDto.fromJson(decoded);
     }
-    throw _apiError(response, 'Impossibile aggiornare le impostazioni utente');
+    throw _apiError(response, _l10n.syncErrorSettingsUpdate);
   }
 
   /// Esegue un round di sync Delta Sync Push/Pull con risoluzione dei
@@ -546,7 +556,7 @@ class SyncApiService {
     } else if (response.statusCode == 401) {
       final body = bodyText(response);
       throw SyncApiException(
-        'Sessione scaduta o non autorizzata',
+        _l10n.syncErrorSessionExpired,
         401,
         const [],
         _extractErrorCode(body) ?? 'unauthorized',
@@ -555,15 +565,15 @@ class SyncApiService {
       final body = bodyText(response);
       final code = _extractErrorCode(body);
       if (code == 'account_blocked') {
-        throw const SyncApiException(
-          'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+        throw SyncApiException(
+          _l10n.syncErrorAccountBlocked,
           403,
-          [],
+          const [],
           'account_blocked',
         );
       }
       throw SyncApiException(
-        _extractError(body, 'Accesso negato dal server'),
+        _extractError(body, _l10n.syncErrorForbidden),
         403,
         const [],
         code,
@@ -571,7 +581,7 @@ class SyncApiService {
     } else if (response.statusCode == 429) {
       final body = bodyText(response);
       throw SyncApiException.withRetryAfter(
-        'Sincronizzazione temporaneamente limitata. Riprova tra poco.',
+        _l10n.syncErrorRateLimited,
         response.statusCode,
         parseRetryAfter(response.headers['retry-after']) ??
             const Duration(seconds: 1),
@@ -579,7 +589,7 @@ class SyncApiService {
       );
     } else if (response.statusCode == 503) {
       throw SyncApiException.withRetryAfter(
-        'Server temporaneamente occupato, riprovare a breve',
+        _l10n.syncErrorServerBusy,
         503,
         parseRetryAfter(response.headers['retry-after']),
         code: 'service_unavailable',
@@ -594,7 +604,7 @@ class SyncApiService {
             .toList();
       } catch (_) {}
       throw SyncApiException(
-        'Sincronizzazione rifiutata dal server (${rejected.length} elementi non validi)',
+        _l10n.syncErrorRejected(rejected.length),
         422,
         rejected,
         'validation_failed',
@@ -602,7 +612,7 @@ class SyncApiService {
     } else {
       final body = bodyText(response);
       throw SyncApiException(
-        _extractError(body, 'Errore durante la sincronizzazione'),
+        _extractError(body, _l10n.syncErrorSyncFailed),
         response.statusCode,
         const [],
         _extractErrorCode(body),
@@ -627,7 +637,7 @@ class SyncApiService {
       final decoded = json.decode(bodyText(response)) as Map<String, dynamic>;
       return (decoded['version'] as num?)?.toInt() ?? 0;
     }
-    _apiError(response, 'Impossibile eliminare i dati di posizionamento');
+    _apiError(response, _l10n.syncErrorOrderingReset);
   }
 
   /// POST con timeout «a progressi» (Y-05). Il corpo parte a blocchi e la
@@ -743,10 +753,10 @@ class SyncApiService {
     final message = _extractError(body, fallback);
     final code = _extractErrorCode(body);
     if (response.statusCode == 403 && code == 'account_blocked') {
-      throw const SyncApiException(
-        'Account bloccato dall\'amministratore. Contatta l\'assistenza.',
+      throw SyncApiException(
+        _l10n.syncErrorAccountBlocked,
         403,
-        [],
+        const [],
         'account_blocked',
       );
     }

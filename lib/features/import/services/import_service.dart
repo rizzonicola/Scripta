@@ -4,16 +4,8 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
-// WEB-BEGIN — serve kIsWeb per nascondere l'import da cartella sul Web.
-// WEB-ORIG: import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:flutter/foundation.dart'
-    show
-        TargetPlatform,
-        compute,
-        defaultTargetPlatform,
-        kIsWeb,
-        visibleForTesting;
-// WEB-END
+    show TargetPlatform, compute, defaultTargetPlatform, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -116,22 +108,17 @@ class ImportService {
                   importFromZipFile(context, ref);
                 },
               ),
-              // WEB-BEGIN — la File System Access API non espone una scelta
-              // di cartella tramite file_picker: sul Web resta solo lo ZIP.
-              // WEB: voce nascosta quando kIsWeb è true.
-              if (!kIsWeb)
-                ListTile(
-                  leading: const Icon(Icons.drive_folder_upload_outlined),
-                  title: const Text('Da cartella'),
-                  subtitle: const Text(
-                    'Una cartella di file .md sul dispositivo',
-                  ),
-                  onTap: () {
-                    Navigator.of(sheetCtx).pop();
-                    importFromFolder(context, ref);
-                  },
+              ListTile(
+                leading: const Icon(Icons.drive_folder_upload_outlined),
+                title: const Text('Da cartella'),
+                subtitle: const Text(
+                  'Una cartella di file .md sul dispositivo',
                 ),
-              // WEB-END
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  importFromFolder(context, ref);
+                },
+              ),
             ],
           ),
         );
@@ -210,17 +197,6 @@ class ImportService {
     BuildContext context,
     WidgetRef ref,
   ) async {
-    // WEB-BEGIN — guardia difensiva: getDirectoryPath lancia UnsupportedError
-    // sul Web. La voce di menu è già nascosta, ma il metodo resta raggiungibile.
-    if (kIsWeb) {
-      _showSnack(
-        context,
-        'L\'importazione da cartella non è disponibile sul Web. Usa un backup ZIP.',
-        isError: true,
-      );
-      return;
-    }
-    // WEB-END
     try {
       // ANDROID: il percorso restituito da file_picker non è leggibile con
       // dart:io sotto lo scoped storage di Android 11+ (targetSdk 37): per
