@@ -95,6 +95,10 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
   /// stato vuoto resta puramente informativo.
   final VoidCallback? onEdit;
 
+  /// Se `false`, il pulsante flottante dell'indice non viene mostrato.
+  /// Usato dal focus mode, dove la barra deve restare completamente libera.
+  final bool showOutline;
+
   const MarkdownRenderedView({
     super.key,
     required this.title,
@@ -104,6 +108,7 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
     this.wordCount,
     this.readingTimeMinutes,
     this.onEdit,
+    this.showOutline = true,
   });
 
   /// SOLO PER I TEST: quante volte il long-press "di richiamo" ha eseguito
@@ -721,7 +726,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     return Stack(
       children: [
         Positioned.fill(child: content),
-        if (_outline.length >= 2)
+        if (widget.showOutline && _outline.length >= 2)
           Positioned(
             top: 8,
             right: 8,

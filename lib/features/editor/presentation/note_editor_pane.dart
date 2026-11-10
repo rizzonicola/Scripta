@@ -374,6 +374,7 @@ class _ReadOnlyNoteView extends ConsumerWidget {
     if (activeNoteTitleContent == null) return const SizedBox.shrink();
     final (noteId, title, content, updatedAt, wordCount, readingTimeMinutes) =
         activeNoteTitleContent;
+    final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
 
     // La ricerca interna non cambia più vista: `MarkdownRenderedView` legge
     // `noteSearchProvider` e evidenzia l'occorrenza attiva con la selezione
@@ -388,6 +389,7 @@ class _ReadOnlyNoteView extends ConsumerWidget {
       updatedAt: updatedAt,
       wordCount: wordCount,
       readingTimeMinutes: readingTimeMinutes,
+      showOutline: !isFocusMode,
       onEdit: () => ref.read(editorProvider.notifier).setMode(EditorMode.edit),
     );
   }
