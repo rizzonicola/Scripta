@@ -1131,6 +1131,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No matches'**
   String get noMatchesFound;
+
+  /// No description provided for @back.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get back;
+
+  /// No description provided for @readingEmptyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing to read yet'**
+  String get readingEmptyTitle;
+
+  /// No description provided for @readingEmptyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'This note is empty. Switch to Edit to start writing.'**
+  String get readingEmptyHint;
+
+  /// No description provided for @readingEmptyAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit note'**
+  String get readingEmptyAction;
+
+  /// No description provided for @readingOutline.
+  ///
+  /// In en, this message translates to:
+  /// **'Outline'**
+  String get readingOutline;
+
+  /// No description provided for @readingBackToTop.
+  ///
+  /// In en, this message translates to:
+  /// **'Back to top'**
+  String get readingBackToTop;
+
+  /// No description provided for @texSyntaxError.
+  ///
+  /// In en, this message translates to:
+  /// **'TeX syntax error'**
+  String get texSyntaxError;
+
+  /// No description provided for @copyLatex.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy LaTeX'**
+  String get copyLatex;
+
+  /// No description provided for @latexCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'LaTeX copied'**
+  String get latexCopied;
+
+  /// No description provided for @updatedOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Updated {date}'**
+  String updatedOn(String date);
+
+  /// No description provided for @noteStats.
+  ///
+  /// In en, this message translates to:
+  /// **'{words} words · {minutes} min'**
+  String noteStats(int words, int minutes);
 }
 
 class _AppLocalizationsDelegate

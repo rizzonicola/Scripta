@@ -569,4 +569,42 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get noMatchesFound => 'Nessun risultato';
+
+  @override
+  String get back => 'Indietro';
+
+  @override
+  String get readingEmptyTitle => 'Ancora nessun contenuto';
+
+  @override
+  String get readingEmptyHint =>
+      'Questa nota è vuota. Passa a Modifica per iniziare a scrivere.';
+
+  @override
+  String get readingEmptyAction => 'Modifica nota';
+
+  @override
+  String get readingOutline => 'Indice';
+
+  @override
+  String get readingBackToTop => 'Torna in cima';
+
+  @override
+  String get texSyntaxError => 'Errore di sintassi TeX';
+
+  @override
+  String get copyLatex => 'Copia LaTeX';
+
+  @override
+  String get latexCopied => 'LaTeX copiato';
+
+  @override
+  String updatedOn(String date) {
+    return 'Aggiornata il $date';
+  }
+
+  @override
+  String noteStats(int words, int minutes) {
+    return '$words parole · $minutes min';
+  }
 }

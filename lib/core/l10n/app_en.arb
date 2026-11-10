@@ -178,5 +178,33 @@
   "previousMatch": "Previous match",
   "nextMatch": "Next match",
   "closeSearch": "Close search",
-  "noMatchesFound": "No matches"
+  "noMatchesFound": "No matches",
+  "back": "Back",
+  "readingEmptyTitle": "Nothing to read yet",
+  "readingEmptyHint": "This note is empty. Switch to Edit to start writing.",
+  "readingEmptyAction": "Edit note",
+  "readingOutline": "Outline",
+  "readingBackToTop": "Back to top",
+  "texSyntaxError": "TeX syntax error",
+  "copyLatex": "Copy LaTeX",
+  "latexCopied": "LaTeX copied",
+  "updatedOn": "Updated {date}",
+  "@updatedOn": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "noteStats": "{words} words · {minutes} min",
+  "@noteStats": {
+    "placeholders": {
+      "words": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  }
 }

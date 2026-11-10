@@ -171,5 +171,16 @@
   "previousMatch": "Correspondance précédente",
   "nextMatch": "Correspondance suivante",
   "closeSearch": "Fermer la recherche",
-  "noMatchesFound": "Aucun résultat"
+  "noMatchesFound": "Aucun résultat",
+  "back": "Retour",
+  "readingEmptyTitle": "Rien à lire pour l'instant",
+  "readingEmptyHint": "Cette note est vide. Passez en Modification pour commencer à écrire.",
+  "readingEmptyAction": "Modifier la note",
+  "readingOutline": "Sommaire",
+  "readingBackToTop": "Retour en haut",
+  "texSyntaxError": "Erreur de syntaxe TeX",
+  "copyLatex": "Copier le LaTeX",
+  "latexCopied": "LaTeX copié",
+  "updatedOn": "Modifiée le {date}",
+  "noteStats": "{words} mots · {minutes} min"
 }
