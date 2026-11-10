@@ -37,4 +37,16 @@ class PerfMarks {
       task.finish();
     }
   }
+
+  /// Esegue [body] dentro un intervallo con durata, per le fasi SINCRONE
+  /// (es. il parsing Markdown della vista di lettura, che gira nello stesso
+  /// frame). L'intervallo si chiude anche se [body] lancia.
+  static T timeSync<T>(String name, T Function() body) {
+    final task = TimelineTask()..start('$_prefix$name');
+    try {
+      return body();
+    } finally {
+      task.finish();
+    }
+  }
 }
