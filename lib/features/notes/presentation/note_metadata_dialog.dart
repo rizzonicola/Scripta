@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/l10n/desktop_strings.dart';
 import '../models/note_model.dart';
 import '../providers/notes_provider.dart';
@@ -178,8 +179,10 @@ class _NoteMetadataDialogState extends ConsumerState<_NoteMetadataDialog> {
               ),
               const SizedBox(height: 8),
               Text(
-                '${widget.note.wordCount} words • '
-                '${widget.note.readingTimeMinutes} min',
+                AppLocalizations.of(context).noteStats(
+                  widget.note.wordCount,
+                  widget.note.readingTimeMinutes,
+                ),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

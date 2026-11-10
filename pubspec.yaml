@@ -32,7 +32,7 @@ dependencies:
   # senza il workaround di realizzazione forzata che serviva col vecchio
   # motore (flutter_markdown_plus) per far funzionare "Seleziona tutto" e la
   # selezione su blocchi fuori schermo.
-  flutter_md: ^0.2.0
+  flutter_md: 0.2.0
 
   # Formule a blocco `$$...$$` con layout matematico 2D (frazioni, radici,
   # matrici...). Le formule inline `$...$` sono invece gestite da flutter_md

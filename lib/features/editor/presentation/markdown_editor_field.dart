@@ -5,6 +5,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/selection_auto_scroller.dart';
 import '../../settings/providers/settings_provider.dart';
+import 'reading_layout.dart';
 
 class MarkdownEditorField extends ConsumerStatefulWidget {
   final TextEditingController titleController;
@@ -357,10 +358,17 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     return SingleChildScrollView(
       key: _scrollViewKey,
       controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(28, 20, 28, 96),
+      padding: const EdgeInsets.fromLTRB(
+        ReadingLayout.horizontalPadding,
+        20,
+        ReadingLayout.horizontalPadding,
+        96,
+      ),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 840),
+          constraints: const BoxConstraints(
+            maxWidth: ReadingLayout.maxContentWidth,
+          ),
           child: SelectionRevealShield(
             isBlocking: () => _autoScroller.isDraggingSelection,
             child: Column(

@@ -13,7 +13,6 @@ import 'markdown_editor_field.dart';
 import 'markdown_rendered_view.dart';
 import 'markdown_toolbar.dart';
 import 'note_search_bar.dart';
-import 'note_search_highlighted_view.dart';
 import '../../sync/providers/sync_provider.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
@@ -350,48 +349,46 @@ class _ReadOnlyNoteView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // `.select` su (titolo, contenuto) invece dell'intero `NoteModel`:
-    // `activeNoteProvider` restituisce una nuova istanza di `NoteModel` ad
-    // OGNI aggiornamento della nota attiva (`NoteModel` non ha `==` per
-    // valore, vedi note_model.dart), incluse modifiche a campi che questo
-    // widget non usa affatto per il rendering (pin, cartella, ordine...).
-    // Un record `(String, String)` ha invece uguaglianza strutturale nativa
-    // in Dart: questa vista si ricostruisce quindi solo quando titolo o
-    // contenuto della nota attiva cambiano davvero, non per ogni tocco del
-    // modello — a valle, `MarkdownRenderedView`/`NoteSearchHighlightedView`
-    // restano comunque gli unici responsabili di riparsing/caching pesanti.
+    // `.select` su (titolo, contenuto, metadati) invece dell'intero
+    // `NoteModel`: `activeNoteProvider` restituisce una nuova istanza di
+    // `NoteModel` ad OGNI aggiornamento della nota attiva (`NoteModel` non ha
+    // `==` per valore, vedi note_model.dart), incluse modifiche a campi che
+    // questo widget non usa affatto per il rendering (pin, cartella, ordine,
+    // preferito...). Un record ha invece uguaglianza strutturale nativa in
+    // Dart: questa vista si ricostruisce quindi solo quando uno dei valori
+    // mostrati cambia davvero.
     final activeNoteTitleContent = ref.watch(
       activeNoteProvider.select(
-        (n) => n == null ? null : (n.id, n.title, n.content),
+        (n) => n == null
+            ? null
+            : (
+                n.id,
+                n.title,
+                n.content,
+                n.updatedAt,
+                n.wordCount,
+                n.readingTimeMinutes,
+              ),
       ),
     );
     if (activeNoteTitleContent == null) return const SizedBox.shrink();
-    final (noteId, title, content) = activeNoteTitleContent;
+    final (noteId, title, content, updatedAt, wordCount, readingTimeMinutes) =
+        activeNoteTitleContent;
 
-    // Mentre la ricerca interna è attiva con un termine non vuoto, si mostra
-    // la vista dedicata con le occorrenze evidenziate (vedi doc di classe di
-    // `NoteSearchHighlightedView` per il perché non viene invece iniettata
-    // l'evidenziazione dentro `MarkdownRenderedView`). Non appena il
-    // pannello si chiude, o il termine viene svuotato, si torna
-    // trasparentemente al rendering Markdown formattato di sempre.
-    final isSearching = ref.watch(
-      noteSearchProvider.select((s) => s.isActive && s.query.trim().isNotEmpty),
-    );
-    if (isSearching) {
-      return NoteSearchHighlightedView(
-        // La key resetta scroll/selezione quando si cambia nota: prima il
-        // `ScrollController` veniva riusato e la nota nuova si apriva alla
-        // posizione di scroll di quella precedente.
-        key: ValueKey('search-$noteId'),
-        title: title,
-        content: content,
-      );
-    }
-
+    // La ricerca interna non cambia più vista: `MarkdownRenderedView` legge
+    // `noteSearchProvider` e evidenzia l'occorrenza attiva con la selezione
+    // ancorata al modello, mantenendo il rendering formattato.
     return MarkdownRenderedView(
+      // La key resetta scroll/selezione quando si cambia nota: la posizione
+      // di lettura viene comunque ripristinata dalla memoria per nota.
       key: ValueKey('read-$noteId'),
+      noteId: noteId,
       title: title,
       content: content,
+      updatedAt: updatedAt,
+      wordCount: wordCount,
+      readingTimeMinutes: readingTimeMinutes,
+      onEdit: () => ref.read(editorProvider.notifier).setMode(EditorMode.edit),
     );
   }
 }

@@ -52,9 +52,9 @@ class SearchHighlightingTextEditingController extends TextEditingController {
     // Colori ad alto contrasto per l'evidenziazione: ambra per le
     // occorrenze "passive", arancione pieno (con testo forzato a nero,
     // leggibile su entrambe le combinazioni chiaro/scuro) per quella
-    // attualmente attiva — lo stesso schema usato in
-    // `NoteSearchHighlightedView` per la vista di sola lettura, così
-    // l'aspetto della ricerca resta coerente in entrambe le modalità.
+    // attualmente attiva — la stessa famiglia di colori usata dalla vista di
+    // lettura per l'occorrenza attiva, così l'aspetto della ricerca resta
+    // coerente in entrambe le modalità.
     final normalHighlight =
         (isDark ? Colors.amber.shade700 : Colors.amber.shade300).withValues(
           alpha: 0.55,

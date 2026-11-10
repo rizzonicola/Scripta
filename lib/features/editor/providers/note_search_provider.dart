@@ -140,7 +140,8 @@ final noteSearchActiveMatchIndexProvider = Provider<int>((ref) {
 /// Range di testo (offset di inizio/fine nel contenuto) dell'occorrenza
 /// attualmente attiva, o `null` se non ce n'è una. Usato dai widget che
 /// devono "portare a schermo" quel punto esatto (vedi
-/// `MarkdownEditorField.activeSearchMatch` e `NoteSearchHighlightedView`).
+/// `MarkdownEditorField.activeSearchMatch`). In sola lettura la vista usa
+/// invece gli offset sul testo RESO (`reading_search.dart`).
 final activeNoteSearchMatchProvider = Provider<TextRange?>((ref) {
   final matches = ref.watch(noteSearchMatchesProvider);
   final index = ref.watch(noteSearchActiveMatchIndexProvider);
@@ -162,3 +163,25 @@ final noteSearchHighlightDataProvider = Provider<NoteSearchHighlightData>((
   final activeIndex = ref.watch(noteSearchActiveMatchIndexProvider);
   return (matches, activeIndex);
 });
+
+/// Totale delle occorrenze NEL TESTO RESO della vista di lettura.
+///
+/// In sola lettura la ricerca lavora sui blocchi già interpretati
+/// (senza marker Markdown), quindi il conteggio può differire da quello sul
+/// sorgente grezzo usato dall'editor. La vista di lettura è l'unica a
+/// conoscere i blocchi: pubblica qui il proprio totale, e la barra lo legge
+/// quando la modalità è Sola Lettura. Il valore è transitorio per natura e
+/// viene azzerato quando la query si svuota.
+class RenderedNoteSearchTotalNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void set(int value) {
+    if (state != value) state = value;
+  }
+}
+
+final renderedNoteSearchTotalProvider =
+    NotifierProvider<RenderedNoteSearchTotalNotifier, int>(
+      RenderedNoteSearchTotalNotifier.new,
+    );

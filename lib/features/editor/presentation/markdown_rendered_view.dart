@@ -20,22 +20,34 @@ import 'package:flutter/gestures.dart'
         kTertiaryButton,
         kTouchSlop;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'
+    show HardwareKeyboard, KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionControls, cupertinoDesktopTextSelectionControls;
 import 'package:flutter_md/flutter_md.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/markdown_math.dart';
+import '../../../core/utils/perf_marks.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/link_safety.dart';
 import '../../../core/utils/selection_auto_scroller.dart';
 import '../../settings/providers/settings_provider.dart';
+import '../providers/note_search_provider.dart';
 import 'package:flutter_math_fork/flutter_math.dart' show ParseException;
 import 'package:flutter_math_fork/tex.dart'
     show SyntaxTree, TexParser, TexParserSettings;
 import 'code_block_with_copy.dart';
 import 'display_math_block.dart';
+import 'reading_colors.dart';
+import 'reading_empty_state.dart';
+import 'reading_layout.dart';
+import 'reading_meta_footer.dart';
+import 'reading_outline_sheet.dart';
+import 'reading_scroll_memory.dart';
+import 'reading_search.dart';
 import 'selection_handle_visibility.dart';
 
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
@@ -68,10 +80,30 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
   final String title;
   final String content;
 
+  /// Identificativo stabile della nota, usato per ricordare la posizione di
+  /// lettura tra un cambio nota e l'altro (in memoria). Opzionale: i test e
+  /// gli usi isolati della vista non hanno una nota.
+  final String? noteId;
+
+  /// Metadati opzionali mostrati nel footer. Se assenti (test, anteprime)
+  /// il footer è semplicemente omesso.
+  final DateTime? updatedAt;
+  final int? wordCount;
+  final int? readingTimeMinutes;
+
+  /// Invocato dallo stato vuoto per passare alla modifica. Se assente, lo
+  /// stato vuoto resta puramente informativo.
+  final VoidCallback? onEdit;
+
   const MarkdownRenderedView({
     super.key,
     required this.title,
     required this.content,
+    this.noteId,
+    this.updatedAt,
+    this.wordCount,
+    this.readingTimeMinutes,
+    this.onEdit,
   });
 
   /// SOLO PER I TEST: quante volte il long-press "di richiamo" ha eseguito
@@ -267,11 +299,28 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // ancorata al modello: restano fuori dal testo selezionato/copiato.
   List<_ViewItem> _items = const [];
 
-  (ThemeData, String, double, double)? _cachedThemeKey;
+  // Indice (titoli) e chiavi di aggancio per lo scroll a un blocco. Le chiavi
+  // vengono create pigramente quando il blocco è costruito: per i blocchi
+  // mai montati lo scroll usa una stima proporzionale (vedi
+  // [_scrollToItem]).
+  List<ReadingOutlineEntry> _outline = const [];
+  final Map<int, GlobalKey> _itemKeys = <int, GlobalKey>{};
+
+  // Ricerca resa: firma dell'ultimo calcolo (query + indice + lista items) e
+  // risultati. La firma evita di ricalcolare/riscrivere la selezione a ogni
+  // rebuild che non c'entra con la ricerca.
+  Object? _searchSignature;
+  List<ReadingSearchHit> _searchHits = const [];
+  MarkdownSelection? _searchSelection;
+  int _searchRevision = 0;
+  int _publishedSearchTotal = 0;
+
+  (ThemeData, String, double, double, TextScaler)? _cachedThemeKey;
   late MarkdownThemeData _markdownTheme;
   late TextStyle _titleTextStyle;
   late TextStyle _mathTextStyle;
   late Color _codeSurfaceColor;
+  late Color _mathSurfaceColor;
 
   @override
   void initState() {
@@ -285,6 +334,26 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     );
     _selectionController.addListener(_onSelectionControllerChanged);
     _updateBlocks(widget.content);
+    _restoreReadingPosition();
+  }
+
+  void _restoreReadingPosition() {
+    final noteId = widget.noteId;
+    if (noteId == null) return;
+    final offset = ReadingScrollMemory.offsetFor(noteId);
+    if (offset == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      _scrollController.jumpTo(
+        offset.clamp(0.0, _scrollController.position.maxScrollExtent),
+      );
+    });
+  }
+
+  void _saveReadingPosition() {
+    final noteId = widget.noteId;
+    if (noteId == null || !_scrollController.hasClients) return;
+    ReadingScrollMemory.save(noteId, _scrollController.offset);
   }
 
   // Il controller notifica anche per motivi diversi dalla selezione (es.
@@ -313,6 +382,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   @override
   void didUpdateWidget(covariant MarkdownRenderedView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.noteId != widget.noteId) {
+      _saveReadingPosition();
+      _restoreReadingPosition();
+    }
     if (oldWidget.content != widget.content) {
       _updateBlocks(widget.content);
     }
@@ -320,6 +393,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   @override
   void dispose() {
+    _saveReadingPosition();
     _selectionController.removeListener(_onSelectionControllerChanged);
     _autoScroller.dispose();
     _scrollController.dispose();
@@ -337,50 +411,70 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // nuovo rebuild di un discendente (`MarkdownSelectionScope`) già costruito
   // in questo stesso frame.
   void _updateBlocks(String content) {
-    final effectiveContent = content.isEmpty ? '*Nessun contenuto*' : content;
-    final items = <_ViewItem>[];
-    final documents = <MarkdownDocumentRef>[];
+    PerfMarks.timeSync('reading.parse', () {
+      final items = <_ViewItem>[];
+      final documents = <MarkdownDocumentRef>[];
+      final outline = <ReadingOutlineEntry>[];
 
-    // 1) Le formule a blocco `$$...$$` vengono estratte prima del parsing
-    //    (fuori da code fence/blocchi indentati); 2) ogni tratto Markdown è
-    //    parsato con `inlineMath: true` (`$...$` -> Unicode), dopo una
-    //    normalizzazione dei costrutti LaTeX comuni non coperti dal
-    //    pacchetto (`\text{..}`, `\frac{..}{..}` semplici, ...).
-    // `flutter_md` espone già i blocchi tramite il proprio modello
-    // (`Markdown.fromString(...).blocks`): niente splitter manuale a righe.
-    for (final chunk in splitNoteChunks(effectiveContent)) {
-      switch (chunk) {
-        case MarkdownChunk(:final source):
-          if (source.trim().isEmpty) continue;
-          final blocks = Markdown.fromString(
-            normalizeInlineMath(source),
-            inlineMath: true,
-          ).blocks;
-          for (final block in blocks) {
-            final id = 'block-${documents.length}';
-            final model = Markdown(
-              markdown: markdownBlockRenderedText(block),
-              blocks: [block],
-            );
-            items.add(_BlockItem(block, id, model));
-            documents.add(
-              MarkdownDocumentRef(
-                id: id,
-                model: model,
-                order: documents.length,
-              ),
-            );
-          }
-        case DisplayMathChunk(:final tex):
-          items.add(_MathItem(tex));
+      // 1) Le formule a blocco `$$...$$` vengono estratte prima del parsing
+      //    (fuori da code fence/blocchi indentati); 2) ogni tratto Markdown è
+      //    parsato con `inlineMath: true` (`$...$` -> Unicode), dopo una
+      //    normalizzazione dei costrutti LaTeX comuni non coperti dal
+      //    pacchetto (`\text{..}`, `\frac{..}{..}` semplici, ...).
+      // `flutter_md` espone già i blocchi tramite il proprio modello
+      // (`Markdown.fromString(...).blocks`): niente splitter manuale a righe.
+      //
+      // I blocchi `MD$Spacer` non producono testo (vedi
+      // `markdownBlockRenderedText`) e aggiungevano solo un secondo margine
+      // tra i paragrafi: si scartano e la spaziatura resta quella del padding
+      // per blocco.
+      for (final chunk in splitNoteChunks(content)) {
+        switch (chunk) {
+          case MarkdownChunk(:final source):
+            if (source.trim().isEmpty) continue;
+            final blocks = Markdown.fromString(
+              normalizeInlineMath(source),
+              inlineMath: true,
+            ).blocks;
+            for (final block in blocks) {
+              if (block is MD$Spacer) continue;
+              final id = 'block-${documents.length}';
+              final model = Markdown(
+                markdown: markdownBlockRenderedText(block),
+                blocks: [block],
+              );
+              final itemIndex = items.length;
+              items.add(_BlockItem(block, id, model));
+              documents.add(
+                MarkdownDocumentRef(
+                  id: id,
+                  model: model,
+                  order: documents.length,
+                ),
+              );
+              if (block is MD$Heading && block.text.trim().isNotEmpty) {
+                outline.add(
+                  ReadingOutlineEntry(
+                    title: block.text.trim(),
+                    level: block.level,
+                    itemIndex: itemIndex,
+                  ),
+                );
+              }
+            }
+          case DisplayMathChunk(:final tex):
+            items.add(_MathItem(tex));
+        }
       }
-    }
 
-    _items = items;
-    // Coordinate e modo del menù si riferivano ai blocchi di prima.
-    _trackedExtent = null;
-    _trackBelow = false;
-    _selectionController.setDocuments(documents);
+      _items = items;
+      _outline = outline;
+      _searchSignature = null;
+      // Coordinate e modo del menù si riferivano ai blocchi di prima.
+      _trackedExtent = null;
+      _trackBelow = false;
+      _selectionController.setDocuments(documents);
+    });
   }
 
   void _ensureTheme(
@@ -388,12 +482,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     String fontFamily,
     double fontSize,
     double lineHeight,
+    TextScaler textScaler,
   ) {
-    final key = (theme, fontFamily, fontSize, lineHeight);
+    final key = (theme, fontFamily, fontSize, lineHeight, textScaler);
     if (_cachedThemeKey == key) return;
     _cachedThemeKey = key;
-
-    final isDark = theme.brightness == Brightness.dark;
 
     final baseTextStyle = AppTheme.getTextStyleForFont(
       fontFamily,
@@ -420,22 +513,18 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       );
     }
 
-    // Sfondo condiviso da citazioni, blocchi di codice e tabelle
-    // (`MarkdownThemeData.surfaceColor` copre tutti e tre, non c'è un hook
-    // separato per ciascuno come nel vecchio `MarkdownStyleSheet`): stessa
-    // tinta usata prima per lo sfondo dei blocchi di codice, che resta
-    // l'elemento visivamente più caratterizzato.
-    final surfaceColor = isDark
-        ? const Color(0xFF1E1E1E)
-        : const Color(0xFFF5F5F5);
+    // Sfondo condiviso da citazioni, blocchi di codice e tabelle: derivato
+    // dallo schema del tema attivo, così ogni palette mantiene il proprio
+    // carattere invece di usare tinte fisse.
+    final surfaceColor = ReadingColors.surface(theme.colorScheme);
     // Sfondo del testo monospace (inline e a blocco condividono lo stesso
-    // campo in questa versione del pacchetto): tinta leggermente più chiara,
-    // vicina a quella usata prima solo per il code inline.
-    final monospaceBackgroundColor = isDark
-        ? const Color(0xFF2D2D2D)
-        : const Color(0xFFEFEFEF);
+    // campo in questa versione del pacchetto): poco più marcato del surface.
+    final monospaceBackgroundColor = ReadingColors.monospaceBackground(
+      theme.colorScheme,
+    );
 
     _codeSurfaceColor = surfaceColor;
+    _mathSurfaceColor = surfaceColor;
     _mathTextStyle = TextStyle(
       fontSize: fontSize * 1.15,
       color: theme.colorScheme.onSurface,
@@ -443,6 +532,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
     _markdownTheme = MarkdownThemeData.mergeTheme(
       theme,
+      textScaler: textScaler,
       textStyle: baseTextStyle,
       h1Style: headingStyle(2.0, FontWeight.w800),
       h2Style: headingStyle(1.6, FontWeight.w700),
@@ -490,8 +580,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final (fontFamily, fontSize, lineHeight) = ref.watch(
       settingsProvider.select((s) => (s.fontFamily, s.fontSize, s.lineHeight)),
     );
+    final textScaler = MediaQuery.textScalerOf(context);
+    final searchQuery = ref.watch(
+      noteSearchProvider.select((s) => s.isActive ? s.query.trim() : ''),
+    );
+    final requestedMatch = ref.watch(
+      noteSearchProvider.select((s) => s.currentMatchIndex),
+    );
 
-    _ensureTheme(theme, fontFamily, fontSize, lineHeight);
+    _ensureTheme(theme, fontFamily, fontSize, lineHeight, textScaler);
+    _syncReadingSearch(searchQuery, requestedMatch);
 
     return _buildFormattedView(theme);
   }
@@ -499,84 +597,392 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   Widget _buildFormattedView(ThemeData theme) {
     final items = _items;
     final hasTitle = widget.title.trim().isNotEmpty;
-    final itemCount = (hasTitle ? 1 : 0) + items.length;
-    final selectionColor = theme.colorScheme.primary.withValues(alpha: 0.35);
+    final hasEmptyState = items.isEmpty;
+    final hasFooter =
+        widget.updatedAt != null &&
+        widget.wordCount != null &&
+        widget.readingTimeMinutes != null;
+    final itemCount =
+        (hasTitle ? 1 : 0) +
+        (hasEmptyState ? 1 : items.length) +
+        (hasFooter ? 1 : 0);
+    final selectionColor = _searchHits.isNotEmpty
+        ? ReadingColors.searchHighlight(theme.colorScheme)
+        : theme.colorScheme.primary.withValues(alpha: 0.35);
 
-    return MarkdownSelectionScope(
-      key: _selectionScopeKey,
-      controller: _selectionController,
-      focusNode: _selectionFocusNode,
-      selectionColor: selectionColor,
-      selectionControls: _platformSelectionControls,
-      onSelectionChanged: (selection) {
-        _activeSelection = selection;
-        // Durante un ripristino programmatico la selezione passa per `null`
-        // per un istante: segnalarlo pianificherebbe il riarmo aptico
-        // (vedi `HapticsHelper.reportSelectionState`). Il valore finale è
-        // identico a quello di partenza, quindi non c'è nulla da riferire.
-        if (_rebuildingSelectionOverlay) return;
-        HapticsHelper.reportSelectionState(
-          isCollapsed: selection == null || selection.isCollapsed,
-        );
-      },
-      // Dopo "Copia" (o "Taglia", se mai presente) la selezione deve
-      // terminare, come nel comportamento nativo di copia/incolla — il menu
-      // di default del pacchetto copia ma lascia la selezione attiva.
-      // Ricostruiamo la stessa toolbar di default (`state.contextMenuButtonItems`,
-      // pattern documentato nel README di flutter_md) avvolgendo solo i
-      // pulsanti "copia"/"taglia": eseguono prima l'azione originale (deve
-      // ancora leggere la selezione attiva) e poi chiudono la selezione.
-      // "Seleziona tutto" lascia la selezione com'è, ma deve garantire che la
-      // toolbar resti visibile anche se la selezione di partenza era fuori
-      // schermo (vedi [_afterSelectAll]). Il menù ancorato alla selezione
-      // SEGUE la nota mentre scorre e si aggancia ai bordi del viewport (Step
-      // B, vedi [_buildSelectionToolbar]); quello aperto con il tasto destro
-      // resta fermo, con le ancore riportate dentro il viewport (vedi
-      // [_clampAnchorsToViewport]).
-      contextMenuBuilder: (context, state) => _buildSelectionToolbar(state),
-      // Il `RawGestureDetector` è un FIGLIO dello scope (quindi più profondo
-      // del suo `RawGestureDetector` interno): riceve il `PointerDown` prima
-      // e i suoi recognizer entrano per primi nell'arena. Contiene un solo
-      // recognizer, che si iscrive all'arena soltanto per un tocco touch
-      // dentro una selezione esistente (vedi [_SelectionRecallRecognizer]);
-      // in ogni altro caso è inerte e il comportamento resta quello di prima.
-      child: RawGestureDetector(
-        behavior: HitTestBehavior.translucent,
-        gestures: _recallGestures,
-        // Il recognizer non deve aggiungere azioni di accessibilità: serve
-        // solo a decidere chi vince l'arena dei gesti.
-        excludeFromSemantics: true,
-        child: Listener(
-          behavior: HitTestBehavior.translucent,
-          onPointerDown: _handleBackgroundPointerDown,
-          onPointerMove: _handleBackgroundPointerMove,
-          onPointerUp: _handleBackgroundPointerUp,
-          onPointerCancel: _handleBackgroundPointerCancel,
-          child: MarkdownTheme(
-            data: _markdownTheme,
-            child: ScrollConfiguration(
-              behavior: _NoGlowScrollBehavior(),
-              child: ListView.builder(
-                key: const ValueKey('markdown-formatted-listview'),
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(28, 24, 28, 64),
-                itemCount: itemCount,
-                itemBuilder: (context, index) {
-                  // Un blocco che si costruisce può portare nuovi rettangoli
-                  // della selezione (vedi [_onBlockBuilt]).
-                  _onBlockBuilt();
-                  if (hasTitle && index == 0) {
-                    return _buildTitleWidget(theme, selectionColor);
-                  }
-                  final itemIndex = hasTitle ? index - 1 : index;
+    final scrollable = MarkdownTheme(
+      data: _markdownTheme,
+      child: ScrollConfiguration(
+        behavior: _NoGlowScrollBehavior(),
+        child: Scrollbar(
+          controller: _scrollController,
+          child: ListView.builder(
+            key: const ValueKey('markdown-formatted-listview'),
+            controller: _scrollController,
+            padding: ReadingLayout.readingPadding,
+            itemCount: itemCount,
+            itemBuilder: (context, index) {
+              // Un blocco che si costruisce può portare nuovi
+              // rettangoli della selezione (vedi [_onBlockBuilt]).
+              _onBlockBuilt();
+              if (hasTitle && index == 0) {
+                return _buildTitleWidget(theme, selectionColor);
+              }
+              var cursor = hasTitle ? 1 : 0;
+              if (hasEmptyState) {
+                if (index == cursor) return _buildEmptyItem();
+                cursor++;
+              } else {
+                if (index < cursor + items.length) {
+                  final itemIndex = index - cursor;
                   return _buildItem(itemIndex, items[itemIndex]);
-                },
-              ),
-            ),
+                }
+                cursor += items.length;
+              }
+              if (hasFooter && index == cursor) {
+                return _buildFooterItem();
+              }
+              return const SizedBox.shrink();
+            },
           ),
         ),
       ),
     );
+
+    // Una nota vuota non ha testo da selezionare: si evita del tutto lo
+    // strato di selezione. Oltre a non servire, i suoi recognizer di
+    // doppio-tap tengono aperta l'arena dei gesti ~300 ms, ritardando il
+    // pulsante principale dello stato vuoto ("Modifica nota").
+    final content = Focus(
+      onKeyEvent: _handleReadingKeyEvent,
+      child: hasEmptyState
+          ? scrollable
+          : MarkdownSelectionScope(
+              key: _selectionScopeKey,
+              controller: _selectionController,
+              focusNode: _selectionFocusNode,
+              selectionColor: selectionColor,
+              selectionControls: _platformSelectionControls,
+              onSelectionChanged: (selection) {
+                _activeSelection = selection;
+                // Durante un ripristino programmatico la selezione passa per
+                // `null` per un istante: segnalarlo pianificherebbe il riarmo
+                // aptico (vedi `HapticsHelper.reportSelectionState`). Il
+                // valore finale è identico a quello di partenza, quindi non
+                // c'è nulla da riferire.
+                if (_rebuildingSelectionOverlay) return;
+                HapticsHelper.reportSelectionState(
+                  isCollapsed: selection == null || selection.isCollapsed,
+                );
+              },
+              // Dopo "Copia" (o "Taglia", se mai presente) la selezione deve
+              // terminare, come nel comportamento nativo di copia/incolla —
+              // il menu di default del pacchetto copia ma lascia la selezione
+              // attiva. Ricostruiamo la stessa toolbar di default
+              // (`state.contextMenuButtonItems`, pattern documentato nel
+              // README di flutter_md) avvolgendo solo i pulsanti
+              // "copia"/"taglia": eseguono prima l'azione originale (deve
+              // ancora leggere la selezione attiva) e poi chiudono la
+              // selezione. "Seleziona tutto" lascia la selezione com'è, ma
+              // deve garantire che la toolbar resti visibile anche se la
+              // selezione di partenza era fuori schermo (vedi
+              // [_afterSelectAll]). Il menù ancorato alla selezione SEGUE la
+              // nota mentre scorre e si aggancia ai bordi del viewport (Step
+              // B, vedi [_buildSelectionToolbar]); quello aperto con il tasto
+              // destro resta fermo, con le ancore riportate dentro il
+              // viewport (vedi [_clampAnchorsToViewport]).
+              contextMenuBuilder: (context, state) =>
+                  _buildSelectionToolbar(state),
+              // Il `RawGestureDetector` è un FIGLIO dello scope (quindi più
+              // profondo del suo `RawGestureDetector` interno): riceve il
+              // `PointerDown` prima e i suoi recognizer entrano per primi
+              // nell'arena. Contiene un solo recognizer, che si iscrive
+              // all'arena soltanto per un tocco touch dentro una selezione
+              // esistente (vedi [_SelectionRecallRecognizer]); in ogni altro
+              // caso è inerte e il comportamento resta quello di prima.
+              child: RawGestureDetector(
+                behavior: HitTestBehavior.translucent,
+                gestures: _recallGestures,
+                // Il recognizer non deve aggiungere azioni di accessibilità:
+                // serve solo a decidere chi vince l'arena dei gesti.
+                excludeFromSemantics: true,
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: _handleBackgroundPointerDown,
+                  onPointerMove: _handleBackgroundPointerMove,
+                  onPointerUp: _handleBackgroundPointerUp,
+                  onPointerCancel: _handleBackgroundPointerCancel,
+                  child: scrollable,
+                ),
+              ),
+            ),
+    );
+
+    return Stack(
+      children: [
+        Positioned.fill(child: content),
+        if (_outline.length >= 2)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: _ReadingOverlayButton(
+              icon: Icons.toc_rounded,
+              tooltip: AppLocalizations.of(context).readingOutline,
+              onPressed: _showOutline,
+            ),
+          ),
+        Positioned(bottom: 16, right: 16, child: _buildBackToTopButton()),
+      ],
+    );
+  }
+
+  Widget _buildEmptyItem() {
+    return ReadingLayout.centered(
+      ReadingEmptyState(onEdit: widget.onEdit),
+      key: const ValueKey('rendered-empty-state'),
+    );
+  }
+
+  Widget _buildFooterItem() {
+    return ReadingLayout.centered(
+      ReadingMetaFooter(
+        wordCount: widget.wordCount!,
+        readingTimeMinutes: widget.readingTimeMinutes!,
+        updatedAt: widget.updatedAt!,
+      ),
+      key: const ValueKey('rendered-meta-footer'),
+    );
+  }
+
+  Widget _buildBackToTopButton() {
+    return ListenableBuilder(
+      listenable: _scrollController,
+      builder: (context, _) {
+        final visible =
+            _scrollController.hasClients && _scrollController.offset > 480;
+        // Quando non serve non si costruisce affatto: niente pulsante
+        // invisibile nell'albero (niente hit target fantasma e un solo
+        // IconButton nella vista finché l'utente non scorre davvero).
+        if (!visible) return const SizedBox.shrink();
+        return _ReadingOverlayButton(
+          icon: Icons.vertical_align_top_rounded,
+          tooltip: AppLocalizations.of(context).readingBackToTop,
+          onPressed: () => _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+          ),
+        );
+      },
+    );
+  }
+
+  /// Gestisce PageUp/PageDown, Home/End e Spazio quando il focus è sulla
+  /// vista di lettura (dopo un tocco/una selezione). Non intercetta i tasti
+  /// quando il focus è altrove: barra di ricerca e pulsanti restano
+  /// indipendenti.
+  KeyEventResult _handleReadingKeyEvent(FocusNode node, KeyEvent event) {
+    if (!_selectionFocusNode.hasFocus) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.space) {
+      _scrollByPage(HardwareKeyboard.instance.isShiftPressed ? -1 : 1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.pageDown) {
+      _scrollByPage(1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.pageUp) {
+      _scrollByPage(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.home) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.end) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  double _viewportPageExtent() {
+    if (!_scrollController.hasClients) return 0;
+    return _scrollController.position.viewportDimension;
+  }
+
+  void _scrollByPage(double direction) {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final target =
+        (_scrollController.offset + direction * _viewportPageExtent() * 0.85)
+            .clamp(0.0, position.maxScrollExtent);
+    _scrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _showOutline() {
+    if (_outline.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => ReadingOutlineSheet(
+        entries: _outline,
+        onSelected: (entry) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _scrollToItem(entry.itemIndex);
+          });
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Ricerca nella vista di lettura
+  // ---------------------------------------------------------------------
+
+  /// Calcola le occorrenze sul testo RESO (query/indice/lista cambiati) e
+  /// programma l'applicazione della selezione a frame finito. La firma evita
+  /// di rifare il lavoro a ogni rebuild estraneo alla ricerca.
+  void _syncReadingSearch(String query, int requestedIndex) {
+    final signature = (query, requestedIndex, _items);
+    if (signature == _searchSignature) return;
+    _searchSignature = signature;
+    final revision = ++_searchRevision;
+
+    if (query.isEmpty) {
+      _searchHits = const [];
+      _publishSearchTotal(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || revision != _searchRevision) return;
+        _clearSearchSelectionIfOurs();
+      });
+      return;
+    }
+
+    final blocks = <ReadingSearchBlock>[];
+    for (var i = 0; i < _items.length; i++) {
+      final item = _items[i];
+      if (item is _BlockItem) {
+        blocks.add(
+          ReadingSearchBlock(
+            itemIndex: i,
+            documentId: item.documentId,
+            text: markdownBlockRenderedText(item.block),
+          ),
+        );
+      }
+    }
+    final hits = findReadingSearchHits(blocks, query);
+    _searchHits = hits;
+    _publishSearchTotal(hits.length);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || revision != _searchRevision) return;
+      if (hits.isEmpty) {
+        _clearSearchSelectionIfOurs();
+        return;
+      }
+      final index = requestedIndex < 0 ? 0 : requestedIndex % hits.length;
+      _applySearchHit(hits[index]);
+    });
+  }
+
+  void _publishSearchTotal(int total) {
+    if (_publishedSearchTotal == total) return;
+    _publishedSearchTotal = total;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(renderedNoteSearchTotalProvider.notifier).set(total);
+    });
+  }
+
+  void _applySearchHit(ReadingSearchHit hit) {
+    final selection = MarkdownSelection(
+      base: MarkdownPosition(
+        documentId: hit.documentId,
+        blockIndex: 0,
+        offset: hit.range.start,
+      ),
+      extent: MarkdownPosition(
+        documentId: hit.documentId,
+        blockIndex: 0,
+        offset: hit.range.end,
+      ),
+    );
+    _rebuildingSelectionOverlay = true;
+    try {
+      _selectionController.selection = selection;
+    } finally {
+      _rebuildingSelectionOverlay = false;
+    }
+    _searchSelection = selection;
+    _activeSelection = selection;
+    final state = _selectionScopeKey.currentState;
+    if (state != null && state.toolbarIsVisible) state.hideToolbar();
+    _scrollToItem(hit.itemIndex);
+  }
+
+  void _clearSearchSelectionIfOurs() {
+    final applied = _searchSelection;
+    if (applied == null) return;
+    _searchSelection = null;
+    if (_selectionController.selection != applied) return;
+    _rebuildingSelectionOverlay = true;
+    try {
+      _selectionController.clear();
+    } finally {
+      _rebuildingSelectionOverlay = false;
+    }
+    final state = _selectionScopeKey.currentState;
+    if (state != null && state.toolbarIsVisible) state.hideToolbar();
+  }
+
+  /// Porta a schermo il blocco [itemIndex]. Se il blocco è montato usa la
+  /// geometria reale (`Scrollable.ensureVisible`); altrimenti salta a una
+  /// stima proporzionale e riprova un frame dopo, quando la
+  /// virtualizzazione lo ha costruito.
+  void _scrollToItem(int itemIndex, {int retries = 1}) {
+    final context = _itemKeys[itemIndex]?.currentContext;
+    if (context != null) {
+      Scrollable.ensureVisible(
+        context,
+        alignment: 0.2,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+    if (!_scrollController.hasClients || _items.isEmpty) return;
+    final position = _scrollController.position;
+    final estimate = position.maxScrollExtent * (itemIndex / _items.length);
+    _scrollController.animateTo(
+      estimate.clamp(0.0, position.maxScrollExtent),
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+    );
+    if (retries > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollToItem(itemIndex, retries: retries - 1);
+      });
+    }
   }
 
   ContextMenuButtonItem _wrapMenuItem(
@@ -1348,33 +1754,29 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   Widget _buildTitleWidget(ThemeData theme, Color selectionColor) {
-    return Align(
-      key: const ValueKey('rendered-block-title'),
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 840),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SelectableText(
-              widget.title,
-              style: _titleTextStyle,
-              selectionColor: selectionColor,
-              onSelectionChanged: (selection, cause) {
-                if (!selection.isCollapsed) {
-                  _selectionGroup.clearExternal();
-                }
-              },
-            ),
-            const SizedBox(height: 16),
-            Divider(
-              color: theme.colorScheme.outline.withValues(alpha: 0.3),
-              thickness: 1,
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
+    return ReadingLayout.centered(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SelectableText(
+            widget.title,
+            style: _titleTextStyle,
+            selectionColor: selectionColor,
+            onSelectionChanged: (selection, cause) {
+              if (!selection.isCollapsed) {
+                _selectionGroup.clearExternal();
+              }
+            },
+          ),
+          const SizedBox(height: 16),
+          Divider(
+            color: theme.colorScheme.outline.withValues(alpha: 0.3),
+            thickness: 1,
+          ),
+          const SizedBox(height: 20),
+        ],
       ),
+      key: const ValueKey('rendered-block-title'),
     );
   }
 
@@ -1383,17 +1785,26 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // tocca quindi il rendering interno; si avvolge il singolo blocco in uno
   // `SingleChildScrollView` orizzontale, che lascia intatti scroll verticale,
   // selezione touch e larghezza naturale della tabella.
+  //
+  // LIMITE NOTO: le checkbox delle task list sono disegnate dal painter e
+  // `MD$ListItem.checked` è immutabile; flutter_md 0.2.0 non espone un hook
+  // per il tocco su una singola checkbox. Restano quindi di sola lettura:
+  // per spuntarle si passa a Modifica (dove sono testo normale).
   Widget _buildItem(int index, _ViewItem item) {
     final Widget content;
+    final String semanticsLabel;
     switch (item) {
       case _MathItem(:final tex, :final ast, :final parseError):
+        semanticsLabel = tex;
         content = DisplayMathBlock(
           tex: tex,
           textStyle: _mathTextStyle,
           ast: ast,
           parseError: parseError,
+          surfaceColor: _mathSurfaceColor,
         );
       case _BlockItem(:final block, :final documentId, :final model):
+        semanticsLabel = markdownBlockRenderedText(block);
         final markdownWidget = MarkdownWidget(
           markdown: model,
           documentId: documentId,
@@ -1418,16 +1829,20 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         }
     }
 
-    return Align(
-      key: ValueKey('rendered-block-$index'),
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 840),
+    final anchorKey = _itemKeys.putIfAbsent(index, GlobalKey.new);
+    return ReadingLayout.centered(
+      KeyedSubtree(
+        key: anchorKey,
         child: Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: content,
+          padding: ReadingLayout.blockBottomPadding,
+          child: Semantics(
+            container: true,
+            label: semanticsLabel,
+            child: content,
+          ),
         ),
       ),
+      key: ValueKey('rendered-block-$index'),
     );
   }
 }
@@ -1440,6 +1855,43 @@ class _NoGlowScrollBehavior extends ScrollBehavior {
     ScrollableDetails details,
   ) {
     return child;
+  }
+}
+
+/// Piccolo pulsante circolare sovrapposto alla vista di lettura (indice e
+/// torna in cima). Ha un'area di tocco di 44×44 e un tooltip localizzato.
+class _ReadingOverlayButton extends StatelessWidget {
+  const _ReadingOverlayButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        elevation: 2,
+        shape: const CircleBorder(),
+        color: theme.colorScheme.surfaceContainerHigh,
+        clipBehavior: Clip.antiAlias,
+        child: IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 20),
+          iconSize: 20,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+          visualDensity: VisualDensity.compact,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
+        ),
+      ),
+    );
   }
 }
 

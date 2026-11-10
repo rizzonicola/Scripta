@@ -75,7 +75,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                 if (showBackButton)
                   IconButton(
                     icon: const Icon(Icons.arrow_back_rounded, size: 20),
-                    tooltip: 'Indietro',
+                    tooltip: l10n.back,
                     visualDensity: VisualDensity.compact,
                     onPressed: onBack,
                   )

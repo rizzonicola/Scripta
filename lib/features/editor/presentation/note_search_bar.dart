@@ -6,15 +6,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/color_schemes.dart';
 import '../../../core/utils/focus_requests.dart';
+import '../models/editor_state_model.dart';
+import '../providers/editor_provider.dart';
 import '../providers/note_search_provider.dart';
 
 /// Barra di ricerca INTERNA alla nota ("Trova nel documento"), mostrata in
 /// cima al pannello editor quando `noteSearchProvider.isActive` è vero (vedi
-/// `note_editor_pane.dart`). Funziona identicamente in modalità Modifica e
-/// Sola Lettura: entrambe le viste leggono le stesse occorrenze da
-/// `noteSearchMatchesProvider`/`noteSearchActiveMatchIndexProvider`, questa
-/// barra si limita a pilotare [noteSearchProvider] e a mostrare il
-/// contatore "N/M".
+/// `note_editor_pane.dart`). Funziona in modalità Modifica e Sola Lettura:
+/// entrambe pilotano lo stesso stato, ma in sola lettura il conteggio arriva
+/// dal testo RESO (vedi `renderedNoteSearchTotalProvider`), perché è quello
+/// che l'utente vede evidenziato.
 class NoteSearchBar extends ConsumerStatefulWidget {
   const NoteSearchBar({super.key});
 
@@ -82,8 +83,17 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
     });
 
     final matches = ref.watch(noteSearchMatchesProvider);
-    final activeIndex = ref.watch(noteSearchActiveMatchIndexProvider);
-    final total = matches.length;
+    final isReadOnly = ref.watch(
+      editorProvider.select((s) => s.mode == EditorMode.readOnly),
+    );
+    final renderedTotal = ref.watch(renderedNoteSearchTotalProvider);
+    final total = isReadOnly ? renderedTotal : matches.length;
+    final requestedIndex = ref.watch(
+      noteSearchProvider.select((s) => s.currentMatchIndex),
+    );
+    final activeIndex = total == 0
+        ? -1
+        : (requestedIndex < 0 ? 0 : requestedIndex % total);
     final hasQuery = _queryController.text.trim().isNotEmpty;
 
     // Se il termine cercato è stato modificato altrove (es. aprendo la nota

@@ -307,7 +307,10 @@ class NoteCard extends ConsumerWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              '${note.wordCount} words • ${note.readingTimeMinutes} min',
+                              l10n.noteStats(
+                                note.wordCount,
+                                note.readingTimeMinutes,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelSmall?.copyWith(
