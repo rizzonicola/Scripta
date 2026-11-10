@@ -1,0 +1,9 @@
+Version 1.1.5.
+
+- Initial F-Droid release.
+- The read-only view now keeps Markdown formatting while searching, and
+  adds an outline, reading stats, per-note scroll position, keyboard
+  paging and system text scaling.
+- Invalid LaTeX formulas show a localized error with a copy button.
+- Completed English, Italian and French localization of the remaining
+  desktop strings.
