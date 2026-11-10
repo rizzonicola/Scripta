@@ -1905,8 +1905,10 @@ class _ReadingOverlayButton extends StatelessWidget {
       message: tooltip,
       child: Material(
         // Un filo di rilievo, non un FAB: la lettura è carta, non una
-        // dashboard. Il bordo sottile dà separazione anche quando l'ombra è
-        // quasi invisibile (temi scuri, OLED).
+        // dashboard. Il fondo è semitrasparente così il pulsante si appoggia
+        // alla pagina invece di ritagliarci sopra un cerchio pieno; il bordo
+        // sottile mantiene il contorno leggibile anche nei temi scuri/OLED,
+        // dove l'ombra quasi non si vede.
         elevation: 1,
         shadowColor: Colors.black.withValues(alpha: 0.18),
         shape: CircleBorder(
@@ -1915,7 +1917,7 @@ class _ReadingOverlayButton extends StatelessWidget {
             width: 1,
           ),
         ),
-        color: scheme.surfaceContainerHighest,
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.76),
         clipBehavior: Clip.antiAlias,
         child: IconButton(
           onPressed: onPressed,
@@ -1924,7 +1926,7 @@ class _ReadingOverlayButton extends StatelessWidget {
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints.tightFor(width: 44, height: 44),
           visualDensity: VisualDensity.compact,
-          color: scheme.onSurface.withValues(alpha: 0.7),
+          color: scheme.onSurface.withValues(alpha: 0.8),
         ),
       ),
     );
