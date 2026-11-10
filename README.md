@@ -57,7 +57,7 @@ Write in clean Markdown on any screen, then switch to a beautifully typeset read
 
 - **Markdown-first editor** with a smart toolbar, undo history and `Ctrl`/`Cmd` formatting shortcuts.
 - **Two modes, one note.** Edit the source or switch to **Read-only** and see headings, lists, tables, task lists, quotes, code and math rendered in place.
-- **A reading view made for long notes.** Formatted search highlighting, a section outline, word count, reading time and keyboard paging (`PageUp`/`PageDown`, `Home`/`End`, `Space`).
+- **A reading view made for long notes.** Formatted search highlighting, a section outline when space allows, word count, reading time and keyboard paging (`PageUp`/`PageDown`, `Home`/`End`, `Space`).
 - **Focus mode** strips away the interface for distraction-free writing or reading — including the floating outline button.
 - **Typography that fits you.** Eight color themes, adjustable font family, size and line height, and a carefully tuned typeset reading column.
 - **LaTeX support.** Inline and display math render natively, with a readable fallback if a formula cannot be parsed.

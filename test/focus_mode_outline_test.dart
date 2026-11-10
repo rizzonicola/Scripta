@@ -38,6 +38,13 @@ void main() {
   testWidgets('il focus mode nasconde il pulsante dell\'indice', (
     tester,
   ) async {
+    // Pannello largo: l'indice sarebbe visibile senza il focus mode, così il
+    // test misura davvero il flag e non la soglia responsive.
+    tester.view.physicalSize = const Size(1000, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final container = ProviderContainer();
     addTearDown(container.dispose);
 

@@ -54,9 +54,10 @@ Future<ProviderContainer> _pumpView(
   int? readingTimeMinutes,
   VoidCallback? onEdit,
   TextScaler? textScaler,
+  Size size = _kPhone,
 }) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
-  tester.view.physicalSize = _kPhone;
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -268,6 +269,41 @@ void main() {
     expect(_scrollable(tester).position.pixels, 0);
   });
 
+  testWidgets('sui telefoni l’indice flottante non copre il testo', (
+    tester,
+  ) async {
+    await _pumpView(
+      tester,
+      content: '# Prima sezione\n\nTesto.\n\n## Seconda sezione\n\nAltro.',
+    );
+
+    expect(find.byIcon(Icons.toc_rounded), findsNothing);
+  });
+
+  testWidgets('sui telefoni il torna in cima resta disponibile', (
+    tester,
+  ) async {
+    final buffer = StringBuffer('# Sezione\n\n');
+    for (var i = 0; i < 60; i++) {
+      buffer.writeln('Paragrafo $i con abbastanza testo per scorrere.\n');
+    }
+    await _pumpView(tester, content: buffer.toString());
+
+    expect(find.byIcon(Icons.vertical_align_top_rounded), findsNothing);
+
+    await tester.drag(find.byKey(_kListKey), const Offset(0, -700));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.vertical_align_top_rounded), findsOneWidget);
+    expect(_scrollable(tester).position.pixels, greaterThan(480));
+
+    await tester.tap(find.byIcon(Icons.vertical_align_top_rounded));
+    await tester.pumpAndSettle();
+
+    expect(_scrollable(tester).position.pixels, 0);
+    expect(find.byIcon(Icons.vertical_align_top_rounded), findsNothing);
+  });
+
   testWidgets('l’indice elenca i titoli e porta al blocco scelto', (
     tester,
   ) async {
@@ -276,7 +312,11 @@ void main() {
       buffer.writeln('Paragrafo $i con testo sufficiente.\n');
     }
     buffer.writeln('## Seconda sezione\n\nUltimo paragrafo.\n');
-    await _pumpView(tester, content: buffer.toString());
+    await _pumpView(
+      tester,
+      content: buffer.toString(),
+      size: const Size(900, 800),
+    );
 
     await tester.tap(find.byIcon(Icons.toc_rounded));
     await tester.pumpAndSettle();

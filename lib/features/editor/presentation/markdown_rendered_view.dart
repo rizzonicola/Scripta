@@ -50,6 +50,12 @@ import 'reading_scroll_memory.dart';
 import 'reading_search.dart';
 import 'selection_handle_visibility.dart';
 
+/// Sotto questa larghezza il pannello di lettura è considerato stretto:
+/// il pulsante flottante dell'indice coprirebbe ~24 px della colonna di testo
+/// (44 px di cerchio a `right: 8`, contro i 28 px di padding della colonna),
+/// quindi resta solo il torna-in-cima, che è contestuale e sta nel pollice.
+const double _kOutlineOverlayMinWidth = 700;
+
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste più una modalità "testo grezzo" separata.
 ///
@@ -97,6 +103,10 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
 
   /// Se `false`, il pulsante flottante dell'indice non viene mostrato.
   /// Usato dal focus mode, dove la barra deve restare completamente libera.
+  /// Anche con `true`, il pulsante compare solo se il pannello di lettura è
+  /// abbastanza largo: sotto [_kOutlineOverlayMinWidth] l'indice flottante
+  /// coprirebbe la colonna di testo e viene omesso (vedi
+  /// `_buildFormattedView`).
   final bool showOutline;
 
   const MarkdownRenderedView({
@@ -723,21 +733,32 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
             ),
     );
 
-    return Stack(
-      children: [
-        Positioned.fill(child: content),
-        if (widget.showOutline && _outline.length >= 2)
-          Positioned(
-            top: 8,
-            right: 8,
-            child: _ReadingOverlayButton(
-              icon: Icons.toc_rounded,
-              tooltip: AppLocalizations.of(context).readingOutline,
-              onPressed: _showOutline,
-            ),
-          ),
-        Positioned(bottom: 16, right: 16, child: _buildBackToTopButton()),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // L'indice è chrome permanente sopra il testo: sugli schermi stretti
+        // lo togliamo del tutto invece di rimpicciolirlo. Il torna-in-cima
+        // resta perché appare solo dopo lo scroll e sta nella thumb zone.
+        final showOutlineButton =
+            widget.showOutline &&
+            _outline.length >= 2 &&
+            constraints.maxWidth >= _kOutlineOverlayMinWidth;
+        return Stack(
+          children: [
+            Positioned.fill(child: content),
+            if (showOutlineButton)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _ReadingOverlayButton(
+                  icon: Icons.toc_rounded,
+                  tooltip: AppLocalizations.of(context).readingOutline,
+                  onPressed: _showOutline,
+                ),
+              ),
+            Positioned(bottom: 16, right: 16, child: _buildBackToTopButton()),
+          ],
+        );
+      },
     );
   }
 
@@ -1879,12 +1900,22 @@ class _ReadingOverlayButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Tooltip(
       message: tooltip,
       child: Material(
-        elevation: 2,
-        shape: const CircleBorder(),
-        color: theme.colorScheme.surfaceContainerHigh,
+        // Un filo di rilievo, non un FAB: la lettura è carta, non una
+        // dashboard. Il bordo sottile dà separazione anche quando l'ombra è
+        // quasi invisibile (temi scuri, OLED).
+        elevation: 1,
+        shadowColor: Colors.black.withValues(alpha: 0.18),
+        shape: CircleBorder(
+          side: BorderSide(
+            color: scheme.outline.withValues(alpha: 0.55),
+            width: 1,
+          ),
+        ),
+        color: scheme.surfaceContainerHighest,
         clipBehavior: Clip.antiAlias,
         child: IconButton(
           onPressed: onPressed,
@@ -1893,7 +1924,7 @@ class _ReadingOverlayButton extends StatelessWidget {
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints.tightFor(width: 44, height: 44),
           visualDensity: VisualDensity.compact,
-          color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
+          color: scheme.onSurface.withValues(alpha: 0.7),
         ),
       ),
     );
