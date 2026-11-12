@@ -96,8 +96,11 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
                 const SizedBox(width: 4),
 
-                // App Title (without app icon in top left)
-                Flexible(
+                // App Title (without app icon in top left). `Expanded`, non
+                // `Flexible` + `Spacer`: con due figli flex lo spazio libero
+                // viene diviso a metà e la parte non usata dal testo resta
+                // DOPO le icone, lasciandole staccate dal bordo destro.
+                Expanded(
                   child: Text(
                     AppConstants.appName,
                     maxLines: 1,
@@ -108,8 +111,6 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     ),
                   ),
                 ),
-
-                const Spacer(),
 
                 if (showEditorActions) ...[
                   // Dual Mode Toggle: Edit <-> Read-Only

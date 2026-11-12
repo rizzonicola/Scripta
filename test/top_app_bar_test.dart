@@ -92,6 +92,14 @@ void main() {
       final settings = find.byTooltip('Settings');
       expect(settings, findsOneWidget);
 
+      // Il gruppo di icone arriva davvero al bordo destro (10 px di padding
+      // della barra), senza lo spazio morto lasciato da Flexible + Spacer.
+      final settingsButton = find.ancestor(
+        of: find.byIcon(Icons.settings_outlined),
+        matching: find.byType(IconButton),
+      );
+      expect(tester.getRect(settingsButton).right, closeTo(390, 1));
+
       // La sync è l'ultimo controllo prima delle impostazioni: l'ingranaggio
       // resta all'estrema destra.
       expect(find.byIcon(Icons.cloud_off_outlined), findsOneWidget);
