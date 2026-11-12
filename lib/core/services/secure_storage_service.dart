@@ -91,6 +91,7 @@ class _KeySpec {
     this.legacy, {
     required this.secret,
     this.fallback = false,
+    this.clearOnLogout = true,
   });
 
   final String current;
@@ -101,6 +102,9 @@ class _KeySpec {
 
   /// I valori non segreti possono essere migrati anche dal fallback.
   final bool fallback;
+
+  /// `clearAuth` elimina questa chiave. L'URL del server resta per comodità.
+  final bool clearOnLogout;
 }
 
 /// Service providing encrypted local storage for sensitive authentication tokens and credentials.
@@ -156,6 +160,7 @@ class SecureStorageService {
     _legacyServerUrlKey,
     secret: false,
     fallback: true,
+    clearOnLogout: false,
   );
   static const _usernameKeys = _KeySpec(
     _usernameKey,
@@ -180,19 +185,18 @@ class SecureStorageService {
   ];
 
   /// Chiavi che non devono mai restare nel fallback in chiaro.
-  static const _secretKeys = <_KeySpec>[
-    _sessionKeys,
-    _tokenKeys,
-    _refreshTokenKeys,
-  ];
+  static Iterable<_KeySpec> get _secretKeys =>
+      _allKeys.where((spec) => spec.secret);
 
-  /// Tutto ciò che `clearAuth` elimina; `serverUrl` resta per comodità.
-  static const _clearedKeys = <_KeySpec>[
-    _sessionKeys,
+  /// Tutto ciò che `clearAuth` elimina; l'URL del server resta per comodità.
+  static Iterable<_KeySpec> get _clearedKeys =>
+      _allKeys.where((spec) => spec.clearOnLogout);
+
+  /// Chiavi separate che un bundle di sessione completo rende obsolete.
+  static const _splitAuthKeys = <_KeySpec>[
     _tokenKeys,
     _refreshTokenKeys,
     _usernameKeys,
-    _userIdKeys,
   ];
 
   final FlutterSecureStorage _storage;
@@ -221,6 +225,8 @@ class SecureStorageService {
   /// Prefisso delle chiavi usate SOLO dal fallback su SharedPreferences.
   static const _fallbackPrefix = AppConstants.prefSecureFallbackPrefix;
 
+  static String _fallbackKey(String key) => '$_fallbackPrefix$key';
+
   /// Il fallback è attivo solo su iOS/macOS (vedi commento di classe).
   bool get _fallbackEnabled =>
       _fallbackEnabledOverride ?? (Platform.isIOS || Platform.isMacOS);
@@ -246,8 +252,8 @@ class SecureStorageService {
     try {
       final prefs = await SharedPreferences.getInstance();
       for (final spec in _secretKeys) {
-        await prefs.remove('$_fallbackPrefix${spec.current}');
-        await prefs.remove('$_fallbackPrefix${spec.legacy}');
+        await prefs.remove(_fallbackKey(spec.current));
+        await prefs.remove(_fallbackKey(spec.legacy));
       }
     } catch (_) {
       ok = false;
@@ -282,10 +288,10 @@ class SecureStorageService {
     if (!spec.fallback) return ok;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final oldFallbackKey = '$_fallbackPrefix${spec.legacy}';
+      final oldFallbackKey = _fallbackKey(spec.legacy);
       final legacy = prefs.getString(oldFallbackKey);
       if (legacy != null) {
-        final newFallbackKey = '$_fallbackPrefix${spec.current}';
+        final newFallbackKey = _fallbackKey(spec.current);
         if (prefs.getString(newFallbackKey) == null) {
           await prefs.setString(newFallbackKey, legacy);
         }
@@ -311,7 +317,7 @@ class SecureStorageService {
         'SecureStorage: Keychain non disponibile ($e), uso il fallback.',
       );
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('$_fallbackPrefix$key', value);
+      await prefs.setString(_fallbackKey(key), value);
     }
   }
 
@@ -329,7 +335,7 @@ class SecureStorageService {
     // Keychain vuoto o non accessibile: controlla un eventuale valore salvato
     // dal fallback in una sessione precedente.
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('$_fallbackPrefix$key');
+    return prefs.getString(_fallbackKey(key));
   }
 
   Future<void> _delete(String key) async {
@@ -340,7 +346,7 @@ class SecureStorageService {
     }
     if (_fallbackEnabled) {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('$_fallbackPrefix$key');
+      await prefs.remove(_fallbackKey(key));
     }
   }
 
@@ -394,14 +400,24 @@ class SecureStorageService {
     await _removeSplitAuthKeys(removeLegacyBundle: stored);
   }
 
-  Future<void> _removeSplitAuthKeys({required bool removeLegacyBundle}) async {
-    for (final spec in [_tokenKeys, _refreshTokenKeys, _usernameKeys]) {
+  /// Elimina current+legacy per ogni spec senza fermarsi al primo errore.
+  /// Restituisce il primo errore: i chiamanti decidono se propagarlo.
+  Future<Object?> _deleteKeys(Iterable<_KeySpec> specs) async {
+    Object? firstError;
+    for (final spec in specs) {
       for (final key in [spec.current, spec.legacy]) {
         try {
           await _delete(key);
-        } catch (_) {}
+        } catch (e) {
+          firstError ??= e;
+        }
       }
     }
+    return firstError;
+  }
+
+  Future<void> _removeSplitAuthKeys({required bool removeLegacyBundle}) async {
+    await _deleteKeys(_splitAuthKeys);
     if (!removeLegacyBundle) return;
     try {
       await _delete(_legacySessionKey);
@@ -471,25 +487,39 @@ class SecureStorageService {
     return session;
   }
 
-  Future<void> saveAuthToken(String token) async {
+  /// Scrive un segreto nel Keychain. Se il Keychain rifiuta, lo tiene solo in
+  /// memoria e prova a rimuovere un eventuale valore stantio rimasto lì.
+  Future<void> _saveSecret({
+    required String key,
+    required String value,
+    required String memoryLabel,
+    required void Function(String?) setMemoryValue,
+  }) async {
     try {
-      await _storage.write(key: _tokenKey, value: token);
-      _memoryOnlyToken = null;
+      await _storage.write(key: key, value: value);
+      setMemoryValue(null);
     } catch (e) {
       if (!_fallbackEnabled) rethrow;
       debugPrint(
-        'SecureStorage: Keychain non disponibile ($e): token solo in memoria.',
+        'SecureStorage: Keychain non disponibile ($e): $memoryLabel solo in memoria.',
       );
-      _memoryOnlyToken = token;
+      setMemoryValue(value);
       // Se il Keychain è tornato accessibile in lettura, al prossimo avvio
-      // vincerebbe il vecchio token rimasto lì: prova a rimuoverlo. Se anche
-      // la delete fallisce, il token in memoria resta comunque prioritario
+      // vincerebbe il vecchio valore rimasto lì: prova a rimuoverlo. Se anche
+      // la delete fallisce, il valore in memoria resta comunque prioritario
       // per la sessione corrente.
       try {
-        await _storage.delete(key: _tokenKey);
+        await _storage.delete(key: key);
       } catch (_) {}
     }
   }
+
+  Future<void> saveAuthToken(String token) => _saveSecret(
+    key: _tokenKey,
+    value: token,
+    memoryLabel: 'token',
+    setMemoryValue: (value) => _memoryOnlyToken = value,
+  );
 
   Future<String?> getAuthToken() async {
     await _ensureLegacyMigration();
@@ -502,8 +532,8 @@ class SecureStorageService {
     // SharedPreferences: se ne trovi uno lo elimina (login da rifare).
     if (_fallbackEnabled) {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('$_fallbackPrefix${_tokenKeys.current}');
-      await prefs.remove('$_fallbackPrefix${_tokenKeys.legacy}');
+      await prefs.remove(_fallbackKey(_tokenKeys.current));
+      await prefs.remove(_fallbackKey(_tokenKeys.legacy));
     }
     try {
       final value = await _storage.read(key: _tokenKey);
@@ -519,19 +549,12 @@ class SecureStorageService {
       await clearRefreshToken();
       return;
     }
-    try {
-      await _storage.write(key: _refreshTokenKey, value: token);
-      _memoryOnlyRefreshToken = null;
-    } catch (e) {
-      if (!_fallbackEnabled) rethrow;
-      debugPrint(
-        'SecureStorage: Keychain non disponibile ($e): refresh token solo in memoria.',
-      );
-      _memoryOnlyRefreshToken = token;
-      try {
-        await _storage.delete(key: _refreshTokenKey);
-      } catch (_) {}
-    }
+    await _saveSecret(
+      key: _refreshTokenKey,
+      value: token,
+      memoryLabel: 'refresh token',
+      setMemoryValue: (value) => _memoryOnlyRefreshToken = value,
+    );
   }
 
   Future<String?> getRefreshToken() async {
@@ -570,16 +593,7 @@ class SecureStorageService {
     _memoryOnlyToken = null;
     _memoryOnlyRefreshToken = null;
     _memoryOnlySession = null;
-    Object? firstError;
-    for (final spec in _clearedKeys) {
-      for (final key in [spec.current, spec.legacy]) {
-        try {
-          await _delete(key);
-        } catch (e) {
-          firstError ??= e;
-        }
-      }
-    }
+    final firstError = await _deleteKeys(_clearedKeys);
     // Keep serverUrl for user convenience unless explicitly cleared
     if (firstError != null) throw firstError;
   }

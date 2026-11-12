@@ -53,7 +53,6 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
       noteSearchProvider.select((s) => s.isActive),
     );
     final showEditorActions = isEditorVisible && activeNoteId != null;
-    final showNoteSearchButton = showEditorActions;
     // Senza una nota aperta le azioni dell'editor spariscono. Su mobile e
     // tablet le Impostazioni vivono nel drawer: mostrare qui una scorciatoia
     // evita che la barra resti vuota a destra e risparmia un passaggio.
@@ -151,29 +150,27 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                   ),
 
                   // In-Note Search Toggle (find/highlight occurrences within the open note)
-                  if (showNoteSearchButton) ...[
-                    const SizedBox(width: 2),
-                    IconButton(
-                      icon: Icon(
-                        isNoteSearchActive
-                            ? Icons.search_off_rounded
-                            : Icons.search_rounded,
-                        size: 20,
-                      ),
-                      tooltip: l10n.searchInNote,
-                      visualDensity: VisualDensity.compact,
-                      color: isNoteSearchActive
-                          ? theme.colorScheme.primary
-                          : null,
-                      onPressed: () {
-                        if (isNoteSearchActive) {
-                          ref.read(noteSearchProvider.notifier).close();
-                        } else {
-                          ref.read(noteSearchProvider.notifier).open();
-                        }
-                      },
+                  const SizedBox(width: 2),
+                  IconButton(
+                    icon: Icon(
+                      isNoteSearchActive
+                          ? Icons.search_off_rounded
+                          : Icons.search_rounded,
+                      size: 20,
                     ),
-                  ],
+                    tooltip: l10n.searchInNote,
+                    visualDensity: VisualDensity.compact,
+                    color: isNoteSearchActive
+                        ? theme.colorScheme.primary
+                        : null,
+                    onPressed: () {
+                      if (isNoteSearchActive) {
+                        ref.read(noteSearchProvider.notifier).close();
+                      } else {
+                        ref.read(noteSearchProvider.notifier).open();
+                      }
+                    },
+                  ),
 
                   // Focus Mode Toggle (distraction-free, desktop and Android)
                   const SizedBox(width: 4),
@@ -189,74 +186,7 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
                 // Sync status indicator & quick manual sync button
                 const SizedBox(width: 2),
-                Consumer(
-                  builder: (context, ref, _) {
-                    // Solo i 3 campi usati da questo indicatore, invece
-                    // dell'intero SyncConfig: con l'uguaglianza per valore
-                    // ora presente su SyncConfig, `.select` qui evita anche
-                    // il rebuild "silenzioso" che il poll di connettività
-                    // periodico altrimenti causerebbe ad ogni ciclo.
-                    final isAuthenticated = ref.watch(
-                      syncProvider.select((s) => s.isAuthenticated),
-                    );
-                    final isSyncing = ref.watch(
-                      syncProvider.select((s) => s.isSyncing),
-                    );
-                    final isOnline = ref.watch(
-                      syncProvider.select((s) => s.isOnline),
-                    );
-                    final quotaExceeded = ref.watch(
-                      syncProvider.select((s) => s.quotaExceeded),
-                    );
-
-                    if (!isAuthenticated) {
-                      return IconButton(
-                        icon: Icon(
-                          Icons.cloud_off_outlined,
-                          size: 19,
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.6,
-                          ),
-                        ),
-                        tooltip: 'Account non connesso',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: () => SettingsView.show(context),
-                      );
-                    }
-                    if (isSyncing) {
-                      return const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 8),
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      );
-                    }
-                    return IconButton(
-                      icon: Icon(
-                        isOnline
-                            ? Icons.cloud_done_outlined
-                            : Icons.cloud_off_outlined,
-                        size: 19,
-                        color: quotaExceeded
-                            ? theme.warningColor
-                            : isOnline
-                            ? theme.successColor
-                            : theme.warningColor,
-                      ),
-                      tooltip: quotaExceeded
-                          ? 'Sincronizzazione sospesa: quota di archiviazione esaurita'
-                          : isOnline
-                          ? 'Sincronizzato: Online (Tocca per sincronizzare)'
-                          : 'Server non raggiungibile (Offline)',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () {
-                        ref.read(syncProvider.notifier).triggerSync();
-                      },
-                    );
-                  },
-                ),
+                const _SyncStatusButton(),
 
                 // Scorciatoia Impostazioni: ultimo elemento a destra, con la
                 // sync subito alla sua sinistra. Compare solo quando le azioni
@@ -276,6 +206,70 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SyncStatusButton extends ConsumerWidget {
+  const _SyncStatusButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    // Solo i campi usati da questo indicatore, invece dell'intero SyncConfig:
+    // con l'uguaglianza per valore ora presente su SyncConfig, `.select` qui
+    // evita anche il rebuild "silenzioso" che il poll di connettività
+    // periodico altrimenti causerebbe ad ogni ciclo.
+    final isAuthenticated = ref.watch(
+      syncProvider.select((s) => s.isAuthenticated),
+    );
+    final isSyncing = ref.watch(syncProvider.select((s) => s.isSyncing));
+    final isOnline = ref.watch(syncProvider.select((s) => s.isOnline));
+    final quotaExceeded = ref.watch(
+      syncProvider.select((s) => s.quotaExceeded),
+    );
+
+    if (!isAuthenticated) {
+      return IconButton(
+        icon: Icon(
+          Icons.cloud_off_outlined,
+          size: 19,
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+        ),
+        tooltip: 'Account non connesso',
+        visualDensity: VisualDensity.compact,
+        onPressed: () => SettingsView.show(context),
+      );
+    }
+    if (isSyncing) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return IconButton(
+      icon: Icon(
+        isOnline ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+        size: 19,
+        color: quotaExceeded
+            ? theme.warningColor
+            : isOnline
+            ? theme.successColor
+            : theme.warningColor,
+      ),
+      tooltip: quotaExceeded
+          ? 'Sincronizzazione sospesa: quota di archiviazione esaurita'
+          : isOnline
+          ? 'Sincronizzato: Online (Tocca per sincronizzare)'
+          : 'Server non raggiungibile (Offline)',
+      visualDensity: VisualDensity.compact,
+      onPressed: () {
+        ref.read(syncProvider.notifier).triggerSync();
+      },
     );
   }
 }
