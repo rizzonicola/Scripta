@@ -51,10 +51,11 @@ import 'reading_search.dart';
 import 'selection_handle_visibility.dart';
 
 /// Sotto questa larghezza il pannello di lettura è considerato stretto:
-/// il pulsante flottante dell'indice coprirebbe ~24 px della colonna di testo
-/// (44 px di cerchio a `right: 8`, contro i 28 px di padding della colonna),
-/// quindi resta solo il torna-in-cima, che è contestuale e sta nel pollice.
-const double _kOutlineOverlayMinWidth = 700;
+/// i pulsanti flottanti (indice e torna-in-cima) coprirebbero ~24 px della
+/// colonna di testo (44 px di cerchio a `right: 8`, contro i 28 px di padding
+/// della colonna). Sui telefoni e sugli schermi stretti li togliamo entrambi:
+/// per tornare in cima basta scorrere, senza occupare spazio sopra il testo.
+const double _kOverlayButtonsMinWidth = 700;
 
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste più una modalità "testo grezzo" separata.
@@ -735,13 +736,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // L'indice è chrome permanente sopra il testo: sugli schermi stretti
-        // lo togliamo del tutto invece di rimpicciolirlo. Il torna-in-cima
-        // resta perché appare solo dopo lo scroll e sta nella thumb zone.
+        // Gli overlay sono chrome sopra il testo: sugli schermi stretti li
+        // togliamo del tutto invece di rimpicciolirli. Vale anche per il
+        // torna-in-cima, che altrimenti coprirebbe la colonna di lettura.
+        final showOverlayButtons =
+            constraints.maxWidth >= _kOverlayButtonsMinWidth;
         final showOutlineButton =
             widget.showOutline &&
             _outline.length >= 2 &&
-            constraints.maxWidth >= _kOutlineOverlayMinWidth;
+            showOverlayButtons;
         return Stack(
           children: [
             Positioned.fill(child: content),
@@ -755,7 +758,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                   onPressed: _showOutline,
                 ),
               ),
-            Positioned(bottom: 16, right: 16, child: _buildBackToTopButton()),
+            if (showOverlayButtons)
+              Positioned(
+                bottom: 16,
+                right: 16,
+                child: _buildBackToTopButton(),
+              ),
           ],
         );
       },

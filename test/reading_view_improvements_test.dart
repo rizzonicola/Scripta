@@ -280,14 +280,18 @@ void main() {
     expect(find.byIcon(Icons.toc_rounded), findsNothing);
   });
 
-  testWidgets('sui telefoni il torna in cima resta disponibile', (
+  testWidgets('sugli schermi larghi il torna in cima resta disponibile', (
     tester,
   ) async {
     final buffer = StringBuffer('# Sezione\n\n');
     for (var i = 0; i < 60; i++) {
       buffer.writeln('Paragrafo $i con abbastanza testo per scorrere.\n');
     }
-    await _pumpView(tester, content: buffer.toString());
+    await _pumpView(
+      tester,
+      content: buffer.toString(),
+      size: const Size(900, 800),
+    );
 
     expect(find.byIcon(Icons.vertical_align_top_rounded), findsNothing);
 
@@ -302,6 +306,23 @@ void main() {
 
     expect(_scrollable(tester).position.pixels, 0);
     expect(find.byIcon(Icons.vertical_align_top_rounded), findsNothing);
+  });
+
+  testWidgets('sui telefoni il torna in cima non copre il testo', (
+    tester,
+  ) async {
+    final buffer = StringBuffer('# Sezione\n\n');
+    for (var i = 0; i < 60; i++) {
+      buffer.writeln('Paragrafo $i con abbastanza testo per scorrere.\n');
+    }
+    await _pumpView(tester, content: buffer.toString());
+
+    await tester.drag(find.byKey(_kListKey), const Offset(0, -700));
+    await tester.pumpAndSettle();
+
+    expect(_scrollable(tester).position.pixels, greaterThan(480));
+    expect(find.byIcon(Icons.vertical_align_top_rounded), findsNothing);
+    expect(find.byIcon(Icons.toc_rounded), findsNothing);
   });
 
   testWidgets('l’indice elenca i titoli e porta al blocco scelto', (
