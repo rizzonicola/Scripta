@@ -54,6 +54,11 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
     );
     final showEditorActions = isEditorVisible && activeNoteId != null;
     final showNoteSearchButton = showEditorActions;
+    // Senza una nota aperta le azioni dell'editor spariscono. Su mobile e
+    // tablet le Impostazioni vivono nel drawer: mostrare qui una scorciatoia
+    // evita che la barra resti vuota a destra e risparmia un passaggio.
+    // Su desktop la voce è già sempre visibile nella barra delle cartelle.
+    final showSettingsShortcut = !showEditorActions && !isDesktop;
 
     return Container(
       decoration: BoxDecoration(
@@ -251,6 +256,20 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
                     );
                   },
                 ),
+
+                // Scorciatoia Impostazioni: ultimo elemento a destra, con la
+                // sync subito alla sua sinistra. Compare solo quando le azioni
+                // dell'editor sono nascoste (nessuna nota aperta su mobile e
+                // tablet).
+                if (showSettingsShortcut) ...[
+                  const SizedBox(width: 2),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined, size: 19),
+                    tooltip: l10n.settings,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => SettingsView.show(context),
+                  ),
+                ],
               ],
             ),
           ),

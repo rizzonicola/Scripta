@@ -6,3 +6,6 @@ Version 1.1.6.
   side panels are hidden.
 - Small screens no longer show floating reading controls that overlap the
   text column.
+- On phones and tablets, the top bar keeps a Settings shortcut at the far
+  right when no note is open, with the sync indicator immediately to its
+  left.
