@@ -7,27 +7,24 @@ class ReadingOutlineEntry {
   const ReadingOutlineEntry({
     required this.title,
     required this.level,
-    required this.itemIndex,
+    required this.documentId,
   });
 
   final String title;
   final int level;
 
-  /// Indice dell'elemento nella lista virtualizzata (per lo scroll).
-  final int itemIndex;
+  /// Identificativo stabile del blocco: la vista lo risolve nella posizione
+  /// corrente della lista, che può cambiare tra una build e l'altra.
+  final String documentId;
 }
 
 /// Foglio dell'indice: elenco dei titoli con rientro proporzionale al livello
-/// Markdown. Toccando una voce si chiude e la vista scorre al blocco.
+/// Markdown. Toccando una voce il foglio restituisce la voce scelta alla
+/// route chiamante, che si occupa dello scroll.
 class ReadingOutlineSheet extends StatelessWidget {
-  const ReadingOutlineSheet({
-    super.key,
-    required this.entries,
-    required this.onSelected,
-  });
+  const ReadingOutlineSheet({super.key, required this.entries});
 
   final List<ReadingOutlineEntry> entries;
-  final ValueChanged<ReadingOutlineEntry> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -71,10 +68,7 @@ class ReadingOutlineSheet extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodyMedium,
                     ),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      onSelected(entry);
-                    },
+                    onTap: () => Navigator.of(context).pop(entry),
                   );
                 },
               ),

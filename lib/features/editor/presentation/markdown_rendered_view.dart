@@ -41,6 +41,7 @@ import 'package:flutter_math_fork/tex.dart'
     show SyntaxTree, TexParser, TexParserSettings;
 import 'code_block_with_copy.dart';
 import 'display_math_block.dart';
+import 'note_layout.dart';
 import 'note_scroll_memory.dart';
 import 'reading_colors.dart';
 import 'reading_empty_state.dart';
@@ -49,13 +50,6 @@ import 'reading_meta_footer.dart';
 import 'reading_outline_sheet.dart';
 import 'reading_search.dart';
 import 'selection_handle_visibility.dart';
-
-/// Sotto questa larghezza il pannello di lettura è considerato stretto:
-/// i pulsanti flottanti (indice e torna-in-cima) coprirebbero ~24 px della
-/// colonna di testo (44 px di cerchio a `right: 8`, contro i 28 px di padding
-/// della colonna). Sui telefoni e sugli schermi stretti li togliamo entrambi:
-/// per tornare in cima basta scorrere, senza occupare spazio sopra il testo.
-const double _kOverlayButtonsMinWidth = 700;
 
 /// Vista di sola lettura di una nota, renderizzata SEMPRE in Markdown
 /// formattato: non esiste più una modalità "testo grezzo" separata.
@@ -92,21 +86,24 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
   /// gli usi isolati della vista non hanno una nota.
   final String? noteId;
 
-  /// Metadati opzionali mostrati nel footer. Se assenti (test, anteprime)
-  /// il footer è semplicemente omesso.
-  final DateTime? updatedAt;
-  final int? wordCount;
-  final int? readingTimeMinutes;
+  /// Metadati mostrati nel footer. Se assenti (test, anteprime) il footer è
+  /// semplicemente omesso.
+  final ReadingMetadata? metadata;
 
   /// Invocato dallo stato vuoto per passare alla modifica. Se assente, lo
   /// stato vuoto resta puramente informativo.
   final VoidCallback? onEdit;
 
+  /// Riporta al proprietario della barra di ricerca quante occorrenze sono
+  /// state trovate nel testo RESO. È un callback, non uno stato globale: il
+  /// pannello editor possiede sia la barra sia questa vista.
+  final ValueChanged<int>? onSearchTotalChanged;
+
   /// Se `false`, il pulsante flottante dell'indice non viene mostrato.
   /// Usato dal focus mode, dove la barra deve restare completamente libera.
   /// Anche con `true`, il pulsante compare solo se il pannello di lettura è
-  /// abbastanza largo: sotto [_kOutlineOverlayMinWidth] l'indice flottante
-  /// coprirebbe la colonna di testo e viene omesso (vedi
+  /// abbastanza largo: sotto [ReadingLayout.overlayButtonsMinWidth] l'indice
+  /// flottante coprirebbe la colonna di testo e viene omesso (vedi
   /// `_buildFormattedView`).
   final bool showOutline;
 
@@ -115,10 +112,9 @@ class MarkdownRenderedView extends ConsumerStatefulWidget {
     required this.title,
     required this.content,
     this.noteId,
-    this.updatedAt,
-    this.wordCount,
-    this.readingTimeMinutes,
+    this.metadata,
     this.onEdit,
+    this.onSearchTotalChanged,
     this.showOutline = true,
   });
 
@@ -321,6 +317,11 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // [_scrollToItem]).
   List<ReadingOutlineEntry> _outline = const [];
   final Map<int, GlobalKey> _itemKeys = <int, GlobalKey>{};
+
+  // Ancora stabile (documentId) -> posizione corrente nella lista. La vista
+  // la aggiorna quando ricostruisce i blocchi; indice, ricerca e ripristino
+  // non devono mai conservare una posizione che può cambiare.
+  Map<String, int> _itemIndexByDocumentId = const {};
 
   // Posizione di scorrimento: il salvataggio avviene durante lo scroll (non
   // in `dispose`, quando la ListView ha già perso i client), mentre il
@@ -533,7 +534,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       final last = _lastSavedReadingPixels;
       // Un salvataggio ogni ~48 px basta per conservare la posizione senza
       // eseguire la misura della geometria a ogni frame.
-      if (last == null || (pixels - last).abs() >= 48) {
+      if (last == null ||
+          (pixels - last).abs() >= NoteScrollMemory.saveThresholdPixels) {
         _lastSavedReadingPixels = pixels;
         _scheduleSaveReadingPosition();
       }
@@ -615,6 +617,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       final items = <_ViewItem>[];
       final documents = <MarkdownDocumentRef>[];
       final outline = <ReadingOutlineEntry>[];
+      final itemIndexByDocumentId = <String, int>{};
 
       // 1) Le formule a blocco `$$...$$` vengono estratte prima del parsing
       //    (fuori da code fence/blocchi indentati); 2) ogni tratto Markdown è
@@ -659,6 +662,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                   sourceLength: blockLength,
                 ),
               );
+              itemIndexByDocumentId[id] = itemIndex;
               documents.add(
                 MarkdownDocumentRef(
                   id: id,
@@ -671,7 +675,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                   ReadingOutlineEntry(
                     title: block.text.trim(),
                     level: block.level,
-                    itemIndex: itemIndex,
+                    documentId: id,
                   ),
                 );
               }
@@ -682,6 +686,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       }
 
       _items = items;
+      _itemIndexByDocumentId = itemIndexByDocumentId;
       _outline = outline;
       _searchSignature = null;
       // Coordinate e modo del menù si riferivano ai blocchi di prima.
@@ -737,7 +742,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
     _titleTextStyle = AppTheme.getTextStyleForFont(
       fontFamily,
-      fontSize: fontSize * 2.2,
+      fontSize: fontSize * NoteLayout.titleScale,
       fontWeight: FontWeight.w800,
       color: theme.colorScheme.onSurface,
       height: 1.25,
@@ -838,10 +843,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     final items = _items;
     final hasTitle = widget.title.trim().isNotEmpty;
     final hasEmptyState = items.isEmpty;
-    final hasFooter =
-        widget.updatedAt != null &&
-        widget.wordCount != null &&
-        widget.readingTimeMinutes != null;
+    final hasFooter = widget.metadata != null;
     final itemCount =
         (hasTitle ? 1 : 0) +
         (hasEmptyState ? 1 : items.length) +
@@ -967,7 +969,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         // togliamo del tutto invece di rimpicciolirli. Vale anche per il
         // torna-in-cima, che altrimenti coprirebbe la colonna di lettura.
         final showOverlayButtons =
-            constraints.maxWidth >= _kOverlayButtonsMinWidth;
+            constraints.maxWidth >= ReadingLayout.overlayButtonsMinWidth;
         final showOutlineButton =
             widget.showOutline && _outline.length >= 2 && showOverlayButtons;
         return Stack(
@@ -992,19 +994,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   Widget _buildEmptyItem() {
-    return ReadingLayout.centered(
+    return NoteLayout.centered(
       ReadingEmptyState(onEdit: widget.onEdit),
       key: const ValueKey('rendered-empty-state'),
     );
   }
 
   Widget _buildFooterItem() {
-    return ReadingLayout.centered(
-      ReadingMetaFooter(
-        wordCount: widget.wordCount!,
-        readingTimeMinutes: widget.readingTimeMinutes!,
-        updatedAt: widget.updatedAt!,
-      ),
+    return NoteLayout.centered(
+      ReadingMetaFooter(metadata: widget.metadata!),
       key: const ValueKey('rendered-meta-footer'),
     );
   }
@@ -1093,20 +1091,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     );
   }
 
-  void _showOutline() {
+  Future<void> _showOutline() async {
     if (_outline.isEmpty) return;
-    showModalBottomSheet<void>(
+    final entry = await showModalBottomSheet<ReadingOutlineEntry>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => ReadingOutlineSheet(
-        entries: _outline,
-        onSelected: (entry) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _scrollToItem(entry.itemIndex);
-          });
-        },
-      ),
+      builder: (sheetContext) => ReadingOutlineSheet(entries: _outline),
     );
+    if (entry != null && mounted) {
+      _scrollToDocumentId(entry.documentId);
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1138,7 +1132,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       if (item is _BlockItem) {
         blocks.add(
           ReadingSearchBlock(
-            itemIndex: i,
             documentId: item.documentId,
             text: markdownBlockRenderedText(item.block),
           ),
@@ -1163,9 +1156,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   void _publishSearchTotal(int total) {
     if (_publishedSearchTotal == total) return;
     _publishedSearchTotal = total;
+    final notify = widget.onSearchTotalChanged;
+    if (notify == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      ref.read(renderedNoteSearchTotalProvider.notifier).set(total);
+      if (mounted) notify(total);
     });
   }
 
@@ -1192,7 +1186,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _activeSelection = selection;
     final state = _selectionScopeKey.currentState;
     if (state != null && state.toolbarIsVisible) state.hideToolbar();
-    _scrollToItem(hit.itemIndex);
+    _scrollToDocumentId(hit.documentId);
   }
 
   void _clearSearchSelectionIfOurs() {
@@ -1208,6 +1202,14 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
     final state = _selectionScopeKey.currentState;
     if (state != null && state.toolbarIsVisible) state.hideToolbar();
+  }
+
+  /// Risolve un'ancora stabile nella posizione corrente della lista e la
+  /// porta a schermo. Se il blocco non esiste più (contenuto cambiato) non
+  /// fa nulla: meglio non scorrere che scorrere al blocco sbagliato.
+  void _scrollToDocumentId(String documentId) {
+    final itemIndex = _itemIndexByDocumentId[documentId];
+    if (itemIndex != null) _scrollToItem(itemIndex);
   }
 
   /// Porta a schermo il blocco [itemIndex]. Se il blocco è montato usa la
@@ -2009,7 +2011,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   Widget _buildTitleWidget(ThemeData theme, Color selectionColor) {
-    return ReadingLayout.centered(
+    return NoteLayout.centered(
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2085,7 +2087,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     }
 
     final anchorKey = _itemKeys.putIfAbsent(index, GlobalKey.new);
-    return ReadingLayout.centered(
+    return NoteLayout.centered(
       KeyedSubtree(
         key: anchorKey,
         child: Padding(

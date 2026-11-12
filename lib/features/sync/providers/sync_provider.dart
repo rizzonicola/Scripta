@@ -20,6 +20,7 @@ import '../../../core/database/notes_dao.dart';
 import '../../../core/database/sync_meta_dao.dart';
 import '../../../core/events/note_mutation_events.dart';
 import '../../../core/l10n/app_localizations.dart';
+import '../../../core/services/secure_storage_provider.dart';
 import '../../../core/services/secure_storage_service.dart';
 import '../../../core/services/session_state_service.dart';
 import '../../../features/sync/services/sync_api_service.dart';
@@ -30,10 +31,6 @@ import '../../settings/providers/settings_provider.dart';
 import '../models/sync_config.dart';
 import '../models/sync_models.dart';
 import 'sync_settings_gateway.dart';
-
-final secureStorageProvider = Provider<SecureStorageService>((ref) {
-  return SecureStorageService();
-});
 
 final syncApiServiceProvider = Provider<SyncApiService>((ref) {
   return SyncApiService.withLocalizations(

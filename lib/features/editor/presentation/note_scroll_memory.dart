@@ -19,6 +19,10 @@ class NoteScrollMemory {
 
   static const int maxEntries = 20;
 
+  /// Distanza minima di scroll prima di rimisurare la posizione: condivisa da
+  /// lettura ed editor, così le due modalità salvano con la stessa frequenza.
+  static const double saveThresholdPixels = 48;
+
   // LinkedHashMap mantiene l'ordine di inserimento: la prima chiave è la meno
   // recente e viene rimossa per prima quando si supera [maxEntries].
   static final LinkedHashMap<String, int> _sourceOffsets =

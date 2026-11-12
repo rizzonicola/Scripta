@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/search_highlight_colors.dart';
+
 /// [TextEditingController] in grado di disegnare, SOPRA al testo esistente,
 /// le evidenziazioni delle occorrenze della ricerca interna alla nota (vedi
 /// `note_search_provider.dart`), senza mai alterare `text`/`selection`.
@@ -48,18 +50,9 @@ class SearchHighlightingTextEditingController extends TextEditingController {
       );
     }
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    // Colori ad alto contrasto per l'evidenziazione: ambra per le
-    // occorrenze "passive", arancione pieno (con testo forzato a nero,
-    // leggibile su entrambe le combinazioni chiaro/scuro) per quella
-    // attualmente attiva — la stessa famiglia di colori usata dalla vista di
-    // lettura per l'occorrenza attiva, così l'aspetto della ricerca resta
-    // coerente in entrambe le modalità.
-    final normalHighlight =
-        (isDark ? Colors.amber.shade700 : Colors.amber.shade300).withValues(
-          alpha: 0.55,
-        );
-    const activeHighlight = Color(0xFFFB923C); // Orange 400
+    final scheme = Theme.of(context).colorScheme;
+    final normalHighlight = SearchHighlightColors.passive(scheme);
+    final activeHighlight = SearchHighlightColors.active(scheme);
 
     final text = this.text;
     final children = <TextSpan>[];
@@ -83,7 +76,9 @@ class SearchHighlightingTextEditingController extends TextEditingController {
           text: text.substring(start, end),
           style: (style ?? const TextStyle()).copyWith(
             backgroundColor: isActive ? activeHighlight : normalHighlight,
-            color: isActive ? Colors.black : style?.color,
+            color: isActive
+                ? SearchHighlightColors.activeForeground
+                : style?.color,
             fontWeight: isActive ? FontWeight.w700 : style?.fontWeight,
           ),
         ),

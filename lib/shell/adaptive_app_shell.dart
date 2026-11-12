@@ -175,12 +175,18 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     }
   }
 
-  /// Torna alla lista note (layout mobile). Chiude la nota aperta, quindi
-  /// notifica la sync (vedi `SyncNotifier.onNoteChangedOrClosed`).
+  /// Torna alla lista note (layout mobile). Mostrare la lista è anche l'unico
+  /// modo per uscire dal focus: altrimenti il pannello visibile resterebbe
+  /// l'editor e la lista non verrebbe mai montata (perdendo, tra l'altro, la
+  /// richiesta di focus della ricerca globale).
   void _showMobileNotesList() {
-    ref.read(syncProvider.notifier).onNoteChangedOrClosed();
-    setState(() => _mobileActiveView = MobileActiveView.notesList);
-    unawaited(SessionStateService.saveMobileEditorOpen(false));
+    if (ref.read(editorProvider).isFocusMode) {
+      ref.read(editorProvider.notifier).exitFocusMode();
+    }
+    if (_mobileActiveView != MobileActiveView.notesList) {
+      setState(() => _mobileActiveView = MobileActiveView.notesList);
+      unawaited(SessionStateService.saveMobileEditorOpen(false));
+    }
   }
 
   void _retryPendingWrites() {
@@ -299,11 +305,14 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
 
   @override
   Widget build(BuildContext context) {
+    // Unico punto che traduce un cambio di nota (incluse le transizioni
+    // da/verso `null`) in un trigger di sync. L'editor non lo fa più: quando
+    // è smontato (lista mobile) non vedrebbe comunque il cambio.
     ref.listen<String?>(notesProvider.select((s) => s.activeNoteId), (
       previous,
       next,
     ) {
-      if (previous != null && next != null && previous != next) {
+      if (previous != next) {
         ref.read(syncProvider.notifier).onNoteChangedOrClosed();
       }
     });
@@ -360,6 +369,12 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
           : Brightness.dark,
     );
 
+    // Un solo stato derivato decide cosa è visibile su mobile: il focus è una
+    // modalità che forza l'editor, non una seconda verità sul pannello.
+    final isMobileEditorVisible =
+        editorFocusMode || _mobileActiveView == MobileActiveView.editor;
+    final isMobile = screenType == DeviceScreenType.mobile;
+
     // Il focus mode NON sostituisce il pannello editor: toglie soltanto la
     // chrome attorno (app bar, drawer, pannelli laterali). `NoteEditorPane`
     // resta nello stesso punto dell'albero, quindi conserva controller,
@@ -367,12 +382,14 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
     final PreferredSizeWidget? appBar = editorFocusMode
         ? null
         : switch (screenType) {
-            DeviceScreenType.desktop => const TopAppBar(),
+            DeviceScreenType.desktop => const TopAppBar(isEditorVisible: true),
             DeviceScreenType.tablet => TopAppBar(
+              isEditorVisible: true,
               onToggleSidebar: _openFolderDrawer,
             ),
             DeviceScreenType.mobile => TopAppBar(
-              showBackButton: _mobileActiveView == MobileActiveView.editor,
+              isEditorVisible: isMobileEditorVisible,
+              showBackButton: isMobileEditorVisible,
               onBack: _showMobileNotesList,
               onToggleSidebar: _openFolderDrawer,
             ),
@@ -384,7 +401,10 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
         isFocusMode: editorFocusMode,
       ),
       DeviceScreenType.tablet => _buildTabletBody(isFocusMode: editorFocusMode),
-      DeviceScreenType.mobile => _buildMobileBody(isFocusMode: editorFocusMode),
+      DeviceScreenType.mobile => _buildMobileBody(
+        isFocusMode: editorFocusMode,
+        isEditorVisible: isMobileEditorVisible,
+      ),
     };
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -392,12 +412,10 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
       // Scorciatoie da tastiera globali (Ctrl/Cmd+N, +F, F1...): vedi
       // core/utils/app_commands.dart per l'elenco completo.
       child: AppShortcutsScope(
-        // Layout mobile a pannello singolo: mostra l'editor quando un
-        // comando crea o duplica una nota.
-        onEditorRequested: _showMobileEditor,
-        onNotesListRequested: screenType == DeviceScreenType.mobile
-            ? _showMobileNotesList
-            : null,
+        // Solo il layout mobile ha un pannello da cambiare: su desktop e
+        // tablet l'editor è già visibile e non esiste uno stato da persistere.
+        onEditorRequested: isMobile ? _showMobileEditor : null,
+        onNotesListRequested: isMobile ? _showMobileNotesList : null,
         child: Column(
           children: [
             if (hasSaveError) _SaveErrorBanner(onRetry: _retryPendingWrites),
@@ -462,20 +480,19 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
   /// Mobile: pannello singolo (lista note oppure editor), cartelle nel drawer.
   /// In focus l'`AnimatedSwitcher` resta lo stesso widget con la stessa chiave
   /// dell'editor, quindi `NoteEditorPane` non viene ricreato.
-  Widget _buildMobileBody({required bool isFocusMode}) {
-    final isEditorVisible =
-        isFocusMode || _mobileActiveView == MobileActiveView.editor;
-
+  Widget _buildMobileBody({
+    required bool isFocusMode,
+    required bool isEditorVisible,
+  }) {
     return PopScope(
       canPop: !isEditorVisible,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (isFocusMode) {
           // In focus la nota resta aperta: Indietro toglie solo la modalità
-          // a tutto schermo, senza notificare alla sync una chiusura che non
-          // c'è.
+          // a tutto schermo.
           ref.read(editorProvider.notifier).exitFocusMode();
-        } else if (_mobileActiveView == MobileActiveView.editor) {
+        } else if (isEditorVisible) {
           _showMobileNotesList();
         }
       },

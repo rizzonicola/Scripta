@@ -13,6 +13,7 @@ import 'markdown_editor_field.dart';
 import 'markdown_rendered_view.dart';
 import 'markdown_toolbar.dart';
 import 'note_search_bar.dart';
+import 'reading_meta_footer.dart';
 import '../../sync/providers/sync_provider.dart';
 
 class NoteEditorPane extends ConsumerStatefulWidget {
@@ -34,6 +35,11 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
   late final SearchHighlightingTextEditingController _contentController;
   late final UndoHistoryController _undoController;
   final FocusNode _contentFocusNode = FocusNode();
+
+  /// Totale della ricerca nel testo RESO, posseduto da questo pannello perché
+  /// è l'unico punto in cui barra e vista di lettura convivono. Prima era un
+  /// provider globale scritto dalla vista e letto dalla barra.
+  final ValueNotifier<int> _renderedSearchTotal = ValueNotifier<int>(0);
 
   String? _currentNoteId;
 
@@ -71,6 +77,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _contentController.dispose();
     _undoController.dispose();
     _contentFocusNode.dispose();
+    _renderedSearchTotal.dispose();
     super.dispose();
   }
 
@@ -116,33 +123,14 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     _currentNoteId = nextId;
   }
 
-  /// Ultima difesa prima di mostrare il campo di modifica: i controller
-  /// devono contenere ESATTAMENTE titolo/contenuto della nota attiva.
-  ///
-  /// In modalità "Modifica" lo stato della nota è sempre uguale al testo dei
-  /// controller (ogni `onChanged` chiama `updateNote` in modo sincrono e
-  /// senza trasformazioni), quindi questo confronto è un no-op durante la
-  /// digitazione e diventa una vera correzione solo quando i controller sono
-  /// rimasti indietro (es. cambio nota avvenuto in "Sola lettura").
-  void _ensureControllersMatchNote(String noteId) {
-    final note = ref.read(activeNoteProvider);
-    if (note == null || note.id != noteId) return;
-    _setControllerText(_titleController, note.title);
-    _setControllerText(_contentController, note.content);
-    _currentNoteId = noteId;
-  }
-
   void _onActiveNoteIdChanged(String? prevId, String? nextId) {
     if (nextId == _currentNoteId) return;
 
     if (_currentNoteId != null) {
-      // flushPendingSaves() ora è awaitato esplicitamente: non è più
-      // strettamente necessario per la correttezza della sync (che dal suo
-      // canto attende già il proprio flush interno in
-      // SyncNotifier.triggerSync), ma resta corretto attendere qui la
-      // scrittura su disco prima di considerare la nota "chiusa".
+      // La sync del cambio nota è centralizzata nella shell (unico osservatore
+      // di activeNoteId, incluse le transizioni da/verso null). Qui resta solo
+      // il flush locale prima di considerare chiusa la nota precedente.
       ref.read(notesProvider.notifier).flushPendingSavesInBackground();
-      ref.read(syncProvider.notifier).onNoteChangedOrClosed();
     }
 
     _syncControllersToNoteId(nextId);
@@ -173,28 +161,19 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
     });
 
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
-
-    // Rete di sicurezza sincrona: in condizioni normali è già
-    // `_onActiveNoteIdChanged` (via `ref.listen` sopra) a tenere i
-    // controller allineati alla nota attiva. Quando però il cambio di nota
-    // avviene mentre questo pannello è in modalità "Sola lettura" — quindi
-    // con `MarkdownEditorField` (e i suoi controller) fuori dall'albero e
-    // non visibile — non c'è alcuna garanzia sincrona che quel listener
-    // abbia già propagato l'aggiornamento nel momento esatto in cui si
-    // passa a "Modifica" e il campo di testo torna a montarsi. Questo
-    // controllo, eseguito ad ogni build PRIMA che il ramo Modifica/Lettura
-    // venga scelto, elimina quella finestra: se `activeNoteId` e
-    // `_currentNoteId` sono già allineati (il caso comune) è un no-op.
-    if (activeNoteId != _currentNoteId) {
-      _syncControllersToNoteId(activeNoteId);
-    }
-
     final editorMode = ref.watch(editorProvider.select((s) => s.mode));
 
-    // Entrando (o restando) in "Modifica" i controller devono combaciare con
-    // la nota attiva: vedi [_ensureControllersMatchNote].
-    if (editorMode == EditorMode.edit && activeNoteId != null) {
-      _ensureControllersMatchNote(activeNoteId);
+    // Rete di sicurezza sincrona, prima che il ramo Modifica/Lettura venga
+    // scelto. In condizioni normali è già `_onActiveNoteIdChanged` a tenere i
+    // controller allineati. Restano due finestre:
+    // - il cambio di nota avviene in "Sola lettura", con il campo di testo
+    //   fuori dall'albero: il listener potrebbe non aver ancora propagato;
+    // - la STESSA nota viene aggiornata da fuori (sync) mentre il campo non
+    //   è montato: l'id non cambia, quindi serve il confronto col contenuto.
+    // In "Modifica" il metodo è un no-op durante la digitazione, perché lo
+    // stato della nota è già uguale ai controller.
+    if (editorMode == EditorMode.edit || activeNoteId != _currentNoteId) {
+      _syncControllersToNoteId(activeNoteId);
     }
     final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
     final isNoteSearchActive = ref.watch(
@@ -299,7 +278,8 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               // Barra di ricerca interna alla nota (vedi note_search_bar.dart):
               // funziona identicamente sopra a entrambe le modalità sotto,
               // quindi vive qui, fuori dal ramo Modifica/Lettura.
-              if (isNoteSearchActive) const NoteSearchBar(),
+              if (isNoteSearchActive)
+                NoteSearchBar(renderedTotal: _renderedSearchTotal),
 
               // Toolbar (visible only in Edit Mode when NOT in Focus Mode)
               if (editorMode == EditorMode.edit && !isFocusMode) ...[
@@ -313,7 +293,10 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
               // Content Area: Either Rendered View (Read-Only) or Editable Text Field (Edit)
               Expanded(
                 child: editorMode == EditorMode.readOnly
-                    ? const _ReadOnlyNoteView()
+                    ? _ReadOnlyNoteView(
+                        onSearchTotalChanged: (total) =>
+                            _renderedSearchTotal.value = total,
+                      )
                     : MarkdownEditorField(
                         key: ValueKey('editor-$activeNoteId'),
                         noteId: activeNoteId,
@@ -346,7 +329,9 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
 }
 
 class _ReadOnlyNoteView extends ConsumerWidget {
-  const _ReadOnlyNoteView();
+  const _ReadOnlyNoteView({required this.onSearchTotalChanged});
+
+  final ValueChanged<int> onSearchTotalChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -366,15 +351,16 @@ class _ReadOnlyNoteView extends ConsumerWidget {
                 n.id,
                 n.title,
                 n.content,
-                n.updatedAt,
-                n.wordCount,
-                n.readingTimeMinutes,
+                ReadingMetadata(
+                  wordCount: n.wordCount,
+                  readingTimeMinutes: n.readingTimeMinutes,
+                  updatedAt: n.updatedAt,
+                ),
               ),
       ),
     );
     if (activeNoteTitleContent == null) return const SizedBox.shrink();
-    final (noteId, title, content, updatedAt, wordCount, readingTimeMinutes) =
-        activeNoteTitleContent;
+    final (noteId, title, content, metadata) = activeNoteTitleContent;
     final isFocusMode = ref.watch(editorProvider.select((s) => s.isFocusMode));
 
     // La ricerca interna non cambia più vista: `MarkdownRenderedView` legge
@@ -387,11 +373,10 @@ class _ReadOnlyNoteView extends ConsumerWidget {
       noteId: noteId,
       title: title,
       content: content,
-      updatedAt: updatedAt,
-      wordCount: wordCount,
-      readingTimeMinutes: readingTimeMinutes,
+      metadata: metadata,
       showOutline: !isFocusMode,
       onEdit: () => ref.read(editorProvider.notifier).setMode(EditorMode.edit),
+      onSearchTotalChanged: onSearchTotalChanged,
     );
   }
 }

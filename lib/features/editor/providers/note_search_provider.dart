@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart' show TextRange;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/utils/text_search.dart';
 import '../../notes/providers/notes_provider.dart';
 import '../models/note_search_state.dart';
 
@@ -80,13 +81,6 @@ final noteSearchProvider =
 /// valore di navigazione e complicherebbe la gestione di due sorgenti di
 /// offset separate (titolo vs corpo) per un beneficio pressoché nullo.
 ///
-/// Limite di sicurezza [_maxNoteSearchMatches]: una nota enorme combinata con un
-/// termine di ricerca di un solo carattere molto comune potrebbe altrimenti
-/// produrre decine di migliaia di occorrenze, con un costo di costruzione
-/// spans (sia nell'editor sia nella vista di sola lettura) sproporzionato
-/// rispetto a qualunque reale utilità di navigazione.
-const int _maxNoteSearchMatches = 2000;
-
 /// Contenuto della nota attiva già normalizzato in minuscolo.
 ///
 /// Separato da [noteSearchMatchesProvider] perché quest'ultimo dipende anche
@@ -99,23 +93,11 @@ final noteSearchLowerContentProvider = Provider<String>((ref) {
 });
 
 final noteSearchMatchesProvider = Provider<List<TextRange>>((ref) {
-  final query = ref.watch(noteSearchProvider.select((s) => s.query)).trim();
-  if (query.isEmpty) return const [];
+  final query = ref.watch(noteSearchProvider.select((s) => s.query));
+  if (query.trim().isEmpty) return const [];
 
   final lowerContent = ref.watch(noteSearchLowerContentProvider);
-  if (lowerContent.isEmpty) return const [];
-
-  final lowerQuery = query.toLowerCase();
-
-  final matches = <TextRange>[];
-  var searchStart = 0;
-  while (matches.length < _maxNoteSearchMatches) {
-    final idx = lowerContent.indexOf(lowerQuery, searchStart);
-    if (idx == -1) break;
-    matches.add(TextRange(start: idx, end: idx + lowerQuery.length));
-    searchStart = idx + lowerQuery.length;
-  }
-  return matches;
+  return findTextMatchesInLowercase(lowerContent, query);
 });
 
 /// Indice CLAMPATO in modo sicuro dell'occorrenza attiva all'interno di
@@ -163,25 +145,3 @@ final noteSearchHighlightDataProvider = Provider<NoteSearchHighlightData>((
   final activeIndex = ref.watch(noteSearchActiveMatchIndexProvider);
   return (matches, activeIndex);
 });
-
-/// Totale delle occorrenze NEL TESTO RESO della vista di lettura.
-///
-/// In sola lettura la ricerca lavora sui blocchi già interpretati
-/// (senza marker Markdown), quindi il conteggio può differire da quello sul
-/// sorgente grezzo usato dall'editor. La vista di lettura è l'unica a
-/// conoscere i blocchi: pubblica qui il proprio totale, e la barra lo legge
-/// quando la modalità è Sola Lettura. Il valore è transitorio per natura e
-/// viene azzerato quando la query si svuota.
-class RenderedNoteSearchTotalNotifier extends Notifier<int> {
-  @override
-  int build() => 0;
-
-  void set(int value) {
-    if (state != value) state = value;
-  }
-}
-
-final renderedNoteSearchTotalProvider =
-    NotifierProvider<RenderedNoteSearchTotalNotifier, int>(
-      RenderedNoteSearchTotalNotifier.new,
-    );

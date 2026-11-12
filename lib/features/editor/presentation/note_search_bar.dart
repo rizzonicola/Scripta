@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,10 +15,14 @@ import '../providers/note_search_provider.dart';
 /// cima al pannello editor quando `noteSearchProvider.isActive` è vero (vedi
 /// `note_editor_pane.dart`). Funziona in modalità Modifica e Sola Lettura:
 /// entrambe pilotano lo stesso stato, ma in sola lettura il conteggio arriva
-/// dal testo RESO (vedi `renderedNoteSearchTotalProvider`), perché è quello
-/// che l'utente vede evidenziato.
+/// dal testo RESO (vedi `MarkdownRenderedView.onSearchTotalChanged`), perché
+/// è quello che l'utente vede evidenziato.
 class NoteSearchBar extends ConsumerStatefulWidget {
-  const NoteSearchBar({super.key});
+  const NoteSearchBar({super.key, required this.renderedTotal});
+
+  /// Totale delle occorrenze nel testo reso, aggiornato dalla vista di
+  /// lettura. Il pannello editor possiede il notifier e lo passa a entrambi.
+  final ValueListenable<int> renderedTotal;
 
   @override
   ConsumerState<NoteSearchBar> createState() => _NoteSearchBarState();
@@ -40,14 +45,29 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
     _queryController = TextEditingController(
       text: ref.read(noteSearchProvider).query,
     );
+    widget.renderedTotal.addListener(_onRenderedTotalChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant NoteSearchBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.renderedTotal != widget.renderedTotal) {
+      oldWidget.renderedTotal.removeListener(_onRenderedTotalChanged);
+      widget.renderedTotal.addListener(_onRenderedTotalChanged);
+    }
   }
 
   @override
   void dispose() {
+    widget.renderedTotal.removeListener(_onRenderedTotalChanged);
     _debounce?.cancel();
     _queryController.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onRenderedTotalChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onChanged(String value) {
@@ -86,8 +106,7 @@ class _NoteSearchBarState extends ConsumerState<NoteSearchBar> {
     final isReadOnly = ref.watch(
       editorProvider.select((s) => s.mode == EditorMode.readOnly),
     );
-    final renderedTotal = ref.watch(renderedNoteSearchTotalProvider);
-    final total = isReadOnly ? renderedTotal : matches.length;
+    final total = isReadOnly ? widget.renderedTotal.value : matches.length;
     final requestedIndex = ref.watch(
       noteSearchProvider.select((s) => s.currentMatchIndex),
     );

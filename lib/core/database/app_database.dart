@@ -1,5 +1,4 @@
-import 'package:flutter/foundation.dart'
-    show debugPrint, visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -56,18 +55,22 @@ class AppDatabase {
   @visibleForTesting
   static String? debugDatabasePathOverride;
 
-  /// Inizializza (una sola volta) il [DatabaseFactory] corretto per la
+  static bool _factoryInitialized = false;
+
+  /// Inizializza una sola volta il [DatabaseFactory] corretto per la
   /// piattaforma corrente. Su Android/iOS il plugin `sqflite` usa il proprio
   /// engine nativo automaticamente; su desktop (Linux/Windows/macOS) serve
   /// invece esplicitamente `sqflite_common_ffi`, che usa sqlite3 nativo via
-  /// FFI. Va chiamato prima di qualunque apertura di database (fatto da
-  /// [main] all'avvio dell'app, vedi lib/main.dart).
+  /// FFI. È chiamato da [_open], quindi nessun chiamante deve ricordarsi di
+  /// farlo prima di usare [db]; resta pubblico per i test.
   static void ensureFactoryInitialized() {
+    if (_factoryInitialized) return;
     if (isDesktopPlatform) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }
     // Android/iOS: il databaseFactory di default del plugin sqflite va già bene.
+    _factoryInitialized = true;
   }
 
   /// Apertura in corso, condivisa tra i chiamanti: `folderProvider`,
@@ -120,6 +123,7 @@ class AppDatabase {
   }
 
   Future<Database> _open() async {
+    ensureFactoryInitialized();
     final path =
         debugDatabasePathOverride ??
         p.join((await getApplicationSupportDirectory()).path, 'scripta.db');

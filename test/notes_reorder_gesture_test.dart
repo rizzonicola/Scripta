@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:scripta/core/database/app_database.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
+import 'package:scripta/core/services/secure_storage_provider.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/core/theme/app_theme.dart';
 import 'package:scripta/features/folders/providers/folder_provider.dart';
@@ -14,7 +15,6 @@ import 'package:scripta/features/notes/models/note_model.dart';
 import 'package:scripta/features/notes/presentation/note_card.dart';
 import 'package:scripta/features/notes/presentation/notes_list_view.dart';
 import 'package:scripta/features/notes/providers/notes_provider.dart';
-import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/wait_until.dart';

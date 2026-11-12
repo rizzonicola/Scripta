@@ -10,6 +10,7 @@ import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/features/editor/presentation/display_math_block.dart';
 import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart';
 import 'package:scripta/features/editor/presentation/note_scroll_memory.dart';
+import 'package:scripta/features/editor/presentation/reading_meta_footer.dart';
 import 'package:scripta/features/editor/providers/note_search_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -53,6 +54,7 @@ Future<ProviderContainer> _pumpView(
   int? wordCount,
   int? readingTimeMinutes,
   VoidCallback? onEdit,
+  ValueChanged<int>? onSearchTotalChanged,
   TextScaler? textScaler,
   Size size = _kPhone,
 }) async {
@@ -82,10 +84,18 @@ Future<ProviderContainer> _pumpView(
             title: title,
             content: content,
             noteId: noteId,
-            updatedAt: updatedAt,
-            wordCount: wordCount,
-            readingTimeMinutes: readingTimeMinutes,
+            metadata:
+                updatedAt != null &&
+                    wordCount != null &&
+                    readingTimeMinutes != null
+                ? ReadingMetadata(
+                    wordCount: wordCount,
+                    readingTimeMinutes: readingTimeMinutes,
+                    updatedAt: updatedAt,
+                  )
+                : null,
             onEdit: onEdit,
+            onSearchTotalChanged: onSearchTotalChanged,
           ),
         ),
       ),
@@ -206,16 +216,18 @@ void main() {
   testWidgets('la ricerca in sola lettura evidenzia il testo reso', (
     tester,
   ) async {
+    int? total;
     final container = await _pumpView(
       tester,
       content: 'prima alfa seconda ALFA',
+      onSearchTotalChanged: (value) => total = value,
     );
     container.read(noteSearchProvider.notifier)
       ..open()
       ..setQuery('alfa');
     await tester.pumpAndSettle();
 
-    expect(container.read(renderedNoteSearchTotalProvider), 2);
+    expect(total, 2);
     final scope = _scope(tester);
     expect(scope.controller.getText(), 'alfa');
     expect(scope.toolbarIsVisible, isFalse);
@@ -235,7 +247,7 @@ void main() {
       ..open()
       ..setQuery('**');
     await tester.pumpAndSettle();
-    expect(container.read(renderedNoteSearchTotalProvider), 0);
+    expect(total, 0);
   });
 
   testWidgets('Spazio scorre la vista quando il focus è sul contenuto', (

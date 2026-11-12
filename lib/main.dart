@@ -26,13 +26,6 @@ void main(List<String> args) async {
   // percorsi non devono andare persi durante l'avvio.
   await ExternalOpenService.instance.initialize(args);
 
-  // Inizializza il database factory corretto per la piattaforma (sqflite su
-  // Android/iOS, sqflite_common_ffi su desktop) PRIMA che qualunque
-  // provider Riverpod possa tentare di aprire il database locale
-  // (folderProvider/notesProvider/syncProvider lo fanno nel loro
-  // costruttore, eseguito alla prima lettura del provider).
-  AppDatabase.ensureFactoryInitialized();
-
   // Apre il database SUBITO, in parallelo alla lettura delle preferenze qui
   // sotto, senza attenderlo: la lista note non deve aspettare che l'apertura
   // parta solo al primo build. Non lancia mai; un errore lo rivede (e riprova)

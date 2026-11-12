@@ -6,8 +6,8 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/selection_auto_scroller.dart';
 import '../../settings/providers/settings_provider.dart';
+import 'note_layout.dart';
 import 'note_scroll_memory.dart';
-import 'reading_layout.dart';
 
 class MarkdownEditorField extends ConsumerStatefulWidget {
   final TextEditingController titleController;
@@ -414,7 +414,8 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
       final last = _lastSavedEditorPixels;
       // Stessa soglia della vista di lettura: si evita una misura della
       // geometria a ogni frame senza perdere la posizione finale.
-      if (last == null || (pixels - last).abs() >= 48) {
+      if (last == null ||
+          (pixels - last).abs() >= NoteScrollMemory.saveThresholdPixels) {
         _lastSavedEditorPixels = pixels;
         _scheduleSaveEditorPosition();
       }
@@ -501,7 +502,7 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
 
     final titleStyle = AppTheme.getTextStyleForFont(
       fontFamily,
-      fontSize: fontSize * 2.0,
+      fontSize: fontSize * NoteLayout.titleScale,
       fontWeight: FontWeight.w800,
       color: theme.colorScheme.onSurface,
       height: 1.25,
@@ -520,15 +521,15 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
         key: _scrollViewKey,
         controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(
-          ReadingLayout.horizontalPadding,
+          NoteLayout.horizontalPadding,
           20,
-          ReadingLayout.horizontalPadding,
+          NoteLayout.horizontalPadding,
           96,
         ),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(
-              maxWidth: ReadingLayout.maxContentWidth,
+              maxWidth: NoteLayout.maxContentWidth,
             ),
             child: SelectionRevealShield(
               isBlocking: () => _autoScroller.isDraggingSelection,

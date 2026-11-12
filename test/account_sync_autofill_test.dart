@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
+import 'package:scripta/core/services/secure_storage_provider.dart';
 import 'package:scripta/core/services/secure_storage_service.dart';
 import 'package:scripta/features/settings/presentation/account_sync_section.dart';
-import 'package:scripta/features/sync/providers/sync_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _MemorySecureStorage extends SecureStorageService {

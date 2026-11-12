@@ -14,12 +14,18 @@ import '../features/sync/providers/sync_provider.dart';
 class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
   final VoidCallback? onToggleSidebar;
   final bool showBackButton;
+
+  /// `true` quando il pannello editor è realmente a schermo. È distinto da
+  /// [showBackButton], che riguarda solo la navigazione mobile: un parametro
+  /// di navigazione non deve decidere se mostrare le azioni dell'editor.
+  final bool isEditorVisible;
   final VoidCallback? onBack;
 
   const TopAppBar({
     super.key,
     this.onToggleSidebar,
     this.showBackButton = false,
+    this.isEditorVisible = false,
     this.onBack,
   });
 
@@ -39,19 +45,15 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final compactMode = screenWidth < 520;
 
-    // Icona di ricerca INTERNA alla nota (distinta dal campo di ricerca
-    // globale/per-cartella già presente in `NotesListView`): ha senso solo
-    // quando il pannello editor è realmente a schermo, cioè sempre su
-    // desktop/tablet (dove è mostrato fianco a fianco alla lista note) e
-    // solo nella vista editor su mobile (`showBackButton` è vero
-    // esattamente in quel caso, vedi `AdaptiveAppShell`).
+    // Le azioni dell'editor (modalità, ricerca interna, focus) esistono solo
+    // quando l'editor è a schermo e c'è una nota da mostrare. La ricerca
+    // globale/per-cartella vive invece in `NotesListView` ed è indipendente.
     final activeNoteId = ref.watch(notesProvider.select((s) => s.activeNoteId));
     final isNoteSearchActive = ref.watch(
       noteSearchProvider.select((s) => s.isActive),
     );
-    final showNoteSearchButton =
-        activeNoteId != null &&
-        (screenType != DeviceScreenType.mobile || showBackButton);
+    final showEditorActions = isEditorVisible && activeNoteId != null;
+    final showNoteSearchButton = showEditorActions;
 
     return Container(
       decoration: BoxDecoration(
@@ -104,78 +106,80 @@ class TopAppBar extends ConsumerWidget implements PreferredSizeWidget {
 
                 const Spacer(),
 
-                // Dual Mode Toggle: Edit <-> Read-Only
-                Container(
-                  height: 36,
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    color: theme.surfaceElevated,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _ModeToggleSegment(
-                        title: compactMode ? null : l10n.edit,
-                        icon: Icons.edit_outlined,
-                        tooltip: l10n.edit,
-                        isSelected: editorMode == EditorMode.edit,
-                        onTap: () {
-                          ref
-                              .read(editorProvider.notifier)
-                              .setMode(EditorMode.edit);
-                        },
-                      ),
-                      _ModeToggleSegment(
-                        title: compactMode ? null : l10n.readOnly,
-                        icon: Icons.visibility_outlined,
-                        tooltip: l10n.readOnly,
-                        isSelected: editorMode == EditorMode.readOnly,
-                        onTap: () {
-                          ref
-                              .read(editorProvider.notifier)
-                              .setMode(EditorMode.readOnly);
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-
-                // In-Note Search Toggle (find/highlight occurrences within the open note)
-                if (showNoteSearchButton) ...[
-                  const SizedBox(width: 2),
-                  IconButton(
-                    icon: Icon(
-                      isNoteSearchActive
-                          ? Icons.search_off_rounded
-                          : Icons.search_rounded,
-                      size: 20,
+                if (showEditorActions) ...[
+                  // Dual Mode Toggle: Edit <-> Read-Only
+                  Container(
+                    height: 36,
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      color: theme.surfaceElevated,
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    tooltip: l10n.searchInNote,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _ModeToggleSegment(
+                          title: compactMode ? null : l10n.edit,
+                          icon: Icons.edit_outlined,
+                          tooltip: l10n.edit,
+                          isSelected: editorMode == EditorMode.edit,
+                          onTap: () {
+                            ref
+                                .read(editorProvider.notifier)
+                                .setMode(EditorMode.edit);
+                          },
+                        ),
+                        _ModeToggleSegment(
+                          title: compactMode ? null : l10n.readOnly,
+                          icon: Icons.visibility_outlined,
+                          tooltip: l10n.readOnly,
+                          isSelected: editorMode == EditorMode.readOnly,
+                          onTap: () {
+                            ref
+                                .read(editorProvider.notifier)
+                                .setMode(EditorMode.readOnly);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // In-Note Search Toggle (find/highlight occurrences within the open note)
+                  if (showNoteSearchButton) ...[
+                    const SizedBox(width: 2),
+                    IconButton(
+                      icon: Icon(
+                        isNoteSearchActive
+                            ? Icons.search_off_rounded
+                            : Icons.search_rounded,
+                        size: 20,
+                      ),
+                      tooltip: l10n.searchInNote,
+                      visualDensity: VisualDensity.compact,
+                      color: isNoteSearchActive
+                          ? theme.colorScheme.primary
+                          : null,
+                      onPressed: () {
+                        if (isNoteSearchActive) {
+                          ref.read(noteSearchProvider.notifier).close();
+                        } else {
+                          ref.read(noteSearchProvider.notifier).open();
+                        }
+                      },
+                    ),
+                  ],
+
+                  // Focus Mode Toggle (distraction-free, desktop and Android)
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.fullscreen_rounded, size: 20),
+                    tooltip: l10n.focusMode,
                     visualDensity: VisualDensity.compact,
-                    color: isNoteSearchActive
-                        ? theme.colorScheme.primary
-                        : null,
                     onPressed: () {
-                      if (isNoteSearchActive) {
-                        ref.read(noteSearchProvider.notifier).close();
-                      } else {
-                        ref.read(noteSearchProvider.notifier).open();
-                      }
+                      ref.read(editorProvider.notifier).toggleFocusMode();
                     },
                   ),
                 ],
-
-                // Focus Mode Toggle (distraction-free, accessible on both desktop and Android)
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: const Icon(Icons.fullscreen_rounded, size: 20),
-                  tooltip: l10n.focusMode,
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () {
-                    ref.read(editorProvider.notifier).toggleFocusMode();
-                  },
-                ),
 
                 // Sync status indicator & quick manual sync button
                 const SizedBox(width: 2),

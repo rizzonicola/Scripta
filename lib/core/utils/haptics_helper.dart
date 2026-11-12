@@ -125,11 +125,6 @@ class HapticsHelper {
     if (currentIntensity != HapticIntensity.strong) return;
     if (_isDesktop) return;
 
-    try {
-      HapticFeedback.mediumImpact();
-    } catch (_) {
-      // Best-effort: un plugin/piattaforma che non implementa il metodo
-      // non deve mai far crollare l'interazione dell'utente con l'editor.
-    }
+    HapticFeedback.mediumImpact();
   }
 }

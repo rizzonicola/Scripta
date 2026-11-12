@@ -82,6 +82,27 @@ class StoredSession {
   }
 }
 
+/// Descrizione di una chiave logica: nome corrente, nome usato dalle versioni
+/// precedenti e regole di migrazione. Un'unica tabella evita che le liste di
+/// chiavi da migrare, ripulire o cancellare divergano tra i metodi.
+class _KeySpec {
+  const _KeySpec(
+    this.current,
+    this.legacy, {
+    required this.secret,
+    this.fallback = false,
+  });
+
+  final String current;
+  final String legacy;
+
+  /// I segreti non vengono mai scritti nel fallback in chiaro.
+  final bool secret;
+
+  /// I valori non segreti possono essere migrati anche dal fallback.
+  final bool fallback;
+}
+
 /// Service providing encrypted local storage for sensitive authentication tokens and credentials.
 /// Uses Android Keystore + EncryptedSharedPreferences on Android,
 /// Keychain on iOS/macOS, and Secret Service on Linux.
@@ -119,10 +140,65 @@ class SecureStorageService {
   static const _legacyUserIdKey = 'inkflow_user_id';
   static const _legacySessionKey = 'inkflow_session_v1';
 
+  static const _sessionKeys = _KeySpec(
+    _sessionKey,
+    _legacySessionKey,
+    secret: true,
+  );
+  static const _tokenKeys = _KeySpec(_tokenKey, _legacyTokenKey, secret: true);
+  static const _refreshTokenKeys = _KeySpec(
+    _refreshTokenKey,
+    _legacyRefreshTokenKey,
+    secret: true,
+  );
+  static const _serverUrlKeys = _KeySpec(
+    _serverUrlKey,
+    _legacyServerUrlKey,
+    secret: false,
+    fallback: true,
+  );
+  static const _usernameKeys = _KeySpec(
+    _usernameKey,
+    _legacyUsernameKey,
+    secret: false,
+    fallback: true,
+  );
+  static const _userIdKeys = _KeySpec(
+    _userIdKey,
+    _legacyUserIdKey,
+    secret: false,
+    fallback: true,
+  );
+
+  static const _allKeys = <_KeySpec>[
+    _sessionKeys,
+    _tokenKeys,
+    _refreshTokenKeys,
+    _serverUrlKeys,
+    _usernameKeys,
+    _userIdKeys,
+  ];
+
+  /// Chiavi che non devono mai restare nel fallback in chiaro.
+  static const _secretKeys = <_KeySpec>[
+    _sessionKeys,
+    _tokenKeys,
+    _refreshTokenKeys,
+  ];
+
+  /// Tutto ciò che `clearAuth` elimina; `serverUrl` resta per comodità.
+  static const _clearedKeys = <_KeySpec>[
+    _sessionKeys,
+    _tokenKeys,
+    _refreshTokenKeys,
+    _usernameKeys,
+    _userIdKeys,
+  ];
+
   final FlutterSecureStorage _storage;
   final bool? _fallbackEnabledOverride;
 
-  Future<void>? _legacyMigration;
+  bool _legacyMigrationDone = false;
 
   SecureStorageService([FlutterSecureStorage? storage])
     : _storage =
@@ -149,68 +225,80 @@ class SecureStorageService {
   bool get _fallbackEnabled =>
       _fallbackEnabledOverride ?? (Platform.isIOS || Platform.isMacOS);
 
-  /// Migra una tantum le chiavi del vecchio nome "inkflow" a "scripta".
-  /// Copia solo se la nuova chiave non esiste già; la chiave vecchia viene
-  /// sempre rimossa dopo il tentativo.
-  Future<void> _ensureLegacyMigration() =>
-      _legacyMigration ??= _migrateLegacyKeys();
-
-  Future<void> _migrateLegacyKeys() async {
-    await _migrateKey(_legacySessionKey, _sessionKey, migrateFallback: false);
-    await _migrateKey(_legacyTokenKey, _tokenKey, migrateFallback: false);
-    await _migrateKey(
-      _legacyRefreshTokenKey,
-      _refreshTokenKey,
-      migrateFallback: false,
-    );
-    await _migrateKey(_legacyServerUrlKey, _serverUrlKey, migrateFallback: true);
-    await _migrateKey(_legacyUsernameKey, _usernameKey, migrateFallback: true);
-    await _migrateKey(_legacyUserIdKey, _userIdKey, migrateFallback: true);
-
-    // I vecchi segreti non devono restare nel fallback in chiaro.
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      for (final key in [
-        _legacySessionKey,
-        _legacyTokenKey,
-        _legacyRefreshTokenKey,
-      ]) {
-        await prefs.remove('$_fallbackPrefix$key');
-      }
-    } catch (_) {}
+  /// Migra le chiavi del vecchio nome "inkflow" a "scripta".
+  ///
+  /// Il latch viene chiuso solo se TUTTE le chiavi sono state migrate: un
+  /// errore transitorio del Keychain lascia la migrazione da riprovare alla
+  /// chiamata successiva invece di bloccare per sempre la sessione legacy.
+  Future<void> _ensureLegacyMigration() async {
+    if (_legacyMigrationDone) return;
+    if (await _migrateLegacyKeys()) _legacyMigrationDone = true;
   }
 
-  Future<void> _migrateKey(
-    String oldKey,
-    String newKey, {
-    required bool migrateFallback,
-  }) async {
+  Future<bool> _migrateLegacyKeys() async {
+    var ok = true;
+    for (final spec in _allKeys) {
+      if (!await _migrateKey(spec)) ok = false;
+    }
+
+    // I vecchi segreti non devono restare nel fallback in chiaro, anche se
+    // la migrazione della chiave sicura non è riuscita.
     try {
-      final legacy = await _storage.read(key: oldKey);
+      final prefs = await SharedPreferences.getInstance();
+      for (final spec in _secretKeys) {
+        await prefs.remove('$_fallbackPrefix${spec.current}');
+        await prefs.remove('$_fallbackPrefix${spec.legacy}');
+      }
+    } catch (_) {
+      ok = false;
+    }
+    return ok;
+  }
+
+  Future<bool> _migrateKey(_KeySpec spec) async {
+    var ok = true;
+    try {
+      final legacy = await _storage.read(key: spec.legacy);
       if (legacy != null) {
-        final current = await _storage.read(key: newKey);
+        final current = await _storage.read(key: spec.current);
         if (current == null) {
-          await _storage.write(key: newKey, value: legacy);
+          await _storage.write(key: spec.current, value: legacy);
         }
-        await _storage.delete(key: oldKey);
+        // Rilegge prima di cancellare: se la scrittura non è stata
+        // effettivamente persistita, la vecchia chiave resta l'unica copia
+        // valida della sessione.
+        final persisted = await _storage.read(key: spec.current);
+        if (persisted == null) {
+          ok = false;
+        } else {
+          await _storage.delete(key: spec.legacy);
+        }
       }
     } catch (e) {
       debugPrint('SecureStorage: migrazione chiave legacy fallita ($e).');
+      ok = false;
     }
 
-    if (!migrateFallback) return;
+    if (!spec.fallback) return ok;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final oldFallbackKey = '$_fallbackPrefix$oldKey';
+      final oldFallbackKey = '$_fallbackPrefix${spec.legacy}';
       final legacy = prefs.getString(oldFallbackKey);
       if (legacy != null) {
-        final newFallbackKey = '$_fallbackPrefix$newKey';
+        final newFallbackKey = '$_fallbackPrefix${spec.current}';
         if (prefs.getString(newFallbackKey) == null) {
           await prefs.setString(newFallbackKey, legacy);
         }
-        await prefs.remove(oldFallbackKey);
+        if (prefs.getString(newFallbackKey) == legacy) {
+          await prefs.remove(oldFallbackKey);
+        } else {
+          ok = false;
+        }
       }
-    } catch (_) {}
+    } catch (_) {
+      ok = false;
+    }
+    return ok;
   }
 
   Future<void> _write(String key, String value) async {
@@ -257,16 +345,17 @@ class SecureStorageService {
   }
 
   /// Token tenuto SOLO in memoria quando il Keychain iOS/macOS rifiuta la
-  /// scrittura (build non firmate). Mai persistito.
-  static String? _memoryOnlyToken;
+  /// scrittura (build non firmate). Mai persistito. È uno stato dell'istanza:
+  /// due service (es. test o account diversi) non devono condividere token.
+  String? _memoryOnlyToken;
 
   /// Stessa rete di sicurezza per il refresh token: senza Keychain resta
   /// valido solo per la sessione corrente.
-  static String? _memoryOnlyRefreshToken;
+  String? _memoryOnlyRefreshToken;
 
   /// Sessione completa tenuta in memoria quando il Keychain non è scrivibile:
   /// i token non finiscono MAI in SharedPreferences.
-  static StoredSession? _memoryOnlySession;
+  StoredSession? _memoryOnlySession;
 
   /// Salva la sessione con UNA sola scrittura atomica. I token non usano mai
   /// il fallback in chiaro: se il Keychain non è disponibile restano solo in
@@ -276,11 +365,13 @@ class SecureStorageService {
       throw ArgumentError('sessione non valida: token, URL o userId mancanti');
     }
     await _ensureLegacyMigration();
+    var stored = false;
     try {
       await _storage.write(
         key: _sessionKey,
         value: jsonEncode(session.toJson()),
       );
+      stored = true;
       _memoryOnlySession = null;
       _memoryOnlyToken = null;
       _memoryOnlyRefreshToken = null;
@@ -298,23 +389,23 @@ class SecureStorageService {
     }
     // Le vecchie chiavi separate non devono poter resuscitare una sessione
     // precedente dopo un logout o un downgrade. URL e userId restano: sono
-    // non segreti e servono al riconoscimento degli account legacy.
-    await _removeLegacySecretKeys();
+    // non segreti e servono al riconoscimento degli account legacy. Il
+    // vecchio bundle viene rimosso solo se il nuovo è stato scritto davvero.
+    await _removeSplitAuthKeys(removeLegacyBundle: stored);
   }
 
-  Future<void> _removeLegacySecretKeys() async {
-    for (final key in [
-      _tokenKey,
-      _refreshTokenKey,
-      _usernameKey,
-      _legacyTokenKey,
-      _legacyRefreshTokenKey,
-      _legacyUsernameKey,
-    ]) {
-      try {
-        await _delete(key);
-      } catch (_) {}
+  Future<void> _removeSplitAuthKeys({required bool removeLegacyBundle}) async {
+    for (final spec in [_tokenKeys, _refreshTokenKeys, _usernameKeys]) {
+      for (final key in [spec.current, spec.legacy]) {
+        try {
+          await _delete(key);
+        } catch (_) {}
+      }
     }
+    if (!removeLegacyBundle) return;
+    try {
+      await _delete(_legacySessionKey);
+    } catch (_) {}
   }
 
   /// Legge la sessione atomica. Se non esiste, migra una tantum le chiavi
@@ -338,8 +429,13 @@ class SecureStorageService {
     if (raw != null) {
       final parsed = StoredSession.fromJsonString(raw);
       if (parsed != null) return parsed;
-      // Bundle presente ma illeggibile: non si riattiva una sessione dalle
-      // vecchie chiavi, che potrebbero appartenere a un altro account.
+
+      // Bundle presente ma illeggibile: prima di cancellarlo si tenta la
+      // sessione dalle chiavi separate. Se anche quelle non producono una
+      // sessione valida, il bundle corrotto viene rimosso; altrimenti la
+      // migrazione lo sovrascrive e nessuna sessione valida va persa.
+      final legacy = await _legacySession();
+      if (legacy != null) return legacy;
       try {
         await _storage.delete(key: _sessionKey);
       } catch (_) {}
@@ -399,8 +495,8 @@ class SecureStorageService {
     // SharedPreferences: se ne trovi uno lo elimina (login da rifare).
     if (_fallbackEnabled) {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('$_fallbackPrefix$_tokenKey');
-      await prefs.remove('$_fallbackPrefix$_legacyTokenKey');
+      await prefs.remove('$_fallbackPrefix${_tokenKeys.current}');
+      await prefs.remove('$_fallbackPrefix${_tokenKeys.legacy}');
     }
     try {
       final value = await _storage.read(key: _tokenKey);
@@ -468,22 +564,13 @@ class SecureStorageService {
     _memoryOnlyRefreshToken = null;
     _memoryOnlySession = null;
     Object? firstError;
-    for (final key in [
-      _sessionKey,
-      _tokenKey,
-      _refreshTokenKey,
-      _usernameKey,
-      _userIdKey,
-      _legacySessionKey,
-      _legacyTokenKey,
-      _legacyRefreshTokenKey,
-      _legacyUsernameKey,
-      _legacyUserIdKey,
-    ]) {
-      try {
-        await _delete(key);
-      } catch (e) {
-        firstError ??= e;
+    for (final spec in _clearedKeys) {
+      for (final key in [spec.current, spec.legacy]) {
+        try {
+          await _delete(key);
+        } catch (e) {
+          firstError ??= e;
+        }
       }
     }
     // Keep serverUrl for user convenience unless explicitly cleared
