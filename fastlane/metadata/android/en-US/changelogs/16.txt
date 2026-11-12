@@ -1,0 +1,8 @@
+Version 1.1.6.
+
+- Reading, editing and focus mode now share the same per-note scroll position
+  when switching between them.
+- Focus mode preserves the editor state and selection while the app bar and
+  side panels are hidden.
+- Small screens no longer show floating reading controls that overlap the
+  text column.
