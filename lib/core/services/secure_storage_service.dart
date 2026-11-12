@@ -430,15 +430,22 @@ class SecureStorageService {
       final parsed = StoredSession.fromJsonString(raw);
       if (parsed != null) return parsed;
 
-      // Bundle presente ma illeggibile: prima di cancellarlo si tenta la
-      // sessione dalle chiavi separate. Se anche quelle non producono una
-      // sessione valida, il bundle corrotto viene rimosso; altrimenti la
-      // migrazione lo sovrascrive e nessuna sessione valida va persa.
-      final legacy = await _legacySession();
-      if (legacy != null) return legacy;
-      try {
-        await _storage.delete(key: _sessionKey);
-      } catch (_) {}
+      // Bundle presente ma illeggibile: NON si riattiva una sessione dalle
+      // chiavi separate. Sono scritte in momenti diversi e la loro pulizia è
+      // best-effort: potrebbero appartenere a un altro account (o a un altro
+      // server) e resuscitare una sessione che l'utente ha già lasciato.
+      // Meglio richiedere un nuovo login che autenticarsi con credenziali
+      // stantie.
+      //
+      // Il bundle corrotto NON viene cancellato: resta come tombstone. Se la
+      // pulizia delle chiavi separate fallisce (è best-effort), al prossimo
+      // avvio senza bundle verrebbero migrate come sessione legacy. Finché il
+      // bundle è presente, getSession entra sempre in questo ramo e richiede
+      // un login; il primo saveSession riuscito lo sovrascrive.
+      _memoryOnlySession = null;
+      _memoryOnlyToken = null;
+      _memoryOnlyRefreshToken = null;
+      await _removeSplitAuthKeys(removeLegacyBundle: true);
       return null;
     }
 

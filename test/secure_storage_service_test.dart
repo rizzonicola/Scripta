@@ -263,6 +263,57 @@ void main() {
     expect(storage.data.containsKey('inkflow_session_v1'), isFalse);
   });
 
+  test('un bundle corrotto non riattiva le chiavi separate', () async {
+    final storage = _TestSecureStorage(
+      data: {
+        'scripta_session_v1': '{not-valid-json',
+        'scripta_jwt_token': 'stale-account-token',
+        'scripta_refresh_token': 'stale-refresh-token',
+        'scripta_server_url': 'https://old.example',
+        'scripta_user_id': 'old-user',
+      },
+    );
+    final corruptService = SecureStorageService.withFallback(
+      storage,
+      fallbackEnabled: true,
+    );
+
+    expect(await corruptService.getSession(), isNull);
+    // Le chiavi separate vengono eliminate: al prossimo avvio non devono
+    // essere migrate come sessione legacy.
+    expect(storage.data.containsKey('scripta_jwt_token'), isFalse);
+    expect(storage.data.containsKey('scripta_refresh_token'), isFalse);
+    // Il bundle corrotto resta come tombstone e impedisce la migrazione.
+    expect(storage.data.containsKey('scripta_session_v1'), isTrue);
+    expect(await corruptService.getSession(), isNull);
+  });
+
+  test(
+    'un bundle corrotto resta una tomba anche se la pulizia fallisce',
+    () async {
+      final storage = _TestSecureStorage(
+        // La cancellazione delle chiavi separate fallisce: è il caso in cui
+        // il vecchio codice avrebbe resuscitato la sessione all'avvio dopo.
+        deleteFails: true,
+        data: {
+          'scripta_session_v1': '{not-valid-json',
+          'scripta_jwt_token': 'stale-account-token',
+          'scripta_refresh_token': 'stale-refresh-token',
+          'scripta_server_url': 'https://old.example',
+          'scripta_user_id': 'old-user',
+        },
+      );
+      final corruptService = SecureStorageService.withFallback(
+        storage,
+        fallbackEnabled: true,
+      );
+
+      expect(await corruptService.getSession(), isNull);
+      expect(await corruptService.getSession(), isNull);
+      expect(storage.data['scripta_jwt_token'], 'stale-account-token');
+    },
+  );
+
   test('una scrittura fallita non lascia una sessione parziale', () async {
     final failingStorage = _TestSecureStorage(writeFails: true);
     final strictService = SecureStorageService.withFallback(
