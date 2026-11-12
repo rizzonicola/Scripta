@@ -19,18 +19,32 @@ library;
 
 /// Un tratto contiguo del sorgente di una nota.
 sealed class NoteChunk {
-  const NoteChunk();
+  const NoteChunk({this.start = 0, this.length = 0});
+
+  /// Offset del primo carattere del tratto nel sorgente originale.
+  final int start;
+
+  /// Lunghezza del tratto nel sorgente originale, delimitatori inclusi.
+  final int length;
 }
 
 /// Markdown "normale" (può contenere formule inline `$...$`).
 final class MarkdownChunk extends NoteChunk {
-  const MarkdownChunk(this.source);
+  const MarkdownChunk(
+    this.source, {
+    super.start,
+    super.length,
+  });
   final String source;
 }
 
 /// Formula a blocco `$$...$$`; [tex] è il contenuto senza i delimitatori.
 final class DisplayMathChunk extends NoteChunk {
-  const DisplayMathChunk(this.tex);
+  const DisplayMathChunk(
+    this.tex, {
+    super.start,
+    super.length,
+  });
   final String tex;
 }
 
@@ -68,13 +82,29 @@ bool _closesFence(String trimmed, String fence) {
 /// nota).
 List<NoteChunk> splitNoteChunks(String source) {
   final lines = source.split('\n');
+  final lineStarts = <int>[];
+  var lineStart = 0;
+  for (final line in lines) {
+    lineStarts.add(lineStart);
+    lineStart += line.length + 1;
+  }
+
   final chunks = <NoteChunk>[];
   final buffer = <String>[];
+  var bufferStart = 0;
   String? fence;
+
+  void addLine(int index) {
+    if (buffer.isEmpty) bufferStart = lineStarts[index];
+    buffer.add(lines[index]);
+  }
 
   void flush() {
     if (buffer.isEmpty) return;
-    chunks.add(MarkdownChunk(buffer.join('\n')));
+    final text = buffer.join('\n');
+    chunks.add(
+      MarkdownChunk(text, start: bufferStart, length: text.length),
+    );
     buffer.clear();
   }
 
@@ -85,7 +115,7 @@ List<NoteChunk> splitNoteChunks(String source) {
     final indent = _indentOf(line);
 
     if (fence != null) {
-      buffer.add(line);
+      addLine(i);
       if (_closesFence(trimmed, fence)) fence = null;
       i++;
       continue;
@@ -95,7 +125,7 @@ List<NoteChunk> splitNoteChunks(String source) {
       final open = _fenceOpen.firstMatch(trimmed);
       if (open != null) {
         fence = open.group(1);
-        buffer.add(line);
+        addLine(i);
         i++;
         continue;
       }
@@ -103,14 +133,24 @@ List<NoteChunk> splitNoteChunks(String source) {
         final math = _readDisplayMath(lines, i);
         if (math != null) {
           flush();
-          chunks.add(DisplayMathChunk(math.tex));
+          final start = lineStarts[i];
+          final end = math.next < lines.length
+              ? lineStarts[math.next]
+              : source.length;
+          chunks.add(
+            DisplayMathChunk(
+              math.tex,
+              start: start,
+              length: end - start,
+            ),
+          );
           i = math.next;
           continue;
         }
       }
     }
 
-    buffer.add(line);
+    addLine(i);
     i++;
   }
   flush();

@@ -9,10 +9,51 @@ void main() {
       expect(chunks.single, isA<MarkdownChunk>());
     });
 
-    test('estrae una formula a blocco su una riga', () {
-      final chunks = splitNoteChunks('prima\n\$\$ E = mc^2 \$\$\ndopo');
+    test('gli offset dei tratti ricostruiscono il sorgente', () {
+      const source =
+          '# Titolo\n\nPrima parte.\n\n'
+          '\$\$\nx = 1\n\$\$\n\n'
+          'Dopo la formula.';
+      final chunks = splitNoteChunks(source);
       expect(chunks, hasLength(3));
-      expect((chunks[1] as DisplayMathChunk).tex, 'E = mc^2');
+
+      final before = chunks[0] as MarkdownChunk;
+      final math = chunks[1];
+      final after = chunks[2] as MarkdownChunk;
+
+      expect(before.start, 0);
+      expect(before.start + before.length, lessThanOrEqualTo(math.start));
+      expect(
+        before.source,
+        source.substring(before.start, before.start + before.length),
+      );
+
+      expect(math, isA<DisplayMathChunk>());
+      expect(math.start, source.indexOf('\$\$'));
+      expect(
+        math.start + math.length,
+        lessThanOrEqualTo(source.indexOf('Dopo la formula.')),
+      );
+
+      expect(
+        after.start,
+        lessThanOrEqualTo(source.indexOf('Dopo la formula.')),
+      );
+      expect(after.start + after.length, source.length);
+      expect(
+        after.source,
+        source.substring(after.start, after.start + after.length),
+      );
+    });
+
+    test('la formula su una riga non ingloba la riga successiva', () {
+      const source = 'prima\n\$\$ E = mc^2 \$\$\ndopo';
+      final chunks = splitNoteChunks(source);
+      expect(chunks, hasLength(3));
+      final math = chunks[1];
+      expect((math as DisplayMathChunk).tex, 'E = mc^2');
+      expect(math.start, source.indexOf('\$\$'));
+      expect(math.start + math.length, source.indexOf('dopo'));
     });
 
     test('estrae una formula a blocco multi-riga', () {

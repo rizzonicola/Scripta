@@ -41,12 +41,12 @@ import 'package:flutter_math_fork/tex.dart'
     show SyntaxTree, TexParser, TexParserSettings;
 import 'code_block_with_copy.dart';
 import 'display_math_block.dart';
+import 'note_scroll_memory.dart';
 import 'reading_colors.dart';
 import 'reading_empty_state.dart';
 import 'reading_layout.dart';
 import 'reading_meta_footer.dart';
 import 'reading_outline_sheet.dart';
-import 'reading_scroll_memory.dart';
 import 'reading_search.dart';
 import 'selection_handle_visibility.dart';
 
@@ -322,6 +322,15 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   List<ReadingOutlineEntry> _outline = const [];
   final Map<int, GlobalKey> _itemKeys = <int, GlobalKey>{};
 
+  // Posizione di scorrimento: il salvataggio avviene durante lo scroll (non
+  // in `dispose`, quando la ListView ha già perso i client), mentre il
+  // ripristino viene applicato a layout finito, quando le altezze reali dei
+  // blocchi sono disponibili. La revisione invalida i ripristini programmati
+  // quando nel frattempo cambia la nota.
+  int _restoreRevision = 0;
+  double? _lastSavedReadingPixels;
+  bool _saveReadingPositionScheduled = false;
+
   // Ricerca resa: firma dell'ultimo calcolo (query + indice + lista items) e
   // risultati. La firma evita di ricalcolare/riscrivere la selezione a ogni
   // rebuild che non c'entra con la ricerca.
@@ -356,20 +365,183 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   void _restoreReadingPosition() {
     final noteId = widget.noteId;
     if (noteId == null) return;
-    final offset = ReadingScrollMemory.offsetFor(noteId);
-    if (offset == null) return;
+    final sourceOffset = NoteScrollMemory.sourceOffsetFor(noteId);
+    if (sourceOffset == null) return;
+    _scheduleReadingRestore(sourceOffset);
+  }
+
+  /// Programma il ripristino a layout finito. Non basta un solo frame quando
+  /// il blocco da raggiungere non è ancora montato: la prima stima proporzionale
+  /// lo porta nella cache della ListView e il tentativo successivo usa la
+  /// geometria reale.
+  void _scheduleReadingRestore(int sourceOffset) {
+    final revision = ++_restoreRevision;
+    _applyReadingRestore(sourceOffset, revision: revision, retries: 2);
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _applyReadingRestore(
+    int sourceOffset, {
+    required int revision,
+    required int retries,
+  }) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      _scrollController.jumpTo(
-        offset.clamp(0.0, _scrollController.position.maxScrollExtent),
-      );
+      if (!mounted || revision != _restoreRevision) return;
+      if (!_scrollController.hasClients || _items.isEmpty) return;
+
+      final position = _scrollController.position;
+      final items = _items;
+
+      // Blocco che contiene l'offset. Gli offset dei blocchi sono monotoni:
+      // l'ultimo con `sourceStart <= sourceOffset` è quello giusto. Se
+      // l'offset precede il primo blocco si resta sul primo.
+      var targetIndex = 0;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].sourceStart <= sourceOffset) {
+          targetIndex = i;
+        } else {
+          break;
+        }
+      }
+      final targetItem = items[targetIndex];
+      final sourceLength = targetItem.sourceLength <= 0
+          ? 1
+          : targetItem.sourceLength;
+      final fraction = ((sourceOffset - targetItem.sourceStart) / sourceLength)
+          .clamp(0.0, 1.0);
+
+      // Offset 0 significa "in cima": riportare il primo blocco al bordo
+      // superiore farebbe perdere il padding iniziale della lista.
+      if (targetIndex == 0 && fraction <= 0) {
+        if (position.pixels != 0) _scrollController.jumpTo(0);
+        return;
+      }
+
+      final box = _itemKeys[targetIndex]?.currentContext?.findRenderObject();
+      final viewport = _viewportGlobalRect();
+      if (box is RenderBox && box.attached && viewport != null) {
+        final delta =
+            box.localToGlobal(Offset.zero).dy -
+            viewport.top +
+            (box.size.height * fraction);
+        final target = (position.pixels + delta).clamp(
+          0.0,
+          position.maxScrollExtent,
+        );
+        if ((target - position.pixels).abs() > 0.5) {
+          _scrollController.jumpTo(target);
+        }
+        return;
+      }
+
+      // Blocco non ancora costruito: salta a una stima proporzionale e
+      // riprova un frame dopo, quando la virtualizzazione lo avrà montato.
+      final target =
+          position.maxScrollExtent * ((targetIndex + fraction) / items.length);
+      _scrollController.jumpTo(target.clamp(0.0, position.maxScrollExtent));
+
+      if (retries > 0) {
+        _applyReadingRestore(
+          sourceOffset,
+          revision: revision,
+          retries: retries - 1,
+        );
+        WidgetsBinding.instance.ensureVisualUpdate();
+      }
     });
   }
 
-  void _saveReadingPosition() {
-    final noteId = widget.noteId;
-    if (noteId == null || !_scrollController.hasClients) return;
-    ReadingScrollMemory.save(noteId, _scrollController.offset);
+  /// Converte la posizione visibile in un offset nel sorgente e la salva.
+  ///
+  /// Il blocco in cima alla viewport viene misurato dalla geometria viva
+  /// (economica: pochi RenderBox già montati), poi la frazione visibile del
+  /// blocco viene riportata proporzionalmente sulla sua lunghezza nel
+  /// sorgente. Non serve un TextPainter: il Markdown è già diviso in blocchi.
+  void _saveReadingPosition({String? noteId, int? contentLength}) {
+    final targetNoteId = noteId ?? widget.noteId;
+    if (targetNoteId == null) return;
+    if (!_scrollController.hasClients || _items.isEmpty) return;
+    final viewport = _viewportGlobalRect();
+    if (viewport == null) return;
+
+    int? exactIndex;
+    int? belowIndex;
+    int? aboveIndex;
+    var exactFraction = 0.0;
+    var nearestBelowTop = double.infinity;
+    var nearestAboveTop = double.negativeInfinity;
+
+    for (final entry in _itemKeys.entries) {
+      final index = entry.key;
+      if (index < 0 || index >= _items.length) continue;
+      final box = entry.value.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      final bottom = top + box.size.height;
+
+      if (top <= viewport.top && bottom > viewport.top) {
+        // Il bordo superiore della viewport cade dentro questo blocco.
+        exactIndex = index;
+        exactFraction = box.size.height <= 0
+            ? 0
+            : ((viewport.top - top) / box.size.height).clamp(0.0, 1.0);
+        break;
+      }
+      if (top > viewport.top && top < nearestBelowTop) {
+        // Nessun blocco contiene il bordo: memorizza il primo sotto e
+        // l'ultimo sopra, come ripiego.
+        nearestBelowTop = top;
+        belowIndex = index;
+      } else if (top <= viewport.top && top > nearestAboveTop) {
+        nearestAboveTop = top;
+        aboveIndex = index;
+      }
+    }
+
+    final itemIndex = exactIndex ?? belowIndex ?? aboveIndex;
+    if (itemIndex == null) return;
+    final fraction = exactIndex != null
+        ? exactFraction
+        : (belowIndex != null ? 0.0 : 1.0);
+    final item = _items[itemIndex];
+    final sourceLength = item.sourceLength <= 0 ? 1 : item.sourceLength;
+    final sourceOffset = item.sourceStart + (sourceLength * fraction).round();
+    NoteScrollMemory.save(
+      targetNoteId,
+      sourceOffset.clamp(0, contentLength ?? widget.content.length),
+    );
+  }
+
+  /// La geometria dei figli della viewport riflette il nuovo offset di paint
+  /// solo a frame concluso: misurare dentro la notifica leggerebbe ancora la
+  /// posizione precedente. Si accoda quindi UNA misura per frame.
+  void _scheduleSaveReadingPosition() {
+    if (_saveReadingPositionScheduled) return;
+    _saveReadingPositionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _saveReadingPositionScheduled = false;
+      if (!mounted) return;
+      _saveReadingPosition();
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  bool _handleReadingScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is ScrollUpdateNotification) {
+      final pixels = notification.metrics.pixels;
+      final last = _lastSavedReadingPixels;
+      // Un salvataggio ogni ~48 px basta per conservare la posizione senza
+      // eseguire la misura della geometria a ogni frame.
+      if (last == null || (pixels - last).abs() >= 48) {
+        _lastSavedReadingPixels = pixels;
+        _scheduleSaveReadingPosition();
+      }
+    } else if (notification is ScrollEndNotification) {
+      _lastSavedReadingPixels = notification.metrics.pixels;
+      _scheduleSaveReadingPosition();
+    }
+    return false;
   }
 
   // Il controller notifica anche per motivi diversi dalla selezione (es.
@@ -399,7 +571,16 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   void didUpdateWidget(covariant MarkdownRenderedView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.noteId != widget.noteId) {
-      _saveReadingPosition();
+      // Qui il widget è già quello nuovo, ma la lista e la geometria sono
+      // ancora quelle della nota precedente: salva esplicitamente con l'id
+      // vecchio e con la lunghezza del vecchio contenuto, poi prepara il
+      // ripristino della nuova nota.
+      _saveReadingPosition(
+        noteId: oldWidget.noteId,
+        contentLength: oldWidget.content.length,
+      );
+      _restoreRevision++;
+      _lastSavedReadingPixels = null;
       _restoreReadingPosition();
     }
     if (oldWidget.content != widget.content) {
@@ -409,7 +590,10 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   @override
   void dispose() {
-    _saveReadingPosition();
+    // Nessun salvataggio qui: al momento del `dispose` la ListView ha già
+    // perso i client e la misura non sarebbe possibile. Le posizioni sono
+    // già state salvate dalle notifiche di scroll.
+    _restoreRevision++;
     _selectionController.removeListener(_onSelectionControllerChanged);
     _autoScroller.dispose();
     _scrollController.dispose();
@@ -446,21 +630,35 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       // per blocco.
       for (final chunk in splitNoteChunks(content)) {
         switch (chunk) {
-          case MarkdownChunk(:final source):
+          case MarkdownChunk(:final source, :final start):
             if (source.trim().isEmpty) continue;
             final blocks = Markdown.fromString(
               normalizeInlineMath(source),
               inlineMath: true,
             ).blocks;
+            var searchFrom = 0;
             for (final block in blocks) {
               if (block is MD$Spacer) continue;
+              final blockStart = _findBlockStart(source, block, searchFrom);
+              final blockLength = block.text.trim().isEmpty
+                  ? 1
+                  : block.text.trim().length;
+              searchFrom = (blockStart + blockLength).clamp(0, source.length);
               final id = 'block-${documents.length}';
               final model = Markdown(
                 markdown: markdownBlockRenderedText(block),
                 blocks: [block],
               );
               final itemIndex = items.length;
-              items.add(_BlockItem(block, id, model));
+              items.add(
+                _BlockItem(
+                  block,
+                  id,
+                  model,
+                  sourceStart: start + blockStart,
+                  sourceLength: blockLength,
+                ),
+              );
               documents.add(
                 MarkdownDocumentRef(
                   id: id,
@@ -478,8 +676,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                 );
               }
             }
-          case DisplayMathChunk(:final tex):
-            items.add(_MathItem(tex));
+          case DisplayMathChunk(:final tex, :final start, :final length):
+            items.add(_MathItem(tex, sourceStart: start, sourceLength: length));
         }
       }
 
@@ -491,6 +689,32 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       _trackBelow = false;
       _selectionController.setDocuments(documents);
     });
+  }
+
+  /// Trova l'inizio di [block] nel tratto Markdown [source].
+  ///
+  /// `flutter_md` non espone gli offset nel sorgente, ma i blocchi conservano
+  /// quasi sempre il testo originale (un titolo senza `#`, il codice senza
+  /// fence, una lista coi trattini). La ricerca è SEQUENZIALE (`from` avanza
+  /// dopo ogni blocco), così testi ripetuti non vengono attribuiti al blocco
+  /// sbagliato. Se il testo è stato normalizzato (es. formule inline), si usa
+  /// come ripiego l'inizio del tratto: la posizione resta comunque
+  /// monotona e vicina a quella reale.
+  int _findBlockStart(String source, MD$Block block, int from) {
+    final startFrom = from.clamp(0, source.length);
+    final trimmed = block.text.trim();
+    if (trimmed.isEmpty) return startFrom;
+
+    final candidates = <String>[trimmed];
+    final firstLine = trimmed.split('\n').first.trim();
+    if (firstLine.isNotEmpty && firstLine != trimmed) {
+      candidates.add(firstLine);
+    }
+    for (final candidate in candidates) {
+      final index = source.indexOf(candidate, startFrom);
+      if (index >= 0) return index;
+    }
+    return startFrom;
   }
 
   void _ensureTheme(
@@ -630,36 +854,39 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       data: _markdownTheme,
       child: ScrollConfiguration(
         behavior: _NoGlowScrollBehavior(),
-        child: Scrollbar(
-          controller: _scrollController,
-          child: ListView.builder(
-            key: const ValueKey('markdown-formatted-listview'),
+        child: NotificationListener<ScrollNotification>(
+          onNotification: _handleReadingScrollNotification,
+          child: Scrollbar(
             controller: _scrollController,
-            padding: ReadingLayout.readingPadding,
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-              // Un blocco che si costruisce può portare nuovi
-              // rettangoli della selezione (vedi [_onBlockBuilt]).
-              _onBlockBuilt();
-              if (hasTitle && index == 0) {
-                return _buildTitleWidget(theme, selectionColor);
-              }
-              var cursor = hasTitle ? 1 : 0;
-              if (hasEmptyState) {
-                if (index == cursor) return _buildEmptyItem();
-                cursor++;
-              } else {
-                if (index < cursor + items.length) {
-                  final itemIndex = index - cursor;
-                  return _buildItem(itemIndex, items[itemIndex]);
+            child: ListView.builder(
+              key: const ValueKey('markdown-formatted-listview'),
+              controller: _scrollController,
+              padding: ReadingLayout.readingPadding,
+              itemCount: itemCount,
+              itemBuilder: (context, index) {
+                // Un blocco che si costruisce può portare nuovi
+                // rettangoli della selezione (vedi [_onBlockBuilt]).
+                _onBlockBuilt();
+                if (hasTitle && index == 0) {
+                  return _buildTitleWidget(theme, selectionColor);
                 }
-                cursor += items.length;
-              }
-              if (hasFooter && index == cursor) {
-                return _buildFooterItem();
-              }
-              return const SizedBox.shrink();
-            },
+                var cursor = hasTitle ? 1 : 0;
+                if (hasEmptyState) {
+                  if (index == cursor) return _buildEmptyItem();
+                  cursor++;
+                } else {
+                  if (index < cursor + items.length) {
+                    final itemIndex = index - cursor;
+                    return _buildItem(itemIndex, items[itemIndex]);
+                  }
+                  cursor += items.length;
+                }
+                if (hasFooter && index == cursor) {
+                  return _buildFooterItem();
+                }
+                return const SizedBox.shrink();
+              },
+            ),
           ),
         ),
       ),
@@ -742,9 +969,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         final showOverlayButtons =
             constraints.maxWidth >= _kOverlayButtonsMinWidth;
         final showOutlineButton =
-            widget.showOutline &&
-            _outline.length >= 2 &&
-            showOverlayButtons;
+            widget.showOutline && _outline.length >= 2 && showOverlayButtons;
         return Stack(
           children: [
             Positioned.fill(child: content),
@@ -759,11 +984,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
                 ),
               ),
             if (showOverlayButtons)
-              Positioned(
-                bottom: 16,
-                right: 16,
-                child: _buildBackToTopButton(),
-              ),
+              Positioned(bottom: 16, right: 16, child: _buildBackToTopButton()),
           ],
         );
       },
@@ -2026,19 +2247,37 @@ class _SelectionRecallRecognizer extends LongPressGestureRecognizer {
 }
 
 /// Elemento della lista di lettura: un blocco Markdown o una formula a blocco.
+///
+/// [sourceStart]/[sourceLength] sono le coordinate nel sorgente della nota:
+/// servono a tradurre lo scroll della vista formattata in un offset stabile,
+/// condiviso con l'editor testuale.
 sealed class _ViewItem {
-  const _ViewItem();
+  const _ViewItem({required this.sourceStart, required this.sourceLength});
+
+  final int sourceStart;
+  final int sourceLength;
 }
 
 final class _BlockItem extends _ViewItem {
-  const _BlockItem(this.block, this.documentId, this.model);
+  const _BlockItem(
+    this.block,
+    this.documentId,
+    this.model, {
+    required super.sourceStart,
+    required super.sourceLength,
+  });
+
   final MD$Block block;
   final String documentId;
   final Markdown model;
 }
 
 final class _MathItem extends _ViewItem {
-  _MathItem(this.tex);
+  _MathItem(
+    this.tex, {
+    required super.sourceStart,
+    required super.sourceLength,
+  });
 
   final String tex;
   bool _parsed = false;

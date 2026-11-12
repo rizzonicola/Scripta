@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderEditable;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/l10n/app_localizations.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/haptics_helper.dart';
 import '../../../core/utils/selection_auto_scroller.dart';
 import '../../settings/providers/settings_provider.dart';
+import 'note_scroll_memory.dart';
 import 'reading_layout.dart';
 
 class MarkdownEditorField extends ConsumerStatefulWidget {
   final TextEditingController titleController;
   final TextEditingController contentController;
   final UndoHistoryController? undoController;
+
+  /// Identificativo della nota: serve a ricordare la posizione di scrittura
+  /// (offset nel sorgente) e a condividerla con la vista di sola lettura.
+  final String? noteId;
 
   /// Focus del campo di contenuto (opzionale): permette al pannello editor
   /// di sapere se si sta scrivendo nel corpo o nel titolo (scorciatoie di
@@ -33,6 +39,7 @@ class MarkdownEditorField extends ConsumerStatefulWidget {
     super.key,
     required this.titleController,
     required this.contentController,
+    this.noteId,
     this.undoController,
     this.contentFocusNode,
     this.onTitleChanged,
@@ -167,6 +174,14 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
   final GlobalKey _scrollViewKey = GlobalKey();
   final GlobalKey _contentFieldKey = GlobalKey();
 
+  // Ripristino della posizione condivisa con la vista di lettura. Come nella
+  // lettura, il salvataggio avviene durante lo scroll (ScrollUpdate/End), non
+  // in `dispose`: quando il campo viene smontato lo `Scrollable` può aver già
+  // perso i client.
+  int _restoreRevision = 0;
+  double? _lastSavedEditorPixels;
+  bool _saveEditorPositionScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -199,6 +214,8 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _scrollToActiveMatch(),
       );
+    } else {
+      _scheduleEditorRestore();
     }
   }
 
@@ -242,6 +259,12 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
       );
     }
 
+    if (oldWidget.noteId != widget.noteId) {
+      _restoreRevision++;
+      _lastSavedEditorPixels = null;
+      if (widget.activeSearchMatch == null) _scheduleEditorRestore();
+    }
+
     // Nuova occorrenza attiva (ricerca appena aperta, avanzamento
     // Avanti/Indietro, o nuova nota aperta già con un termine impostato):
     // portala a schermo. `TextRange` ha uguaglianza per valore, quindi
@@ -249,6 +272,9 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     // sia una transizione da "nessuna occorrenza attiva" a "una c'è".
     if (widget.activeSearchMatch != null &&
         widget.activeSearchMatch != oldWidget.activeSearchMatch) {
+      // La ricerca ha la precedenza sul ripristino della posizione: annulla
+      // un eventuale ripristino ancora in coda e porta a schermo l'occorrenza.
+      _restoreRevision++;
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _scrollToActiveMatch(),
       );
@@ -257,6 +283,10 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
 
   @override
   void dispose() {
+    // Nessun salvataggio qui: al momento del `dispose` lo Scrollable ha già
+    // perso i client e la posizione non è più misurabile. La memoria è
+    // aggiornata dalle notifiche di scroll.
+    _restoreRevision++;
     _titleHaptics.dispose();
     _contentHaptics.dispose();
     _titleSelectionRelay.dispose();
@@ -264,6 +294,135 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
     _autoScroller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// `RenderEditable` del corpo della nota, cercato nel sottoalbero del campo.
+  /// Serve per tradurre pixel <-> posizione nel testo usando la geometria che
+  /// Flutter ha già calcolato, senza un `TextPainter` completo a ogni scroll.
+  RenderEditable? _contentRenderEditable() {
+    final root = _contentFieldKey.currentContext?.findRenderObject();
+    if (root == null || !root.attached) return null;
+    RenderEditable? found;
+    void visit(RenderObject node) {
+      if (found != null) return;
+      if (node is RenderEditable) {
+        found = node;
+        return;
+      }
+      node.visitChildren(visit);
+    }
+
+    visit(root);
+    return found;
+  }
+
+  void _scheduleEditorRestore() {
+    final noteId = widget.noteId;
+    if (noteId == null) return;
+    final sourceOffset = NoteScrollMemory.sourceOffsetFor(noteId);
+    if (sourceOffset == null) return;
+    final revision = ++_restoreRevision;
+    _applyEditorRestore(sourceOffset, revision: revision, retries: 2);
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _applyEditorRestore(
+    int sourceOffset, {
+    required int revision,
+    required int retries,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || revision != _restoreRevision) return;
+      if (!_scrollController.hasClients) return;
+
+      final position = _scrollController.position;
+      final maxOffset = widget.contentController.text.length;
+      final offset = sourceOffset.clamp(0, maxOffset);
+
+      // Offset 0 = inizio nota: conserva il titolo e il padding iniziale.
+      if (offset == 0) {
+        if (position.pixels != 0) _scrollController.jumpTo(0);
+        return;
+      }
+
+      final editable = _contentRenderEditable();
+      final viewport = _viewportGlobalRect();
+      if (editable != null && viewport != null) {
+        final caret = editable.getLocalRectForCaret(
+          TextPosition(offset: offset),
+        );
+        final caretTop = editable.localToGlobal(caret.topLeft).dy;
+        final target = (position.pixels + caretTop - viewport.top).clamp(
+          0.0,
+          position.maxScrollExtent,
+        );
+        if ((target - position.pixels).abs() > 0.5) {
+          _scrollController.jumpTo(target);
+        }
+        return;
+      }
+
+      if (retries > 0) {
+        _applyEditorRestore(
+          sourceOffset,
+          revision: revision,
+          retries: retries - 1,
+        );
+        WidgetsBinding.instance.ensureVisualUpdate();
+      }
+    });
+  }
+
+  /// Salva come offset nel sorgente il primo carattere visibile nella
+  /// viewport. `getPositionForPoint` lavora in coordinate globali e sfrutta il
+  /// layout già pronto di `RenderEditable`: nessun ricalcolo del testo.
+  void _saveEditorPosition() {
+    final noteId = widget.noteId;
+    if (noteId == null || !_scrollController.hasClients) return;
+    final editable = _contentRenderEditable();
+    final viewport = _viewportGlobalRect();
+    if (editable == null || viewport == null) return;
+
+    final editableOrigin = editable.localToGlobal(Offset.zero);
+    final textPosition = editable.getPositionForPoint(
+      Offset(editableOrigin.dx + 1, viewport.top),
+    );
+    final sourceOffset = textPosition.offset.clamp(
+      0,
+      widget.contentController.text.length,
+    );
+    NoteScrollMemory.save(noteId, sourceOffset);
+  }
+
+  /// La geometria del campo riflette il nuovo offset di paint solo a frame
+  /// concluso: la misura viene quindi accodata una sola volta per frame.
+  void _scheduleSaveEditorPosition() {
+    if (_saveEditorPositionScheduled) return;
+    _saveEditorPositionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _saveEditorPositionScheduled = false;
+      if (!mounted) return;
+      _saveEditorPosition();
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  bool _handleEditorScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is ScrollUpdateNotification) {
+      final pixels = notification.metrics.pixels;
+      final last = _lastSavedEditorPixels;
+      // Stessa soglia della vista di lettura: si evita una misura della
+      // geometria a ogni frame senza perdere la posizione finale.
+      if (last == null || (pixels - last).abs() >= 48) {
+        _lastSavedEditorPixels = pixels;
+        _scheduleSaveEditorPosition();
+      }
+    } else if (notification is ScrollEndNotification) {
+      _lastSavedEditorPixels = notification.metrics.pixels;
+      _scheduleSaveEditorPosition();
+    }
+    return false;
   }
 
   /// Calcola la posizione verticale reale dell'occorrenza attiva nel campo
@@ -355,66 +514,38 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
       color: theme.colorScheme.onSurface,
     );
 
-    return SingleChildScrollView(
-      key: _scrollViewKey,
-      controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(
-        ReadingLayout.horizontalPadding,
-        20,
-        ReadingLayout.horizontalPadding,
-        96,
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: ReadingLayout.maxContentWidth,
-          ),
-          child: SelectionRevealShield(
-            isBlocking: () => _autoScroller.isDraggingSelection,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Title Field
-                TextField(
-                  controller: widget.titleController,
-                  onChanged: widget.onTitleChanged,
-                  style: titleStyle,
-                  maxLines: null,
-                  keyboardType: TextInputType.multiline,
-                  textInputAction: TextInputAction.next,
-                  decoration: InputDecoration(
-                    hintText: l10n.untitledNote,
-                    hintStyle: titleStyle.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(
-                        alpha: 0.35,
-                      ),
-                    ),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-                Divider(
-                  color: theme.colorScheme.outline.withValues(alpha: 0.25),
-                  thickness: 1,
-                ),
-                const SizedBox(height: 16),
-
-                // Markdown Body Field
-                Container(
-                  key: _contentFieldKey,
-                  child: TextField(
-                    controller: widget.contentController,
-                    focusNode: widget.contentFocusNode,
-                    undoController: widget.undoController,
-                    onChanged: widget.onContentChanged,
-                    style: contentStyle,
+    return NotificationListener<ScrollNotification>(
+      onNotification: _handleEditorScrollNotification,
+      child: SingleChildScrollView(
+        key: _scrollViewKey,
+        controller: _scrollController,
+        padding: const EdgeInsets.fromLTRB(
+          ReadingLayout.horizontalPadding,
+          20,
+          ReadingLayout.horizontalPadding,
+          96,
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: ReadingLayout.maxContentWidth,
+            ),
+            child: SelectionRevealShield(
+              isBlocking: () => _autoScroller.isDraggingSelection,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Title Field
+                  TextField(
+                    controller: widget.titleController,
+                    onChanged: widget.onTitleChanged,
+                    style: titleStyle,
                     maxLines: null,
                     keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
-                      hintText: l10n.writeMarkdownHere,
-                      hintStyle: contentStyle.copyWith(
+                      hintText: l10n.untitledNote,
+                      hintStyle: titleStyle.copyWith(
                         color: theme.colorScheme.onSurface.withValues(
                           alpha: 0.35,
                         ),
@@ -423,8 +554,39 @@ class _MarkdownEditorFieldState extends ConsumerState<MarkdownEditorField>
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                ),
-              ],
+
+                  const SizedBox(height: 12),
+                  Divider(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.25),
+                    thickness: 1,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Markdown Body Field
+                  Container(
+                    key: _contentFieldKey,
+                    child: TextField(
+                      controller: widget.contentController,
+                      focusNode: widget.contentFocusNode,
+                      undoController: widget.undoController,
+                      onChanged: widget.onContentChanged,
+                      style: contentStyle,
+                      maxLines: null,
+                      keyboardType: TextInputType.multiline,
+                      decoration: InputDecoration(
+                        hintText: l10n.writeMarkdownHere,
+                        hintStyle: contentStyle.copyWith(
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.35,
+                          ),
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

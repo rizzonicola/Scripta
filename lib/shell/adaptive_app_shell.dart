@@ -360,15 +360,32 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
           : Brightness.dark,
     );
 
-    // Il focus mode ha la precedenza su qualunque layout: scrittura o lettura
-    // a tutto schermo, senza barre né pannelli.
-    final Widget shellContent = editorFocusMode
-        ? _buildFocusLayout()
+    // Il focus mode NON sostituisce il pannello editor: toglie soltanto la
+    // chrome attorno (app bar, drawer, pannelli laterali). `NoteEditorPane`
+    // resta nello stesso punto dell'albero, quindi conserva controller,
+    // scroll e posizione senza reparenting né GlobalKey.
+    final PreferredSizeWidget? appBar = editorFocusMode
+        ? null
         : switch (screenType) {
-            DeviceScreenType.desktop => _buildDesktopLayout(),
-            DeviceScreenType.tablet => _buildTabletLayout(),
-            DeviceScreenType.mobile => _buildMobileLayout(),
+            DeviceScreenType.desktop => const TopAppBar(),
+            DeviceScreenType.tablet => TopAppBar(
+              onToggleSidebar: _openFolderDrawer,
+            ),
+            DeviceScreenType.mobile => TopAppBar(
+              showBackButton: _mobileActiveView == MobileActiveView.editor,
+              onBack: _showMobileNotesList,
+              onToggleSidebar: _openFolderDrawer,
+            ),
           };
+    final showDrawer =
+        !editorFocusMode && screenType != DeviceScreenType.desktop;
+    final body = switch (screenType) {
+      DeviceScreenType.desktop => _buildDesktopBody(
+        isFocusMode: editorFocusMode,
+      ),
+      DeviceScreenType.tablet => _buildTabletBody(isFocusMode: editorFocusMode),
+      DeviceScreenType.mobile => _buildMobileBody(isFocusMode: editorFocusMode),
+    };
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: systemOverlay,
@@ -384,101 +401,111 @@ class _AdaptiveAppShellState extends ConsumerState<AdaptiveAppShell>
         child: Column(
           children: [
             if (hasSaveError) _SaveErrorBanner(onRetry: _retryPendingWrites),
-            Expanded(child: shellContent),
+            Expanded(
+              child: Scaffold(
+                key: _scaffoldKey,
+                appBar: appBar,
+                drawer: showDrawer ? _folderDrawer : null,
+                body: SafeArea(
+                  // Senza app bar la status bar non è già compensata dal
+                  // Material: in focus il body deve evitare la notch.
+                  top:
+                      editorFocusMode && screenType != DeviceScreenType.desktop,
+                  bottom: screenType == DeviceScreenType.mobile,
+                  left: false,
+                  right: false,
+                  child: body,
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  /// Focus mode: scrittura o lettura a tutto schermo, senza distrazioni.
-  Widget _buildFocusLayout() {
-    return const Scaffold(body: SafeArea(child: NoteEditorPane()));
-  }
-
   /// Desktop: 3 colonne (cartelle + lista note + editor).
-  Widget _buildDesktopLayout() {
-    return Scaffold(
-      key: _scaffoldKey,
-      appBar: const TopAppBar(),
-      body: const Row(
-        children: [
-          SizedBox(
-            width: AppConstants.folderSidebarWidth,
-            child: FolderTreeView(),
-          ),
-          SizedBox(width: AppConstants.notesListWidth, child: NotesListView()),
-          Expanded(child: NoteEditorPane()),
-        ],
-      ),
+  ///
+  /// In focus mode i due pannelli laterali hanno larghezza zero ma restano
+  /// nello stesso slot: così l'`Expanded` con `NoteEditorPane` non cambia
+  /// posizione nell'albero e il pannello non viene rimontato.
+  Widget _buildDesktopBody({required bool isFocusMode}) {
+    return Row(
+      children: [
+        SizedBox(
+          width: isFocusMode ? 0 : AppConstants.folderSidebarWidth,
+          child: isFocusMode ? const SizedBox.shrink() : const FolderTreeView(),
+        ),
+        SizedBox(
+          width: isFocusMode ? 0 : AppConstants.notesListWidth,
+          child: isFocusMode ? const SizedBox.shrink() : const NotesListView(),
+        ),
+        const Expanded(child: NoteEditorPane()),
+      ],
     );
   }
 
-  /// Tablet: 2 colonne (lista note + editor), cartelle nel drawer.
-  Widget _buildTabletLayout() {
-    return Scaffold(
-      key: _scaffoldKey,
-      appBar: TopAppBar(onToggleSidebar: _openFolderDrawer),
-      drawer: _folderDrawer,
-      body: const Row(
-        children: [
-          SizedBox(width: AppConstants.notesListWidth, child: NotesListView()),
-          Expanded(child: NoteEditorPane()),
-        ],
-      ),
+  /// Tablet: 2 colonne (lista note + editor), cartelle nel drawer. In focus
+  /// la lista si azzera, ma l'editor resta nello stesso slot.
+  Widget _buildTabletBody({required bool isFocusMode}) {
+    return Row(
+      children: [
+        SizedBox(
+          width: isFocusMode ? 0 : AppConstants.notesListWidth,
+          child: isFocusMode ? const SizedBox.shrink() : const NotesListView(),
+        ),
+        const Expanded(child: NoteEditorPane()),
+      ],
     );
   }
 
   /// Mobile: pannello singolo (lista note oppure editor), cartelle nel drawer.
-  Widget _buildMobileLayout() {
-    final isEditorVisible = _mobileActiveView == MobileActiveView.editor;
+  /// In focus l'`AnimatedSwitcher` resta lo stesso widget con la stessa chiave
+  /// dell'editor, quindi `NoteEditorPane` non viene ricreato.
+  Widget _buildMobileBody({required bool isFocusMode}) {
+    final isEditorVisible =
+        isFocusMode || _mobileActiveView == MobileActiveView.editor;
 
     return PopScope(
       canPop: !isEditorVisible,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && isEditorVisible) _showMobileNotesList();
+        if (didPop) return;
+        if (isFocusMode) {
+          // In focus la nota resta aperta: Indietro toglie solo la modalità
+          // a tutto schermo, senza notificare alla sync una chiusura che non
+          // c'è.
+          ref.read(editorProvider.notifier).exitFocusMode();
+        } else if (_mobileActiveView == MobileActiveView.editor) {
+          _showMobileNotesList();
+        }
       },
-      child: Scaffold(
-        key: _scaffoldKey,
-        appBar: TopAppBar(
-          showBackButton: isEditorVisible,
-          onBack: _showMobileNotesList,
-          onToggleSidebar: _openFolderDrawer,
-        ),
-        drawer: _folderDrawer,
-        body: SafeArea(
-          top: false,
-          bottom: true,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            reverseDuration: const Duration(milliseconds: 200),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, animation) {
-              final isEditor =
-                  child.key == const ValueKey('mobile_editor_pane');
-              final begin = isEditor
-                  ? const Offset(0.08, 0)
-                  : const Offset(-0.08, 0);
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: begin,
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
-                ),
-              );
-            },
-            child: isEditorVisible
-                ? const NoteEditorPane(key: ValueKey('mobile_editor_pane'))
-                : NotesListView(
-                    key: const ValueKey('mobile_notes_list'),
-                    onNoteSelected: (_) => _showMobileEditor(),
-                  ),
-          ),
-        ),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        reverseDuration: const Duration(milliseconds: 200),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) {
+          final isEditor = child.key == const ValueKey('mobile_editor_pane');
+          final begin = isEditor
+              ? const Offset(0.08, 0)
+              : const Offset(-0.08, 0);
+          return FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: begin,
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
+            ),
+          );
+        },
+        child: isEditorVisible
+            ? const NoteEditorPane(key: ValueKey('mobile_editor_pane'))
+            : NotesListView(
+                key: const ValueKey('mobile_notes_list'),
+                onNoteSelected: (_) => _showMobileEditor(),
+              ),
       ),
     );
   }

@@ -316,6 +316,7 @@ class _NoteEditorPaneState extends ConsumerState<NoteEditorPane> {
                     ? const _ReadOnlyNoteView()
                     : MarkdownEditorField(
                         key: ValueKey('editor-$activeNoteId'),
+                        noteId: activeNoteId,
                         titleController: _titleController,
                         contentController: _contentController,
                         undoController: _undoController,

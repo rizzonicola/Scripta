@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:scripta/core/l10n/app_localizations.dart';
 import 'package:scripta/features/editor/presentation/display_math_block.dart';
 import 'package:scripta/features/editor/presentation/markdown_rendered_view.dart';
-import 'package:scripta/features/editor/presentation/reading_scroll_memory.dart';
+import 'package:scripta/features/editor/presentation/note_scroll_memory.dart';
 import 'package:scripta/features/editor/providers/note_search_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -112,7 +112,7 @@ MarkdownSelectionScopeState _scope(WidgetTester tester) => tester
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  tearDown(ReadingScrollMemory.clear);
+  tearDown(NoteScrollMemory.clear);
 
   testWidgets('lo stato vuoto è localizzato e passa alla modifica', (
     tester,
@@ -351,7 +351,7 @@ void main() {
     expect(_scrollable(tester).position.pixels, greaterThan(0));
   });
 
-  testWidgets('la posizione di lettura viene ripristinata per nota', (
+  testWidgets('la posizione di lettura viene salvata e ripristinata', (
     tester,
   ) async {
     final buffer = StringBuffer();
@@ -360,15 +360,26 @@ void main() {
         'Paragrafo numero $i con abbastanza testo per creare altezza.\n',
       );
     }
-    ReadingScrollMemory.save('nota-ripristino', 300);
-    await _pumpView(
-      tester,
-      content: buffer.toString(),
-      noteId: 'nota-ripristino',
-    );
+    final content = buffer.toString();
+    await _pumpView(tester, content: content, noteId: 'nota-ripristino');
     await tester.pumpAndSettle();
 
-    expect(_scrollable(tester).position.pixels, closeTo(300, 1));
+    await tester.drag(find.byKey(_kListKey), const Offset(0, -700));
+    await tester.pumpAndSettle();
+
+    final savedOffset = NoteScrollMemory.sourceOffsetFor('nota-ripristino');
+    final savedPixels = _scrollable(tester).position.pixels;
+    expect(savedOffset, isNotNull);
+    expect(savedOffset, greaterThan(0));
+    expect(savedPixels, greaterThan(0));
+
+    // Smonta e rimonta la vista: la nuova istanza deve leggere l'ancora
+    // lasciata dalla precedente, non ripartire da zero.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpView(tester, content: content, noteId: 'nota-ripristino');
+    await tester.pumpAndSettle();
+
+    expect(_scrollable(tester).position.pixels, closeTo(savedPixels, 12));
   });
 
   testWidgets('il fallback TeX è localizzato e copia il sorgente', (
@@ -403,18 +414,24 @@ void main() {
   });
 
   test('la memoria delle posizioni è LRU e limitata', () {
-    ReadingScrollMemory.clear();
-    for (var i = 0; i < ReadingScrollMemory.maxEntries + 5; i++) {
-      ReadingScrollMemory.save('nota-$i', 100.0 + i);
+    NoteScrollMemory.clear();
+    for (var i = 0; i < NoteScrollMemory.maxEntries + 5; i++) {
+      NoteScrollMemory.save('nota-$i', 100 + i);
     }
-    expect(ReadingScrollMemory.offsetFor('nota-0'), isNull);
-    expect(ReadingScrollMemory.offsetFor('nota-4'), isNull);
-    expect(ReadingScrollMemory.offsetFor('nota-5'), 105.0);
+    expect(NoteScrollMemory.sourceOffsetFor('nota-0'), isNull);
+    expect(NoteScrollMemory.sourceOffsetFor('nota-4'), isNull);
+    expect(NoteScrollMemory.sourceOffsetFor('nota-5'), 105);
     expect(
-      ReadingScrollMemory.offsetFor(
-        'nota-${ReadingScrollMemory.maxEntries + 4}',
+      NoteScrollMemory.sourceOffsetFor(
+        'nota-${NoteScrollMemory.maxEntries + 4}',
       ),
-      100.0 + ReadingScrollMemory.maxEntries + 4,
+      100 + NoteScrollMemory.maxEntries + 4,
     );
+  });
+
+  test('la posizione in cima è un valore valido, non un valore assente', () {
+    NoteScrollMemory.clear();
+    NoteScrollMemory.save('nota-in-cima', 0);
+    expect(NoteScrollMemory.sourceOffsetFor('nota-in-cima'), 0);
   });
 }
