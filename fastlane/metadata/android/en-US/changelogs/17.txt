@@ -1,0 +1,5 @@
+Version 1.1.7.
+
+- Android launcher icon: keep the pen cap inside the circular safe zone.
+- Reading view: selection handles reappear when scrolling back to the
+  selected text and never show inside the selected text.
