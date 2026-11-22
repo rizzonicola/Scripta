@@ -72,6 +72,15 @@ final String _longNote = List<String>.generate(
   (i) => 'Paragrafo numero $i con del testo di riempimento.',
 ).join('\n\n');
 
+// Primo blocco volutamente ALTO (code fence): in cima alla nota l'ultimo
+// paragrafo resta fuori dalla cacheExtent. È la condizione in cui il pacchetto
+// aggancia ENTRAMBE le maniglie alla stessa superficie montata (test 11).
+final String _tallNote =
+    '```text\n'
+    '${List<String>.generate(120, (i) => 'riga $i').join('\n')}\n'
+    '```\n\n'
+    'Ultimo paragrafo.';
+
 /// Imposta la piattaforma, esegue [body] e la ripristina SEMPRE.
 Future<void> _withPlatform(
   TargetPlatform platform,
@@ -108,7 +117,11 @@ void _mockPlatformChannel(WidgetTester tester, _PlatformLog log) {
   });
 }
 
-Future<void> _pumpView(WidgetTester tester, String content) async {
+Future<void> _pumpView(
+  WidgetTester tester,
+  String content, {
+  bool locateWords = true,
+}) async {
   tester.view.physicalSize = const Size(400, 800);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(() {
@@ -128,7 +141,7 @@ Future<void> _pumpView(WidgetTester tester, String content) async {
     ),
   );
   await tester.pumpAndSettle();
-  await _locateWords(tester);
+  if (locateWords) await _locateWords(tester);
 }
 
 MarkdownSelectionScopeState _scope(WidgetTester tester) => tester
@@ -817,7 +830,7 @@ void main() {
     );
 
     testWidgets(
-      '8. selezione lunga con gli estremi LONTANI dalla viewport (caso (b)): il richiamo segue la politica B\' e mostra il menù',
+      '8. selezione lunga con gli estremi LONTANI dalla viewport: il richiamo NON ricostruisce e mostra il menù',
       (tester) async {
         // «Seleziona tutto» su una nota lunga e scroll a metà: inizio e fine
         // della selezione (primo e ultimo blocco) sono lontani dalla viewport,
@@ -825,14 +838,14 @@ void main() {
         //
         // OSSERVATO IN CI: in questo stato
         // `selectionHandleEndpoints()` NON era null, contro la documentazione
-        // del pacchetto. Il caso (b) «nessun estremo montato» quindi non si
-        // riesce a produrre con «Seleziona tutto» in questo banco di prova, e
-        // una versione precedente di questo test (che lo pretendeva) falliva
-        // sulla precondizione. Ora il test non assume nulla sul pacchetto:
-        // ricalcola la politica B' di `_selectionHandlesNeedRebuild` con le
-        // sole API pubbliche (`expectRebuild`) e verifica che il richiamo la
-        // rispetti, cioè che NON ricostruisca (selezione mai null) quando non
-        // c'è nulla da ricostruire e ricostruisca quando serve.
+        // del pacchetto: il pacchetto clampa sulle superfici centrali montate.
+        // Le maniglie esistenti sono quelle agganciate prima dello scroll e
+        // NON sono dipinte; i loro estremi veri sono smontati.
+        //
+        // L'esito atteso è FISSO (non ricalcolato dalla policy): ricostruire
+        // l'overlay riaggancerebbe le maniglie alla superficie clampata, cioè
+        // dentro il testo selezionato. Il richiamo deve quindi limitarsi al
+        // menù, senza mai far passare la selezione per `null`.
         await _withPlatform(TargetPlatform.android, () async {
           final log = _PlatformLog();
           _mockPlatformChannel(tester, log);
@@ -862,13 +875,15 @@ void main() {
           await tester.pump();
           expect(scope.toolbarIsVisible, isFalse);
 
-          // La politica riscritta qui con le sole API pubbliche: si
-          // ricostruisce solo se almeno un estremo è montato E c'è una
-          // maniglia non dipinta che NON sia stata tolta di proposito perché
-          // il suo estremo vero è smontato (vedi
-          // `_selectionHandlesNeedRebuild`).
-          final endpointsMounted =
-              controller.selectionHandleEndpoints() != null;
+          // Precondizioni del fixture, dalle sole API pubbliche: c'è una
+          // superficie centrale montata (il pacchetto clampa), ma i due
+          // estremi VERI sono smontati e le maniglie esistenti non sono
+          // dipinte. In questo stato non c'è nulla da ricostruire.
+          expect(
+            controller.selectionHandleEndpoints(),
+            isNotNull,
+            reason: 'precondizione: il centro della selezione è montato',
+          );
           final handlesBefore = _realHandles(tester);
           final documents = controller.documents;
           final baseIndex = documents.indexWhere(
@@ -886,22 +901,30 @@ void main() {
           final mountedDocuments = controller.mountedSurfaces
               .map((surface) => surface.documentId)
               .toSet();
-          final startMounted = mountedDocuments.contains(startDocument);
-          final endMounted = mountedDocuments.contains(endDocument);
-          final expectRebuild =
-              endpointsMounted &&
-              handlesBefore.any((handle) {
-                if (handle.isPainted) return false;
-                if (handle.type == TextSelectionHandleType.left &&
-                    !startMounted) {
-                  return false;
-                }
-                if (handle.type == TextSelectionHandleType.right &&
-                    !endMounted) {
-                  return false;
-                }
-                return true;
-              });
+          expect(
+            mountedDocuments.contains(startDocument),
+            isFalse,
+            reason: 'precondizione: l\'estremo iniziale è fuori dalla cache',
+          );
+          expect(
+            mountedDocuments.contains(endDocument),
+            isFalse,
+            reason: 'precondizione: l\'estremo finale è fuori dalla cache',
+          );
+          expect(
+            handlesBefore,
+            isNotEmpty,
+            reason:
+                'precondizione: le maniglie esistono ancora, agganciate '
+                'alle superfici smontate',
+          );
+          expect(
+            handlesBefore.where((handle) => handle.isPainted),
+            isEmpty,
+            reason:
+                'precondizione: le maniglie agganciate agli estremi veri '
+                'smontati non sono dipinte',
+          );
 
           // Ogni valore della selezione diverso da quello iniziale (`null`,
           // se si ricostruisce) finisce qui.
@@ -922,14 +945,12 @@ void main() {
           await tester.pumpAndSettle();
 
           expect(
-            deviations.isNotEmpty,
-            expectRebuild,
-            reason: expectRebuild
-                ? 'almeno un estremo è montato e non tutte le maniglie sono '
-                      'dipinte: il richiamo deve ricostruire (selezione per null)'
-                : 'nessun estremo montato (caso (b)) oppure tutte le maniglie '
-                      'sono dipinte: non c\'è nulla da ricostruire, quindi '
-                      'nessun clear()/riassegnazione. Valori visti: $deviations',
+            deviations,
+            isEmpty,
+            reason:
+                'gli estremi veri sono smontati: ricostruire riaggancerebbe '
+                'le maniglie alla superficie clampata. Il richiamo non deve '
+                'fare clear()/riassegnazione. Valori visti: $deviations',
           );
           expect(controller.selection, initial);
           expect(MarkdownRenderedView.debugSelectionRecallCount, 1);
@@ -1094,6 +1115,77 @@ void main() {
                 'nessuna maniglia deve essere dipinta quando l\'estremo vero '
                 'è fuori dalla cacheExtent: comparirebbe dentro il testo '
                 'selezionato. Stato: ${_describeHandles(tester)}',
+          );
+
+          await _drainTimers(tester);
+        });
+      },
+    );
+
+    testWidgets(
+      '11. stessa superficie: il prune conserva la maniglia vera e toglie quella clampata',
+      (tester) async {
+        // Ramo "una sola superficie montata" di
+        // `_pruneClampedSelectionHandles`: il pacchetto aggancia ENTRAMBE le
+        // maniglie alla stessa superficie (l'inizio è il blocco alto montato;
+        // la fine è fuori dalla cacheExtent). Il prune deve togliere solo
+        // quella clampata, senza azzerare anche quella vera.
+        await _withPlatform(TargetPlatform.android, () async {
+          _mockPlatformChannel(tester, _PlatformLog());
+          await _pumpView(tester, _tallNote, locateWords: false);
+
+          final scope = _scope(tester);
+          final controller = scope.controller;
+          final documents = controller.documents;
+          expect(documents, hasLength(2));
+
+          controller.selection = MarkdownSelection(
+            base: MarkdownPosition(
+              documentId: documents[0].id,
+              blockIndex: 0,
+              offset: 0,
+            ),
+            extent: MarkdownPosition(
+              documentId: documents[1].id,
+              blockIndex: 0,
+              offset: 0,
+            ),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+
+          final endpoints = controller.selectionHandleEndpoints();
+          expect(endpoints, isNotNull);
+          expect(
+            identical(endpoints!.startSurface, endpoints.endSurface),
+            isTrue,
+            reason:
+                'precondizione: solo la superficie del blocco alto è montata; '
+                'la fine è fuori dalla cacheExtent',
+          );
+          expect(endpoints.startSurface.documentId, documents[0].id);
+          expect(endpoints.endSurface.documentId, documents[0].id);
+
+          final painted = _realHandles(tester).where(
+            (handle) => handle.isPainted,
+          );
+          expect(
+            painted.where(
+              (handle) => handle.type == TextSelectionHandleType.left,
+            ),
+            hasLength(1),
+            reason:
+                'la maniglia VERA (inizio) deve restare dipinta. Stato: '
+                '${_describeHandles(tester)}',
+          );
+          expect(
+            painted.where(
+              (handle) => handle.type == TextSelectionHandleType.right,
+            ),
+            isEmpty,
+            reason:
+                'la maniglia clampata (fine) non deve essere dipinta. Stato: '
+                '${_describeHandles(tester)}',
           );
 
           await _drainTimers(tester);

@@ -235,6 +235,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   bool _selectionHandlePruneScheduled = false;
   bool _selectionHandlePruneRetryScheduled = false;
 
+  // Piattaforma del TEMA (non `defaultTargetPlatform`): è la stessa fonte che
+  // usa flutter_md per decidere se mostrare le maniglie e un tema può
+  // sovrascriverla. Si legge in `didChangeDependencies` per poterla usare
+  // anche da microtask/post-frame senza toccare il context.
+  TargetPlatform _themePlatform = defaultTargetPlatform;
+
   // Un'unica istanza della mappa, riusata a ogni build: il recognizer viene
   // creato una sola volta dal `RawGestureDetector` e la sua inizializzazione
   // (callback) rieseguita a ogni aggiornamento del widget.
@@ -301,7 +307,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   ]);
 
   TextSelectionControls get _platformSelectionControls {
-    switch (defaultTargetPlatform) {
+    switch (_themePlatform) {
       case TargetPlatform.iOS:
         return cupertinoTextSelectionControls;
       case TargetPlatform.macOS:
@@ -311,6 +317,21 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       case TargetPlatform.linux:
       case TargetPlatform.windows:
         return materialTextSelectionControls;
+    }
+  }
+
+  // Unico punto in cui si decide "piattaforma touch": lo usano le maniglie
+  // (flutter_md le mostra solo lì) e le ancore del menù.
+  bool get _isTouchPlatform {
+    switch (_themePlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return true;
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return false;
     }
   }
 
@@ -372,6 +393,12 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     _selectionController.addListener(_onSelectionControllerChanged);
     _updateBlocks(widget.content);
     _restoreReadingPosition();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _themePlatform = Theme.of(context).platform;
   }
 
   void _restoreReadingPosition() {
@@ -1562,18 +1589,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
 
   // Le toolbar touch (Material Android, Cupertino) usano ancora primaria e
   // secondaria; quelle desktop solo la primaria.
-  bool get _toolbarUsesBothAnchors {
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return true;
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return false;
-    }
-  }
+  bool get _toolbarUsesBothAnchors => _isTouchPlatform;
 
   /// Ancore del menù per il frame corrente. Gira a ogni notifica dello scroll
   /// (dentro il `ListenableBuilder`): niente geometria viva, niente
@@ -1712,19 +1728,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   }
 
   /// Le maniglie esistono solo sulle piattaforme touch (su desktop il
-  /// pacchetto non le mostra). Unico punto in cui si decide.
-  bool get _selectionHandlesSupported {
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return true;
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return false;
-    }
-  }
+  /// pacchetto non le mostra). Stessa condizione del pacchetto, che guarda
+  /// `Theme.of(context).platform`: vedi [_themePlatform].
+  bool get _selectionHandlesSupported => _isTouchPlatform;
 
   /// Forza UNA notifica del controller (coalescata): il pacchetto ricalcola
   /// le superfici degli estremi e ricollega le maniglie. Il modello passato è
@@ -1756,9 +1762,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   /// Toglie le maniglie che il pacchetto ha agganciato a una superficie
   /// clampata (l'estremo vero è fuori dalla cacheExtent), così non compaiono
   /// dentro il testo selezionato. Va eseguito DOPO la sincronizzazione del
-  /// pacchetto: sincrona fuori da un frame, in un post-frame durante un frame.
-  /// Una microtask basta nel primo caso; nel secondo si registra un post-frame
-  /// DOPO quello del pacchetto (il nostro listener gira per primo).
+  /// pacchetto: sincrona quando lo scheduler è idle, in un post-frame per
+  /// qualunque altra fase (una microtask può girare dentro il frame, prima del
+  /// sync differito del pacchetto).
   void _scheduleSelectionHandlePrune() {
     if (!_selectionHandlesSupported) return;
     if (_selectionHandlePruneScheduled) return;
@@ -1769,8 +1775,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
         return;
       }
       final phase = WidgetsBinding.instance.schedulerPhase;
-      if (phase == SchedulerPhase.persistentCallbacks ||
-          phase == SchedulerPhase.midFrameMicrotasks) {
+      if (phase != SchedulerPhase.idle) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _selectionHandlePruneScheduled = false;
           _pruneClampedSelectionHandles();
