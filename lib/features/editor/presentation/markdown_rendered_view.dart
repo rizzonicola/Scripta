@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart'
     show
         ErrorDescription,
@@ -20,6 +22,7 @@ import 'package:flutter/gestures.dart'
         kTertiaryButton,
         kTouchSlop;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show SchedulerPhase;
 import 'package:flutter/services.dart'
     show HardwareKeyboard, KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
 import 'package:flutter/cupertino.dart'
@@ -225,6 +228,13 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // `onSelectionChanged` in [_buildFormattedView]).
   bool _rebuildingSelectionOverlay = false;
 
+  // Pianificazioni coalescate per la risincronizzazione delle maniglie (vedi
+  // [_onBlockBuilt]) e per la rimozione di quelle clampate (vedi
+  // [_scheduleSelectionHandlePrune]).
+  bool _selectionEndpointResyncScheduled = false;
+  bool _selectionHandlePruneScheduled = false;
+  bool _selectionHandlePruneRetryScheduled = false;
+
   // Un'unica istanza della mappa, riusata a ogni build: il recognizer viene
   // creato una sola volta dal `RawGestureDetector` e la sua inizializzazione
   // (callback) rieseguita a ogni aggiornamento del widget.
@@ -357,6 +367,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
       viewportRect: _viewportGlobalRect,
       onScrollingChanged: (scrolling) =>
           HapticsHelper.selectionAutoScrollActive = scrolling,
+      onSelectionDragEnd: _onSelectionDragEnd,
     );
     _selectionController.addListener(_onSelectionControllerChanged);
     _updateBlocks(widget.content);
@@ -558,6 +569,9 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
     // fatto PRIMA del confronto qui sotto, che esce se il valore della
     // selezione è identico.
     if (_toolbarTrackingActive) _scheduleToolbarRefresh();
+    // Le maniglie clampate vanno tolte DOPO la sincronizzazione del
+    // pacchetto: [_scheduleSelectionHandlePrune] si occupa dell'ordine.
+    if (!_autoScroller.isDraggingSelection) _scheduleSelectionHandlePrune();
     final selection = _selectionController.selection;
     if (selection == _lastObservedSelection) return;
     _lastObservedSelection = selection;
@@ -866,9 +880,6 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
               padding: ReadingLayout.readingPadding,
               itemCount: itemCount,
               itemBuilder: (context, index) {
-                // Un blocco che si costruisce può portare nuovi
-                // rettangoli della selezione (vedi [_onBlockBuilt]).
-                _onBlockBuilt();
                 if (hasTitle && index == 0) {
                   return _buildTitleWidget(theme, selectionColor);
                 }
@@ -1660,8 +1671,219 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // Un blocco che si (ri)costruisce può portare nuovi rettangoli della
   // selezione (blocchi rimontati): se il menù è inseguito, si rimisura a
   // frame finito. Costo a menù chiuso: un `bool`.
-  void _onBlockBuilt() {
+  //
+  // Se il blocco appena MONTATO è un estremo vero della selezione, il
+  // pacchetto non lo sa: si sincronizza solo su notifica del controller.
+  // Senza un nuovo sync le maniglie resterebbero agganciate alla superficie
+  // clampata (o sparite). Si forza quindi una notifica coalescata a fine
+  // frame; la maniglia clampata eventuale viene poi tolta dal prune.
+  void _onBlockBuilt(String documentId) {
     if (_toolbarTrackingActive) _scheduleToolbarRefresh();
+    if (!_selectionHandlesSupported) return;
+    final selection = _selectionController.selection;
+    if (selection == null || selection.isCollapsed) return;
+    final (startDocument, endDocument) = _selectionEndpointDocuments(selection);
+    if (documentId != startDocument && documentId != endDocument) return;
+    // In un rebuild normale la superficie è già registrata; solo un
+    // rimontaggio (blocco tornato nella cacheExtent) arriva qui senza.
+    final alreadyMounted = _selectionController.mountedSurfaces.any(
+      (surface) => surface.documentId == documentId,
+    );
+    if (alreadyMounted) return;
+    _scheduleSelectionEndpointResync();
+  }
+
+  /// I documenti degli estremi VERI della selezione, in ordine di lettura.
+  /// Diverso da `selectionHandleEndpoints()`: quello restituisce le superfici
+  /// MONTATE, quindi può essere clampato.
+  (Object, Object) _selectionEndpointDocuments(MarkdownSelection selection) {
+    final base = selection.base.documentId;
+    final extent = selection.extent.documentId;
+    final baseIndex = _itemIndexByDocumentId[base] ?? -1;
+    final extentIndex = _itemIndexByDocumentId[extent] ?? -1;
+    return baseIndex <= extentIndex ? (base, extent) : (extent, base);
+  }
+
+  _BlockItem? _firstBlockItem() {
+    for (final item in _items) {
+      if (item is _BlockItem) return item;
+    }
+    return null;
+  }
+
+  /// Le maniglie esistono solo sulle piattaforme touch (su desktop il
+  /// pacchetto non le mostra). Unico punto in cui si decide.
+  bool get _selectionHandlesSupported {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return true;
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return false;
+    }
+  }
+
+  /// Forza UNA notifica del controller (coalescata): il pacchetto ricalcola
+  /// le superfici degli estremi e ricollega le maniglie. Il modello passato è
+  /// una copia uguale, quindi la selezione non cambia; si usa il PRIMO blocco
+  /// perché la riconciliazione è O(1) a meno che non sia un estremo.
+  void _scheduleSelectionEndpointResync() {
+    if (!_selectionHandlesSupported) return;
+    if (_selectionEndpointResyncScheduled) return;
+    _selectionEndpointResyncScheduled = true;
+    scheduleMicrotask(() {
+      _selectionEndpointResyncScheduled = false;
+      if (!mounted) return;
+      if (_selectionController.selectionHandleEndpoints() == null) return;
+      final first = _firstBlockItem();
+      if (first == null) return;
+      _selectionController.putDocument(
+        first.documentId,
+        Markdown(markdown: first.model.markdown, blocks: first.model.blocks),
+      );
+    });
+  }
+
+  void _onSelectionDragEnd() {
+    if (!mounted) return;
+    _scheduleSelectionEndpointResync();
+    _scheduleSelectionHandlePrune();
+  }
+
+  /// Toglie le maniglie che il pacchetto ha agganciato a una superficie
+  /// clampata (l'estremo vero è fuori dalla cacheExtent), così non compaiono
+  /// dentro il testo selezionato. Va eseguito DOPO la sincronizzazione del
+  /// pacchetto: sincrona fuori da un frame, in un post-frame durante un frame.
+  /// Una microtask basta nel primo caso; nel secondo si registra un post-frame
+  /// DOPO quello del pacchetto (il nostro listener gira per primo).
+  void _scheduleSelectionHandlePrune() {
+    if (!_selectionHandlesSupported) return;
+    if (_selectionHandlePruneScheduled) return;
+    _selectionHandlePruneScheduled = true;
+    scheduleMicrotask(() {
+      if (!mounted) {
+        _selectionHandlePruneScheduled = false;
+        return;
+      }
+      final phase = WidgetsBinding.instance.schedulerPhase;
+      if (phase == SchedulerPhase.persistentCallbacks ||
+          phase == SchedulerPhase.midFrameMicrotasks) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _selectionHandlePruneScheduled = false;
+          _pruneClampedSelectionHandles();
+        });
+        WidgetsBinding.instance.ensureVisualUpdate();
+      } else {
+        _selectionHandlePruneScheduled = false;
+        _pruneClampedSelectionHandles();
+      }
+    });
+  }
+
+  void _scheduleSelectionHandlePruneRetry() {
+    if (_selectionHandlePruneRetryScheduled) return;
+    _selectionHandlePruneRetryScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _selectionHandlePruneRetryScheduled = false;
+      _pruneClampedSelectionHandles(retry: true);
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _pruneClampedSelectionHandles({bool retry = false}) {
+    if (!mounted || !_selectionHandlesSupported) return;
+    // Durante il trascinamento il pacchetto sta aggiornando le maniglie: non
+    // interferire. A fine gesto ci pensa [_onSelectionDragEnd].
+    if (_autoScroller.isDraggingSelection) return;
+    final selection = _selectionController.selection;
+    if (selection == null || selection.isCollapsed) return;
+    final endpoints = _selectionController.selectionHandleEndpoints();
+    if (endpoints == null) return;
+
+    final (startDocument, endDocument) = _selectionEndpointDocuments(selection);
+    final startIsTrue = endpoints.startSurface.documentId == startDocument;
+    final endIsTrue = endpoints.endSurface.documentId == endDocument;
+    if (startIsTrue && endIsTrue) return;
+
+    if (identical(endpoints.startSurface, endpoints.endSurface)) {
+      // Una sola superficie con entrambe le maniglie: se una è vera va
+      // conservata, altrimenti `setSelectionHandleLayers()` azzererebbe
+      // anche quella giusta.
+      if (!startIsTrue && !endIsTrue) {
+        endpoints.startSurface.setSelectionHandleLayers();
+        return;
+      }
+      final keepStart = startIsTrue;
+      final link = _selectionHandleLink(
+        keepStart
+            ? TextSelectionHandleType.left
+            : TextSelectionHandleType.right,
+        keepStart
+            ? Offset(endpoints.startGlobal.left, endpoints.startGlobal.bottom)
+            : Offset(endpoints.endGlobal.right, endpoints.endGlobal.bottom),
+      );
+      if (link == null) {
+        // Overlay non ancora costruito: riprova un frame. Se manca ancora,
+        // non toccare nulla (meglio una maniglia di troppo che perdere quella
+        // giusta).
+        if (!retry) _scheduleSelectionHandlePruneRetry();
+        return;
+      }
+      endpoints.startSurface.setSelectionHandleLayers(
+        startLink: keepStart ? link : null,
+        startLocal: keepStart
+            ? Offset(endpoints.startLocal.left, endpoints.startLocal.bottom)
+            : null,
+        endLink: keepStart
+            ? null
+            : link,
+        endLocal: keepStart
+            ? null
+            : Offset(endpoints.endLocal.right, endpoints.endLocal.bottom),
+      );
+      return;
+    }
+
+    // Superfici distinte: ognuna porta al più un'estremità, quindi si può
+    // azzerare quella clampata senza toccare l'altra.
+    if (!startIsTrue) {
+      endpoints.startSurface.setSelectionHandleLayers();
+    }
+    if (!endIsTrue) {
+      endpoints.endSurface.setSelectionHandleLayers();
+    }
+  }
+
+  /// Il `LayerLink` della maniglia [type] più vicina ad [anchor]. La vicinanza
+  /// distingue la maniglia del corpo da quella eventuale del titolo; il tipo
+  /// da sola non basta.
+  LayerLink? _selectionHandleLink(
+    TextSelectionHandleType type,
+    Offset anchor,
+  ) {
+    SelectionHandleStatus? nearest;
+    var nearestDistance = double.infinity;
+    SelectionHandleStatus? fallback;
+    var fallbackPainted = false;
+    for (final handle in inspectSelectionHandles(context)) {
+      final link = handle.link;
+      if (handle.type != type || link == null) continue;
+      if (fallback == null || (!fallbackPainted && handle.isPainted)) {
+        fallback = handle;
+        fallbackPainted = handle.isPainted;
+      }
+      final rect = handle.rect;
+      if (rect == null) continue;
+      final distance = (rect.center - anchor).distanceSquared;
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = handle;
+      }
+    }
+    return (nearest ?? fallback)?.link;
   }
 
   /// Pianifica la rimisura dalla geometria viva, a frame finito, e la ripete
@@ -1955,16 +2177,8 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // `selectionHandleEndpoints()` risultava comunque NON null; lo stato (b)
   // non si è riusciti a produrlo e non è stato osservato su dispositivo.
   bool get _selectionHandlesExpected {
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return _selectionController.selectionHandleEndpoints() != null;
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return false;
-    }
+    if (!_selectionHandlesSupported) return false;
+    return _selectionController.selectionHandleEndpoints() != null;
   }
 
   // Serve ricostruire l'overlay? Sì se le maniglie sono attese
@@ -1974,12 +2188,36 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
   // montato anche da invisibile (follower scollegato, opacità zero; vedi
   // [SelectionHandleStatus]). Ricostruire sempre lampeggerebbe anche quando
   // va tutto bene, quindi si ricostruisce solo se almeno una maniglia
-  // esistente non è dipinta. Il costo è un lampeggio quando un estremo è
-  // legittimamente smontato, ma avviene solo su richiamo esplicito.
+  // esistente non è dipinta.
+  //
+  // Eccezione: una maniglia vera tolta di proposito da
+  // [_pruneClampedSelectionHandles] perché il suo estremo è smontato NON va
+  // ricostruita (ricostruirla la riaggancerebbe alla superficie clampata).
+  // Le maniglie senza `type` (fake dei test, struttura di Flutter cambiata)
+  // restano invece un motivo di rebuild: è la direzione sicura.
   bool get _selectionHandlesNeedRebuild {
     if (!_selectionHandlesExpected) return false;
+    final selection = _selectionController.selection;
+    if (selection == null || selection.isCollapsed) return false;
+    final (startDocument, endDocument) = _selectionEndpointDocuments(selection);
+    final mounted = _selectionController.mountedSurfaces
+        .map((surface) => surface.documentId)
+        .toSet();
+    final startMounted = mounted.contains(startDocument);
+    final endMounted = mounted.contains(endDocument);
+
     final handles = inspectSelectionHandles(context);
-    return handles.isEmpty || handles.any((handle) => !handle.isPainted);
+    if (handles.isEmpty) return true;
+    return handles.any((handle) {
+      if (handle.isPainted) return false;
+      if (handle.type == TextSelectionHandleType.left && !startMounted) {
+        return false;
+      }
+      if (handle.type == TextSelectionHandleType.right && !endMounted) {
+        return false;
+      }
+      return true;
+    });
   }
 
   // ESPEDIENTE per riportare le maniglie: il pacchetto (0.2.0) non ha un API
@@ -2061,6 +2299,7 @@ class _MarkdownRenderedViewState extends ConsumerState<MarkdownRenderedView>
           surfaceColor: _mathSurfaceColor,
         );
       case _BlockItem(:final block, :final documentId, :final model):
+        _onBlockBuilt(documentId);
         semanticsLabel = markdownBlockRenderedText(block);
         final markdownWidget = MarkdownWidget(
           markdown: model,

@@ -34,6 +34,7 @@ class SelectionAutoScroller {
     required this.scrollController,
     required this.viewportRect,
     this.onScrollingChanged,
+    this.onSelectionDragEnd,
     this.edgeZone = 64.0,
     this.minSpeed = 80.0,
     this.maxSpeed = 1100.0,
@@ -56,6 +57,11 @@ class SelectionAutoScroller {
   /// Chiamato quando l'auto-scroll parte/si ferma (serve, ad esempio, a
   /// limitare la frequenza delle vibrazioni durante lo scroll).
   final void Function(bool scrolling)? onScrollingChanged;
+
+  /// Chiamato un frame dopo il rilascio che aveva armato l'auto-scroll, quando
+  /// [isDraggingSelection] è già `false`: la vista ne approfitta per
+  /// risincronizzare le maniglie con gli estremi nel frattempo montati.
+  final VoidCallback? onSelectionDragEnd;
 
   /// Profondità (px) della fascia di bordo in cui il dito innesca lo scroll.
   /// Viene comunque limitata a un quarto dell'altezza della viewport.
@@ -200,6 +206,7 @@ class SelectionAutoScroller {
     _releaseGraceActive = true;
     SchedulerBinding.instance.addPostFrameCallback((_) {
       _releaseGraceActive = false;
+      if (!_disposed && _driver == null) onSelectionDragEnd?.call();
     });
     SchedulerBinding.instance.ensureVisualUpdate();
   }

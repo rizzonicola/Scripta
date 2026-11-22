@@ -25,11 +25,13 @@ class _SelectionHandleOverlay extends StatefulWidget {
     required this.link,
     this.opacity = 1.0,
     this.offstage = false,
+    this.type,
   });
 
   final LayerLink link;
   final double opacity;
   final bool offstage;
+  final TextSelectionHandleType? type;
 
   @override
   State<_SelectionHandleOverlay> createState() =>
@@ -131,12 +133,25 @@ void main() {
       await _withHandles(
         tester,
         leaderLink: link,
-        handles: [_SelectionHandleOverlay(link: link)],
+        handles: [
+          _SelectionHandleOverlay(
+            link: link,
+            type: TextSelectionHandleType.left,
+          ),
+        ],
         body: () async {
           final handles = inspectSelectionHandles(_context(tester));
           expect(handles, hasLength(1));
           final handle = handles.single;
           expect(handle.isLinked, isTrue);
+          expect(handle.type, TextSelectionHandleType.left);
+          expect(
+            handle.link,
+            same(link),
+            reason:
+                'il link va letto dal widget o dal follower: serve a '
+                'conservare la maniglia vera quando l\'altra va tolta',
+          );
           expect(handle.opacity, closeTo(1.0, 1e-9));
           expect(handle.isOffstage, isFalse);
           expect(handle.isPainted, isTrue);
@@ -172,6 +187,12 @@ void main() {
           expect(handles.single.isLinked, isFalse);
           expect(handles.single.isPainted, isFalse);
           expect(handles.single.isVisibleIn(viewport), isFalse);
+          expect(
+            handles.single.link,
+            isNotNull,
+            reason: 'il link esiste anche se il follower non ha un leader',
+          );
+          expect(handles.single.type, isNull);
         },
       );
     },

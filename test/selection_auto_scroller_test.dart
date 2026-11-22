@@ -105,6 +105,53 @@ void main() {
     );
 
     testWidgets(
+      'chiama onSelectionDragEnd un frame dopo il rilascio, a scudo spento',
+      (tester) async {
+        final controller = ScrollController();
+        addTearDown(controller.dispose);
+        final synthetic = <PointerEvent>[];
+        await tester.pumpWidget(_Harness(controller: controller));
+        var dragEnds = 0;
+        var draggingAtCallback = true;
+        late final SelectionAutoScroller scroller;
+        scroller = SelectionAutoScroller(
+          vsync: tester,
+          scrollController: controller,
+          viewportRect: () => tester.getRect(find.byType(ListView)),
+          dispatchPointerEvent: synthetic.add,
+          onSelectionDragEnd: () {
+            dragEnds++;
+            draggingAtCallback = scroller.isDraggingSelection;
+          },
+        );
+
+        try {
+          final gesture = await tester.startGesture(const Offset(200, 100));
+          await gesture.moveTo(const Offset(200, 390));
+          scroller.notifySelectionChanged();
+          await _pumpFrames(tester, 5);
+          expect(dragEnds, 0, reason: 'il gesto è ancora in corso');
+
+          await gesture.up();
+          await tester.pump();
+          expect(dragEnds, 1);
+          expect(
+            draggingAtCallback,
+            isFalse,
+            reason:
+                'la vista deve poter risincronizzare le maniglie senza '
+                'essere scambiata per un trascinamento',
+          );
+
+          await _pumpFrames(tester, 3);
+          expect(dragEnds, 1, reason: 'una sola chiamata per gesto');
+        } finally {
+          scroller.dispose();
+        }
+      },
+    );
+
+    testWidgets(
       'un trascinamento senza cambio di selezione (scroll normale) non fa scattare nulla',
       (tester) async {
         final controller = ScrollController();

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
     show
+        LayerLink,
         RenderAnimatedOpacity,
         RenderBox,
         RenderFollowerLayer,
@@ -34,6 +35,8 @@ class SelectionHandleStatus {
     required this.opacity,
     required this.isOffstage,
     this.rect,
+    this.type,
+    this.link,
   });
 
   /// `false` se la maniglia segue un `LayerLink` senza leader e non è
@@ -53,6 +56,15 @@ class SelectionHandleStatus {
   /// composto; `null` se non misurabile.
   final Rect? rect;
 
+  /// Tipo della maniglia (`left`/`right`), se il widget lo espone. `null` per
+  /// i fake dei test o se Flutter cambia la struttura interna.
+  final TextSelectionHandleType? type;
+
+  /// `LayerLink` della maniglia, letto dal widget o dal follower. Serve a
+  /// conservare la maniglia VERA quando l'altra va tolta dalla stessa
+  /// superficie.
+  final LayerLink? link;
+
   /// La maniglia viene davvero dipinta (collegata, opaca, non fuori scena).
   /// Non dice dove: per quello vedi [isVisibleIn].
   bool get isPainted => isLinked && opacity > 0 && !isOffstage;
@@ -65,7 +77,7 @@ class SelectionHandleStatus {
 
   @override
   String toString() =>
-      'SelectionHandleStatus(painted: $isPainted, '
+      'SelectionHandleStatus(type: $type, painted: $isPainted, '
       'linked: $isLinked, opacity: ${opacity.toStringAsFixed(2)}, '
       'offstage: $isOffstage, rect: $rect)';
 }
@@ -111,6 +123,22 @@ SelectionHandleStatus _statusOf(Element element) {
     if (top == null) return unknown;
     final leaf = _firstLeaf(top);
 
+    TextSelectionHandleType? type;
+    try {
+      type =
+          (element.widget as dynamic).type as TextSelectionHandleType?;
+    } catch (_) {
+      // Il fake dei test (o una futura versione di Flutter) non lo espone.
+    }
+
+    LayerLink? link;
+    try {
+      link =
+          (element.widget as dynamic).handleLayerLink as LayerLink?;
+    } catch (_) {
+      // Si ripiega sul follower qui sotto.
+    }
+
     var opacity = 1.0;
     var isLinked = true;
     var isOffstage = false;
@@ -127,6 +155,7 @@ SelectionHandleStatus _statusOf(Element element) {
           isOffstage = true;
         }
       } else if (node is RenderFollowerLayer) {
+        link ??= node.link;
         if (!node.showWhenUnlinked && node.link.leader == null) {
           isLinked = false;
         }
@@ -146,6 +175,8 @@ SelectionHandleStatus _statusOf(Element element) {
       opacity: opacity,
       isOffstage: isOffstage,
       rect: rect,
+      type: type,
+      link: link,
     );
   } catch (_) {
     return unknown;

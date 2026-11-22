@@ -737,14 +737,11 @@ void main() {
         // selezione esce dalla vista o dal rendering (le maniglie spariscono),
         // torno sulla selezione e tengo premuto.
         //
-        // COME LEGGERE IL RISULTATO. Un richiamo che guardasse solo se il
-        // widget della maniglia ESISTE, nello stato del sintomo (maniglia
-        // montata ma non collegata all'estremo rimontato) risponderebbe «ci
-        // sono» e non farebbe nulla: l'ultima asserzione qui sotto sarebbe
-        // ROSSA. Se invece il pacchetto ricollega da solo le maniglie al
-        // rimontaggio (`backVisible` vero prima del richiamo), il test è verde
-        // anche con quel criterio e la causa del sintomo NON è provata qui:
-        // resta da verificare sul dispositivo.
+        // COME LEGGERE IL RISULTATO. Il test pretende due cose:
+        //  * PROBLEMA 1: quando l'estremo vero viene rimontato, le maniglie
+        //    tornano visibili DA SOLE (`backVisible`), senza long-press;
+        //  * il richiamo successivo non le ricostruisce e non fa vibrare
+        //    (sono già dipinte).
         await _withPlatform(TargetPlatform.android, () async {
           final log = _PlatformLog();
           _mockPlatformChannel(tester, log);
@@ -769,12 +766,21 @@ void main() {
           await tester.pump(const Duration(milliseconds: 500));
           expect(controller.selection, initial);
 
-          // 2) Torna in vista.
+          // 2) Torna in vista: l'estremo vero viene rimontato e le maniglie
+          //    devono riapparire DA SOLE (nessun long-press).
           scrollable.position.jumpTo(0);
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 500));
           expect(controller.selection, initial);
           final backVisible = _allHandlesVisible(tester);
+          expect(
+            backVisible,
+            isTrue,
+            reason:
+                'PROBLEMA 1: tornando sull\'estremo vero le maniglie devono '
+                'riapparire da sole, senza bisogno di un long-press. Stato: '
+                '${_describeHandles(tester)}',
+          );
 
           // 3) Long-press sulla selezione.
           log.vibrations = 0;
@@ -856,16 +862,46 @@ void main() {
           await tester.pump();
           expect(scope.toolbarIsVisible, isFalse);
 
-          // La politica B' riscritta qui con le sole API pubbliche: si
-          // ricostruisce solo se almeno un estremo è montato E non tutte le
-          // maniglie esistenti sono dipinte.
+          // La politica riscritta qui con le sole API pubbliche: si
+          // ricostruisce solo se almeno un estremo è montato E c'è una
+          // maniglia non dipinta che NON sia stata tolta di proposito perché
+          // il suo estremo vero è smontato (vedi
+          // `_selectionHandlesNeedRebuild`).
           final endpointsMounted =
               controller.selectionHandleEndpoints() != null;
           final handlesBefore = _realHandles(tester);
+          final documents = controller.documents;
+          final baseIndex = documents.indexWhere(
+            (document) => document.id == initial.base.documentId,
+          );
+          final extentIndex = documents.indexWhere(
+            (document) => document.id == initial.extent.documentId,
+          );
+          final startDocument = baseIndex <= extentIndex
+              ? initial.base.documentId
+              : initial.extent.documentId;
+          final endDocument = baseIndex <= extentIndex
+              ? initial.extent.documentId
+              : initial.base.documentId;
+          final mountedDocuments = controller.mountedSurfaces
+              .map((surface) => surface.documentId)
+              .toSet();
+          final startMounted = mountedDocuments.contains(startDocument);
+          final endMounted = mountedDocuments.contains(endDocument);
           final expectRebuild =
               endpointsMounted &&
-              (handlesBefore.isEmpty ||
-                  handlesBefore.any((handle) => !handle.isPainted));
+              handlesBefore.any((handle) {
+                if (handle.isPainted) return false;
+                if (handle.type == TextSelectionHandleType.left &&
+                    !startMounted) {
+                  return false;
+                }
+                if (handle.type == TextSelectionHandleType.right &&
+                    !endMounted) {
+                  return false;
+                }
+                return true;
+              });
 
           // Ogni valore della selezione diverso da quello iniziale (`null`,
           // se si ricostruisce) finisce qui.
@@ -993,6 +1029,73 @@ void main() {
           }
 
           await tester.pump();
+          await _drainTimers(tester);
+        });
+      },
+    );
+
+    testWidgets(
+      '10. selezione lunga: le maniglie clampate non compaiono dentro il testo selezionato',
+      (tester) async {
+        // PROBLEMA 2. «Seleziona tutto» su una nota lunga e scroll a metà:
+        // gli estremi veri (primo e ultimo blocco) sono fuori dalla
+        // cacheExtent. Il pacchetto aggancia le maniglie alla prima/ultima
+        // superficie MONTATA: senza il prune comparirebbero dentro il testo
+        // selezionato. Qui si forza una notifica del controller per farle
+        // agganciare davvero, poi si pretende che NON siano dipinte.
+        await _withPlatform(TargetPlatform.android, () async {
+          _mockPlatformChannel(tester, _PlatformLog());
+          await _pumpView(tester, _longNote);
+
+          final scope = _scope(tester);
+          final controller = scope.controller;
+          scope.selectAll();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          final initial = controller.selection;
+          expect(initial, isNotNull);
+          expect(initial!.isCollapsed, isFalse);
+
+          final scrollable = _listScrollable(tester);
+          scrollable.position.jumpTo(scrollable.position.maxScrollExtent / 2);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+
+          // Senza una notifica il pacchetto non ricalcola gli estremi: le
+          // maniglie resterebbero agganciate alle superfici di prima
+          // (smontate) e il test non misurerebbe il clamp.
+          final first = controller.documents.first;
+          controller.putDocument(
+            first.id,
+            Markdown(
+              markdown: first.model.markdown,
+              blocks: first.model.blocks,
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+
+          expect(
+            controller.selection,
+            initial,
+            reason: 'la notifica forzata non deve cambiare la selezione',
+          );
+          expect(
+            controller.selectionHandleEndpoints(),
+            isNotNull,
+            reason:
+                'precondizione: a metà nota c\'è almeno una superficie '
+                'selezionata montata, quindi il pacchetto clampa le maniglie',
+          );
+          expect(
+            _realHandles(tester).where((handle) => handle.isPainted),
+            isEmpty,
+            reason:
+                'nessuna maniglia deve essere dipinta quando l\'estremo vero '
+                'è fuori dalla cacheExtent: comparirebbe dentro il testo '
+                'selezionato. Stato: ${_describeHandles(tester)}',
+          );
+
           await _drainTimers(tester);
         });
       },
