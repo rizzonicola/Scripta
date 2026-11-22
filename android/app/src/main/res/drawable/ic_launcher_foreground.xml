@@ -6,11 +6,12 @@
     android:viewportWidth="512"
     android:viewportHeight="512">
 
+    <!-- 0.70 keeps the pen cap inside the 66dp adaptive-icon safe zone (circular masks). -->
     <group
         android:pivotX="256"
         android:pivotY="256"
-        android:scaleX="0.75"
-        android:scaleY="0.75">
+        android:scaleX="0.70"
+        android:scaleY="0.70">
         <path
             android:pathData="M 387,387 C 344,362 309,392 324,412 C 339,432 279,437 249,412"
             android:fillColor="#00000000"
@@ -35,8 +36,8 @@
         android:pivotX="256"
         android:pivotY="256"
         android:rotation="-45"
-        android:scaleX="0.75"
-        android:scaleY="0.75">
+        android:scaleX="0.70"
+        android:scaleY="0.70">
         <path android:pathData="M 242,50 L 270,50 C 274,50 277,53 277,57 L 275,130 L 237,130 L 235,57 C 235,53 238,50 242,50 Z">
             <aapt:attr name="android:fillColor">
                 <gradient
